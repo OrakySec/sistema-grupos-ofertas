@@ -261,11 +261,10 @@ export default function Settings() {
               data-form-type="other"
               name={`tg-api-id-${Date.now()}`}
               inputMode="numeric"
-              onKeyDown={(e) => {
-                // allow: digits, backspace, delete, arrows, tab
-                if (!/^\d$/.test(e.key) && !['Backspace','Delete','ArrowLeft','ArrowRight','Tab'].includes(e.key)) {
-                  e.preventDefault()
-                }
+              onInput={(e) => {
+                // strip anything that is not a digit AFTER the browser places it
+                const el = e.currentTarget
+                el.value = el.value.replace(/\D/g, '')
               }}
             />
           </div>
