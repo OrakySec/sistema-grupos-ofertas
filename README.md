@@ -20,7 +20,7 @@ Sistema web para monitorar grupos do Telegram e replicar ofertas automaticamente
 ## Pré-requisitos
 
 - Docker + Docker Compose instalado no servidor
-- Traefik configurado com rede externa `YkaroNET` e certresolver `letsencrypt`
+- Traefik configurado com rede externa `YkaroNET` e certresolver `letsencryptresolver`
 - Evolution API rodando separadamente (opcional no início)
 
 ---
