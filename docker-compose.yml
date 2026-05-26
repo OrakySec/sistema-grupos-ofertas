@@ -83,6 +83,7 @@ services:
       INTERNAL_API_URL: http://api:3001
       MEDIA_BASE_PATH: /app/media
       SESSION_PATH: /app/sessions
+      JWT_SECRET: ${JWT_SECRET}
     volumes:
       - media_data:/app/media
       - telegram_sessions:/app/sessions
