@@ -7,6 +7,7 @@ import { offersRoutes } from './routes/offers';
 import { settingsRoutes } from './routes/settings';
 import { logsRoutes } from './routes/logs';
 import { statsRoutes } from './routes/stats';
+import prisma from './lib/prisma';
 
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
 const JWT_SECRET = process.env.JWT_SECRET ?? 'changeme-jwt-secret';
@@ -39,6 +40,23 @@ async function buildApp() {
   // Health check (no auth required)
   server.get('/health', async (_request, reply) => {
     return reply.send({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
+  // ── GET /settings/internal ────────────────────────────────────────────────
+  // Registered at the TOP-LEVEL scope (no requireAuth hook here).
+  // The telegram-listener uses this to fetch credentials without a user JWT.
+  // Cannot live inside settingsRoutes because Fastify propagates parent hooks
+  // (incluindo requireAuth) to ALL child scopes regardless of registration order.
+  server.get('/settings/internal', async (_request, reply) => {
+    const settings = await prisma.setting.findMany();
+    const dbObj: Record<string, string> = {};
+    for (const s of settings) dbObj[s.key] = s.value;
+    return reply.send({
+      telegram_api_id: dbObj.telegram_api_id ?? '',
+      telegram_api_hash: dbObj.telegram_api_hash ?? '',
+      telegram_phone: dbObj.telegram_phone ?? '',
+      telegram_bot_token: dbObj.telegram_bot_token ?? '',
+    });
   });
 
   // Register route plugins
