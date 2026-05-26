@@ -124,6 +124,7 @@ volumes:
 
 networks:
   ofertas_net:
-    driver: bridge
+    driver: overlay
+    attachable: true
   YkaroNET:
     external: true
