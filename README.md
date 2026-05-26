@@ -73,6 +73,43 @@ docker compose -f docker-compose.prod.yml up -d
 
 ---
 
+## 🚀 Deploy no Portainer (Docker Swarm / Standalone)
+
+Este projeto está pronto para deploy no Portainer utilizando **GitHub Container Registry (GHCR)**.
+
+### Passo 1: Pré-requisitos
+Certifique-se de que a rede externa do Traefik existe no seu Docker host:
+```bash
+docker network create traefik_public
+```
+
+### Passo 2: Adicionar a Stack no Portainer
+1. No Portainer, vá em **Stacks** -> **Add stack**.
+2. Escolha o método **Repository** (Git).
+3. Preencha:
+   - **Repository URL**: `https://github.com/OrakySec/sistema-grupos-ofertas.git`
+   - **Compose path**: `docker-compose.prod.yml`
+   - Ative **Authentication** e use seu usuário `OrakySec` e um GitHub PAT (Token de Acesso Pessoal).
+
+### Passo 3: Variáveis de Ambiente no Portainer
+Defina as seguintes variáveis de ambiente (Environment variables) no painel da stack:
+- `POSTGRES_USER`: `ofertas`
+- `POSTGRES_PASSWORD`: *(Uma senha forte de sua escolha)*
+- `POSTGRES_DB`: `ofertas`
+- `ADMIN_EMAIL`: `orakysec@gmail.com`
+- `ADMIN_PASSWORD_HASH`: `$2a$12$aEIsclyLU5bMXT8vsYRABecSGadJDaHxoH/R1iNq.Y5od98WZ/TfC` *(Hash da senha `@Deligar89541300`)*
+- `JWT_SECRET`: `a27c09103834e98d35fde7f0f9707aa57990b76b1b0932549ed61b8753c1cefe`
+
+*(Não é necessário definir `DATABASE_URL` nem `REDIS_URL`, elas são autogeradas).*
+
+### Passo 4: Permissões do GHCR (GitHub Container Registry)
+As imagens de container são construídas automaticamente pelo GitHub Actions a cada push na branch `main`. Como o repositório é privado, os pacotes nascem privados.
+Para que o Portainer consiga baixar as imagens, você tem duas opções:
+- **Tornar as imagens públicas (Recomendado)**: Vá no seu perfil do GitHub -> **Packages** -> clique em cada pacote (`frontend`, `api`, `worker`, `telegram-listener`) -> **Package Settings** -> role até a **Danger Zone** -> **Change visibility** -> Mude para **Public**. (Isso é seguro, pois nenhum segredo ou senha está embutido nas imagens).
+- **Adicionar o registro no Portainer**: Vá em **Registries** -> **Add Registry** -> **Custom Registry** -> URL: `ghcr.io`, Username: `OrakySec`, Password: Seu GitHub PAT.
+
+---
+
 ## Configuração Pós-Deploy
 
 Acesse `https://ofertas.ykaromarques.com` e faça login.
