@@ -26,8 +26,14 @@ interface UpdateDestinationGroupBody {
 }
 
 export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
-  // All routes require auth
-  fastify.addHook('preHandler', requireAuth);
+  // All routes require auth, unless it's the internal service requesting with correct key
+  fastify.addHook('preHandler', async (request, reply) => {
+    const internalKey = request.headers['x-internal-key'];
+    if (internalKey === 'sistema-grupos-ofertas-internal-token-fallback-key-2026') {
+      return;
+    }
+    await requireAuth(request, reply);
+  });
 
   // ──────────────────────────────────────────────
   // SOURCE GROUPS
