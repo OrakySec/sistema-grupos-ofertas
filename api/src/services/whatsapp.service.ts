@@ -96,7 +96,8 @@ export class WhatsAppService {
   }
 
   async sendImage(chatId: string, imagePath: string, caption?: string): Promise<void> {
-    const absolutePath = path.resolve(imagePath);
+    const mediaBasePath = process.env.MEDIA_BASE_PATH || '/app/media';
+    const absolutePath = path.isAbsolute(imagePath) ? imagePath : path.join(mediaBasePath, imagePath);
 
     if (!fs.existsSync(absolutePath)) {
       throw new Error(`Image file not found: ${absolutePath}`);
@@ -125,7 +126,8 @@ export class WhatsAppService {
   }
 
   async sendDocument(chatId: string, filePath: string, caption?: string): Promise<void> {
-    const absolutePath = path.resolve(filePath);
+    const mediaBasePath = process.env.MEDIA_BASE_PATH || '/app/media';
+    const absolutePath = path.isAbsolute(filePath) ? filePath : path.join(mediaBasePath, filePath);
 
     if (!fs.existsSync(absolutePath)) {
       throw new Error(`Document file not found: ${absolutePath}`);

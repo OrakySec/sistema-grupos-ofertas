@@ -37,7 +37,7 @@ services:
       NODE_ENV: production
       MEDIA_BASE_PATH: /app/media
       MEDIA_RETENTION_DAYS: ${MEDIA_RETENTION_DAYS:-30}
-      CACHE_BUST: "2026-05-26-16-09"
+      CACHE_BUST: "2026-05-26-20-35"
     volumes:
       - media_data:/app/media
     networks:
@@ -69,6 +69,7 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       NODE_ENV: production
       MEDIA_BASE_PATH: /app/media
+      CACHE_BUST: "2026-05-26-20-35"
     volumes:
       - media_data:/app/media
     networks:
@@ -86,7 +87,7 @@ services:
       INTERNAL_API_URL: http://api:3001
       MEDIA_BASE_PATH: /app/media
       SESSION_PATH: /app/sessions
-      CACHE_BUST: "2026-05-26-16-09"
+      CACHE_BUST: "2026-05-26-20-35"
     volumes:
       - media_data:/app/media
       - telegram_sessions:/app/sessions

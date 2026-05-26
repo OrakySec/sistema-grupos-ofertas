@@ -52,7 +52,8 @@ export class TelegramService {
 
   async sendPhoto(chatId: string, photoPath: string, caption?: string): Promise<void> {
     const apiUrl = await this.getApiUrl();
-    const absolutePath = path.resolve(photoPath);
+    const mediaBasePath = process.env.MEDIA_BASE_PATH || '/app/media';
+    const absolutePath = path.isAbsolute(photoPath) ? photoPath : path.join(mediaBasePath, photoPath);
 
     if (!fs.existsSync(absolutePath)) {
       throw new Error(`Photo file not found: ${absolutePath}`);
@@ -80,7 +81,8 @@ export class TelegramService {
 
   async sendDocument(chatId: string, filePath: string, caption?: string): Promise<void> {
     const apiUrl = await this.getApiUrl();
-    const absolutePath = path.resolve(filePath);
+    const mediaBasePath = process.env.MEDIA_BASE_PATH || '/app/media';
+    const absolutePath = path.isAbsolute(filePath) ? filePath : path.join(mediaBasePath, filePath);
 
     if (!fs.existsSync(absolutePath)) {
       throw new Error(`Document file not found: ${absolutePath}`);
