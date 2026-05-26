@@ -2,18 +2,14 @@ import React, { useState, useEffect, useCallback } from 'react'
 import api, { type Offer } from '../lib/api'
 import OfferCard from '../components/OfferCard'
 import { SkeletonCard } from '../components/LoadingSkeleton'
+import { useToast } from '../lib/toast'
 
 export default function Queue() {
   const [offers, setOffers] = useState<Offer[]>([])
   const [loading, setLoading] = useState(true)
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null)
   const [batchLoading, setBatchLoading] = useState(false)
-  const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
-
-  const showToast = (msg: string, type: 'success' | 'error') => {
-    setToast({ msg, type })
-    setTimeout(() => setToast(null), 3500)
-  }
+  const { addToast } = useToast()
 
   const fetchPending = useCallback(async () => {
     try {
@@ -37,9 +33,9 @@ export default function Queue() {
     try {
       await api.approveOffer(id)
       setOffers((prev) => prev.filter((o) => o.id !== id))
-      showToast('Oferta aprovada!', 'success')
+      addToast('Oferta aprovada com sucesso!', 'success')
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Erro ao aprovar', 'error')
+      addToast(err instanceof Error ? err.message : 'Erro ao aprovar oferta', 'error')
     } finally {
       setActionLoadingId(null)
     }
@@ -50,9 +46,9 @@ export default function Queue() {
     try {
       await api.rejectOffer(id)
       setOffers((prev) => prev.filter((o) => o.id !== id))
-      showToast('Oferta rejeitada.', 'success')
+      addToast('Oferta rejeitada.', 'success')
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Erro ao rejeitar', 'error')
+      addToast(err instanceof Error ? err.message : 'Erro ao rejeitar oferta', 'error')
     } finally {
       setActionLoadingId(null)
     }
@@ -65,9 +61,9 @@ export default function Queue() {
       const ids = offers.map((o) => o.id)
       const res = await api.batchApproveOffers(ids)
       setOffers([])
-      showToast(`${res.count} ofertas aprovadas!`, 'success')
+      addToast(`${res.count} ofertas aprovadas com sucesso!`, 'success')
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Erro no lote', 'error')
+      addToast(err instanceof Error ? err.message : 'Erro ao aprovar lote de ofertas', 'error')
     } finally {
       setBatchLoading(false)
     }
@@ -75,24 +71,6 @@ export default function Queue() {
 
   return (
     <div style={{ animation: 'fadeIn 0.3s ease' }}>
-      {/* Toast */}
-      {toast && (
-        <div
-          className={`alert alert-${toast.type === 'success' ? 'success' : 'error'}`}
-          style={{
-            position: 'fixed',
-            bottom: 24,
-            right: 24,
-            zIndex: 300,
-            minWidth: 280,
-            animation: 'slideIn 0.3s ease',
-          }}
-        >
-          <span>{toast.type === 'success' ? '✅' : '⚠'}</span>
-          <span>{toast.msg}</span>
-        </div>
-      )}
-
       {/* Header */}
       <div
         className="page-header"

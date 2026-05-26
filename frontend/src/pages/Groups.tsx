@@ -7,16 +7,7 @@ import api, {
 import Modal from '../components/Modal'
 import Toggle from '../components/Toggle'
 import { Skeleton } from '../components/LoadingSkeleton'
-
-/* ─── Helpers ────────────────────────────── */
-function useToast() {
-  const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
-  const show = (msg: string, type: 'success' | 'error' = 'success') => {
-    setToast({ msg, type })
-    setTimeout(() => setToast(null), 3500)
-  }
-  return { toast, show }
-}
+import { useToast } from '../lib/toast'
 
 /* ─── Source Group Modal ─────────────────── */
 interface SourceGroupModalProps {
@@ -354,7 +345,7 @@ function DestGroupModal({ isOpen, onClose, onSaved }: DestGroupModalProps) {
 
 /* ─── Main Groups Page ───────────────────── */
 export default function Groups() {
-  const { toast, show: showToast } = useToast()
+  const { addToast } = useToast()
   const [sourceGroups, setSourceGroups] = useState<SourceGroup[]>([])
   const [destGroups, setDestGroups] = useState<DestinationGroup[]>([])
   const [loadingSrc, setLoadingSrc] = useState(true)
@@ -390,7 +381,7 @@ export default function Groups() {
       const updated = await api.updateSourceGroup(g.id, { isActive: !g.isActive })
       setSourceGroups((prev) => prev.map((s) => (s.id === g.id ? updated : s)))
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Erro', 'error')
+      addToast(err instanceof Error ? err.message : 'Erro', 'error')
     } finally {
       setTogglingId(null)
     }
@@ -402,7 +393,7 @@ export default function Groups() {
       const updated = await api.updateDestinationGroup(g.id, { isActive: !g.isActive })
       setDestGroups((prev) => prev.map((d) => (d.id === g.id ? updated : d)))
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Erro', 'error')
+      addToast(err instanceof Error ? err.message : 'Erro', 'error')
     } finally {
       setTogglingId(null)
     }
@@ -414,9 +405,9 @@ export default function Groups() {
     try {
       await api.deleteSourceGroup(id)
       setSourceGroups((prev) => prev.filter((g) => g.id !== id))
-      showToast('Grupo removido.', 'success')
+      addToast('Grupo de origem removido com sucesso.', 'success')
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Erro', 'error')
+      addToast(err instanceof Error ? err.message : 'Erro', 'error')
     } finally {
       setDeletingId(null)
     }
@@ -428,9 +419,9 @@ export default function Groups() {
     try {
       await api.deleteDestinationGroup(id)
       setDestGroups((prev) => prev.filter((g) => g.id !== id))
-      showToast('Grupo removido.', 'success')
+      addToast('Grupo de destino removido com sucesso.', 'success')
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Erro', 'error')
+      addToast(err instanceof Error ? err.message : 'Erro', 'error')
     } finally {
       setDeletingId(null)
     }
@@ -438,25 +429,15 @@ export default function Groups() {
 
   return (
     <div style={{ animation: 'fadeIn 0.3s ease' }}>
-      {/* Toast */}
-      {toast && (
-        <div
-          className={`alert alert-${toast.type === 'success' ? 'success' : 'error'}`}
-          style={{ position: 'fixed', bottom: 24, right: 24, zIndex: 300, minWidth: 280, animation: 'slideIn 0.3s ease' }}
-        >
-          {toast.msg}
-        </div>
-      )}
-
       <SourceGroupModal
         isOpen={showAddSrc}
         onClose={() => setShowAddSrc(false)}
-        onSaved={fetchAll}
+        onSaved={() => { fetchAll(); addToast('Grupo de origem adicionado com sucesso!', 'success'); }}
       />
       <DestGroupModal
         isOpen={showAddDest}
         onClose={() => setShowAddDest(false)}
-        onSaved={fetchAll}
+        onSaved={() => { fetchAll(); addToast('Grupo de destino adicionado com sucesso!', 'success'); }}
       />
 
       {/* Header */}

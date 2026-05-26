@@ -7,6 +7,7 @@ import {
   Outlet,
 } from 'react-router-dom'
 import { AuthProvider, useAuth } from './lib/auth'
+import { ToastProvider } from './lib/toast'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
@@ -84,8 +85,11 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppRoutes />
+        <ToastProvider>
+          <AppRoutes />
+        </ToastProvider>
       </AuthProvider>
     </BrowserRouter>
   )
 }
+

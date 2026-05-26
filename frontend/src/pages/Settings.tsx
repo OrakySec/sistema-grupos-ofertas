@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import api from '../lib/api'
 import Toggle from '../components/Toggle'
 import { Skeleton } from '../components/LoadingSkeleton'
+import { useToast } from '../lib/toast'
 
 type TestStatus = 'idle' | 'loading' | 'success' | 'error'
 
@@ -45,11 +46,12 @@ function TestButton({
 export default function Settings() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [saveMsg, setSaveMsg] = useState('')
   const [autoApprove, setAutoApprove] = useState(false)
   const [testTgBot, setTestTgBot] = useState<TestStatus>('idle')
   const [testWa, setTestWa] = useState<TestStatus>('idle')
   const [settingsData, setSettingsData] = useState<any>(null)
+  
+  const { addToast } = useToast()
 
   // Telegram auth flow
   const [tgPhone, setTgPhone] = useState('')
@@ -65,11 +67,6 @@ export default function Settings() {
   const refEvolutionUrl  = useRef<HTMLInputElement>(null)
   const refEvolutionKey  = useRef<HTMLInputElement>(null)
   const refEvolutionInst = useRef<HTMLInputElement>(null)
-
-  const showSaveMsg = (msg: string) => {
-    setSaveMsg(msg)
-    setTimeout(() => setSaveMsg(''), 3000)
-  }
 
   const fetchSettings = useCallback(async () => {
     try {
@@ -89,15 +86,14 @@ export default function Settings() {
 
   const save = async (fields: Record<string, unknown>) => {
     setSaving(true)
-    setSaveMsg('')
     try {
       const updated = await api.updateSettings(fields as any)
       setSettingsData(updated)
       setAutoApprove(updated.autoApprove ?? false)
       setTgPhone(updated.telegramPhone ?? '')
-      showSaveMsg('✅ Salvo com sucesso!')
+      addToast('Configurações salvas com sucesso!', 'success')
     } catch (err) {
-      showSaveMsg(`❌ ${err instanceof Error ? err.message : 'Erro ao salvar'}`)
+      addToast(err instanceof Error ? err.message : 'Erro ao salvar configurações', 'error')
     } finally {
       setSaving(false)
     }
@@ -107,8 +103,17 @@ export default function Settings() {
     setTestTgBot('loading')
     try {
       const res = await api.testTelegram()
-      setTestTgBot(res.success ? 'success' : 'error')
-    } catch { setTestTgBot('error') }
+      if (res.success) {
+        setTestTgBot('success')
+        addToast('Conexão com o Telegram Bot API realizada com sucesso!', 'success')
+      } else {
+        setTestTgBot('error')
+        addToast('Falha na conexão com o Telegram Bot API.', 'error')
+      }
+    } catch (err) {
+      setTestTgBot('error')
+      addToast(err instanceof Error ? err.message : 'Erro ao testar conexão com Telegram Bot API', 'error')
+    }
     setTimeout(() => setTestTgBot('idle'), 5000)
   }
 
@@ -116,8 +121,17 @@ export default function Settings() {
     setTestWa('loading')
     try {
       const res = await api.testWhatsApp()
-      setTestWa(res.success ? 'success' : 'error')
-    } catch { setTestWa('error') }
+      if (res.success) {
+        setTestWa('success')
+        addToast('Conexão com a Evolution API (WhatsApp) realizada com sucesso!', 'success')
+      } else {
+        setTestWa('error')
+        addToast('Falha na conexão com a Evolution API.', 'error')
+      }
+    } catch (err) {
+      setTestWa('error')
+      addToast(err instanceof Error ? err.message : 'Erro ao testar conexão com a Evolution API', 'error')
+    }
     setTimeout(() => setTestWa('idle'), 5000)
   }
 
@@ -129,8 +143,11 @@ export default function Settings() {
       await api.startTelegramAuth(tgPhone)
       setAuthStep('code')
       setAuthMsg('Código enviado para o Telegram.')
+      addToast('Código de verificação enviado para o seu Telegram!', 'success')
     } catch (err) {
-      setAuthMsg(`❌ ${err instanceof Error ? err.message : 'Erro'}`)
+      const msg = err instanceof Error ? err.message : 'Erro'
+      setAuthMsg(`❌ ${msg}`)
+      addToast(msg, 'error')
     } finally { setAuthLoading(false) }
   }
 
@@ -142,9 +159,12 @@ export default function Settings() {
       await api.verifyTelegramAuth(tgCode)
       setAuthStep('done')
       setAuthMsg('✅ Autenticado com sucesso!')
+      addToast('Telegram autenticado com sucesso!', 'success')
       fetchSettings()
     } catch (err) {
-      setAuthMsg(`❌ ${err instanceof Error ? err.message : 'Código inválido'}`)
+      const msg = err instanceof Error ? err.message : 'Código inválido'
+      setAuthMsg(`❌ ${msg}`)
+      addToast(msg, 'error')
     } finally { setAuthLoading(false) }
   }
 
@@ -171,16 +191,6 @@ export default function Settings() {
           <h1 className="page-title">Configurações</h1>
           <p className="page-subtitle">Configure o comportamento e integrações do sistema</p>
         </div>
-        {saveMsg && (
-          <span style={{
-            fontSize: '0.83rem',
-            color: saveMsg.startsWith('✅') ? 'var(--accent-success)' : 'var(--accent-danger)',
-            animation: 'fadeIn 0.2s ease',
-            paddingTop: 8,
-          }}>
-            {saveMsg}
-          </span>
-        )}
       </div>
 
       {/* ── Seção 1: Comportamento ─────────── */}
