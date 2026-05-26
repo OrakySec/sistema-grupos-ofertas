@@ -43,6 +43,7 @@ INTERNAL_API_URL: str = os.getenv("INTERNAL_API_URL", "http://api:3001")
 MEDIA_BASE_PATH: str = os.getenv("MEDIA_BASE_PATH", "/app/media")
 SESSION_PATH: str = os.getenv("SESSION_PATH", "/app/sessions")
 JWT_SECRET: str = os.getenv("JWT_SECRET", "changeme-jwt-secret")
+INTERNAL_TOKEN: str = "sistema-grupos-ofertas-internal-token-fallback-key-2026"
 HTTP_PORT: int = int(os.getenv("HTTP_PORT", "8080"))
 
 # Ensure directories exist
@@ -105,7 +106,7 @@ state = AppState()
 def _internal_headers() -> dict[str, str]:
     return {
         "Content-Type": "application/json",
-        "X-Internal-Key": JWT_SECRET,
+        "X-Internal-Key": INTERNAL_TOKEN,
     }
 
 

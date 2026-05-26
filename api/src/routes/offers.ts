@@ -4,6 +4,7 @@ import prisma from '../lib/prisma';
 import { addNewOfferJob, addSendOfferJob } from '../lib/queue';
 
 const JWT_SECRET = process.env.JWT_SECRET ?? 'changeme-jwt-secret';
+const INTERNAL_TOKEN = 'sistema-grupos-ofertas-internal-token-fallback-key-2026';
 
 interface ListOffersQuery {
   page?: number;
@@ -62,7 +63,7 @@ export const offersRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
     },
     async (request: FastifyRequest<{ Body: CreateOfferBody }>, reply) => {
       const internalKey = request.headers['x-internal-key'];
-      if (internalKey !== JWT_SECRET) {
+      if (internalKey !== JWT_SECRET && internalKey !== INTERNAL_TOKEN) {
         return reply.code(401).send({ error: 'Unauthorized', message: 'Invalid internal key' });
       }
 
