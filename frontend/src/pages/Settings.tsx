@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react'
-import api, { type Settings } from '../lib/api'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
+import api from '../lib/api'
 import Toggle from '../components/Toggle'
 import { Skeleton } from '../components/LoadingSkeleton'
 
@@ -23,9 +23,7 @@ function TestButton({
         disabled={status === 'loading'}
       >
         {status === 'loading' ? (
-          <>
-            <span className="spinner spinner-sm" /> Testando…
-          </>
+          <><span className="spinner spinner-sm" /> Testando…</>
         ) : (
           `🔌 ${label}`
         )}
@@ -45,10 +43,12 @@ function TestButton({
 }
 
 export default function Settings() {
-  const [settings, setSettings] = useState<Settings | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState('')
+  const [autoApprove, setAutoApprove] = useState(false)
+  const [testTgBot, setTestTgBot] = useState<TestStatus>('idle')
+  const [testWa, setTestWa] = useState<TestStatus>('idle')
 
   // Telegram auth flow
   const [tgPhone, setTgPhone] = useState('')
@@ -57,16 +57,33 @@ export default function Settings() {
   const [authLoading, setAuthLoading] = useState(false)
   const [authMsg, setAuthMsg] = useState('')
 
-  // Test statuses
-  const [testTgBot, setTestTgBot] = useState<TestStatus>('idle')
-  const [testWa, setTestWa] = useState<TestStatus>('idle')
+  // Uncontrolled refs — browser cannot lock these via autofill
+  const refBotToken      = useRef<HTMLInputElement>(null)
+  const refApiId         = useRef<HTMLInputElement>(null)
+  const refApiHash       = useRef<HTMLInputElement>(null)
+  const refEvolutionUrl  = useRef<HTMLInputElement>(null)
+  const refEvolutionKey  = useRef<HTMLInputElement>(null)
+  const refEvolutionInst = useRef<HTMLInputElement>(null)
+
+  const showSaveMsg = (msg: string) => {
+    setSaveMsg(msg)
+    setTimeout(() => setSaveMsg(''), 3000)
+  }
 
   const fetchSettings = useCallback(async () => {
     try {
       const s = await api.getSettings()
-      setSettings(s)
+      setAutoApprove(s.autoApprove ?? false)
       setTgPhone(s.telegramPhone ?? '')
       if (s.telegramAuthenticated) setAuthStep('done')
+
+      // Populate uncontrolled fields once after load
+      if (refBotToken.current)      refBotToken.current.value      = s.telegramBotToken && s.telegramBotToken !== '***' ? s.telegramBotToken : ''
+      if (refApiId.current)         refApiId.current.value         = s.telegramApiId ? String(s.telegramApiId) : ''
+      if (refApiHash.current)       refApiHash.current.value       = s.telegramApiHash ?? ''
+      if (refEvolutionUrl.current)  refEvolutionUrl.current.value  = s.evolutionApiUrl ?? ''
+      if (refEvolutionKey.current)  refEvolutionKey.current.value  = s.evolutionApiKey && s.evolutionApiKey !== '***' ? s.evolutionApiKey : ''
+      if (refEvolutionInst.current) refEvolutionInst.current.value = s.evolutionInstance ?? ''
     } catch {
       // silent
     } finally {
@@ -74,26 +91,18 @@ export default function Settings() {
     }
   }, [])
 
-  useEffect(() => {
-    fetchSettings()
-  }, [fetchSettings])
+  useEffect(() => { fetchSettings() }, [fetchSettings])
 
-  const update = (key: keyof Settings, value: unknown) => {
-    setSettings((prev) => (prev ? { ...prev, [key]: value } : prev))
-  }
-
-  const save = async (fields: Partial<Settings>) => {
+  const save = async (fields: Record<string, unknown>) => {
     setSaving(true)
     setSaveMsg('')
     try {
-      const updated = await api.updateSettings(fields)
-      setSettings(updated)
-      setSaveMsg('✅ Salvo com sucesso!')
+      await api.updateSettings(fields as any)
+      showSaveMsg('✅ Salvo com sucesso!')
     } catch (err) {
-      setSaveMsg(`❌ ${err instanceof Error ? err.message : 'Erro ao salvar'}`)
+      showSaveMsg(`❌ ${err instanceof Error ? err.message : 'Erro ao salvar'}`)
     } finally {
       setSaving(false)
-      setTimeout(() => setSaveMsg(''), 3000)
     }
   }
 
@@ -102,9 +111,7 @@ export default function Settings() {
     try {
       const res = await api.testTelegram()
       setTestTgBot(res.success ? 'success' : 'error')
-    } catch {
-      setTestTgBot('error')
-    }
+    } catch { setTestTgBot('error') }
     setTimeout(() => setTestTgBot('idle'), 5000)
   }
 
@@ -113,9 +120,7 @@ export default function Settings() {
     try {
       const res = await api.testWhatsApp()
       setTestWa(res.success ? 'success' : 'error')
-    } catch {
-      setTestWa('error')
-    }
+    } catch { setTestWa('error') }
     setTimeout(() => setTestWa('idle'), 5000)
   }
 
@@ -129,9 +134,7 @@ export default function Settings() {
       setAuthMsg('Código enviado para o Telegram.')
     } catch (err) {
       setAuthMsg(`❌ ${err instanceof Error ? err.message : 'Erro'}`)
-    } finally {
-      setAuthLoading(false)
-    }
+    } finally { setAuthLoading(false) }
   }
 
   const handleVerifyAuth = async () => {
@@ -145,9 +148,7 @@ export default function Settings() {
       fetchSettings()
     } catch (err) {
       setAuthMsg(`❌ ${err instanceof Error ? err.message : 'Código inválido'}`)
-    } finally {
-      setAuthLoading(false)
-    }
+    } finally { setAuthLoading(false) }
   }
 
   if (loading) {
@@ -168,28 +169,18 @@ export default function Settings() {
 
   return (
     <div style={{ animation: 'fadeIn 0.3s ease' }}>
-      {/*
-        DECOY: A hidden username+password pair at the very top of the page.
-        Browsers scan for the first [type=password] to inject saved credentials into.
-        This invisible decoy absorbs the autofill so real fields are left untouched.
-      */}
-      <input type="text" name="username_decoy" style={{ display: 'none' }} readOnly tabIndex={-1} aria-hidden="true" />
-      <input type="password" name="password_decoy" style={{ display: 'none' }} readOnly tabIndex={-1} aria-hidden="true" />
-
       <div className="page-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <div>
           <h1 className="page-title">Configurações</h1>
           <p className="page-subtitle">Configure o comportamento e integrações do sistema</p>
         </div>
         {saveMsg && (
-          <span
-            style={{
-              fontSize: '0.83rem',
-              color: saveMsg.startsWith('✅') ? 'var(--accent-success)' : 'var(--accent-danger)',
-              animation: 'fadeIn 0.2s ease',
-              paddingTop: 8,
-            }}
-          >
+          <span style={{
+            fontSize: '0.83rem',
+            color: saveMsg.startsWith('✅') ? 'var(--accent-success)' : 'var(--accent-danger)',
+            animation: 'fadeIn 0.2s ease',
+            paddingTop: 8,
+          }}>
             {saveMsg}
           </span>
         )}
@@ -199,342 +190,264 @@ export default function Settings() {
       <div className="settings-section">
         <div className="settings-section-header">
           <div className="settings-section-title">⚡ Comportamento</div>
-          <div className="settings-section-desc">
-            Configure como o sistema processa as ofertas recebidas
-          </div>
+          <div className="settings-section-desc">Configure como o sistema processa as ofertas recebidas</div>
         </div>
-
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '16px 20px',
-            background: 'var(--bg-elevated)',
-            borderRadius: 'var(--radius-md)',
-            border: '1px solid var(--border-subtle)',
-          }}
-        >
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '16px 20px', background: 'var(--bg-elevated)',
+          borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)',
+        }}>
           <div>
-            <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-              Aprovação Automática
-            </div>
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 3 }}>
-              Aprova e envia ofertas automaticamente sem revisão manual
-            </div>
+            <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)' }}>Aprovação Automática</div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 3 }}>Aprova e envia ofertas automaticamente sem revisão manual</div>
           </div>
-          <Toggle
-            checked={settings?.autoApprove ?? false}
-            onChange={(v) => {
-              update('autoApprove', v)
-              save({ autoApprove: v })
-            }}
-          />
+          <Toggle checked={autoApprove} onChange={(v) => { setAutoApprove(v); save({ autoApprove: v }) }} />
         </div>
       </div>
 
       {/* ── Seção 2: Telegram Bot ──────────── */}
-      {/* Each section is its own <form autoComplete="off"> to prevent cross-section autofill */}
       <div className="settings-section">
         <div className="settings-section-header">
           <div className="settings-section-title">🤖 Telegram Bot (Envio)</div>
-          <div className="settings-section-desc">
-            Bot do Telegram usado para enviar as ofertas aos grupos destino
-          </div>
+          <div className="settings-section-desc">Bot do Telegram usado para enviar as ofertas aos grupos destino</div>
         </div>
 
-        <form autoComplete="off" onSubmit={(e) => e.preventDefault()}>
-          <div className="form-group">
-            <label className="label">Bot Token</label>
-            <input
-              className="input font-mono"
-              placeholder="1234567890:ABCDefGHIJKLMN..."
-              type="text"
-              autoComplete="new-password"
-              value={settings?.telegramBotToken ?? ''}
-              onChange={(e) => update('telegramBotToken', e.target.value)}
-            />
-          </div>
+        <div className="form-group">
+          <label className="label">Bot Token</label>
+          {/* data-lpignore and data-form-type tell LastPass, Bitwarden, and Chrome not to autofill */}
+          <input
+            ref={refBotToken}
+            className="input font-mono"
+            placeholder="1234567890:ABCDefGHIJKLMN..."
+            type="text"
+            autoComplete="new-password"
+            data-lpignore="true"
+            data-form-type="other"
+            name={`tg-bot-token-${Date.now()}`}
+          />
+        </div>
 
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 12,
-              marginTop: 16,
-            }}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 16 }}>
+          <TestButton label="Testar conexão" onTest={handleTestTgBot} status={testTgBot} />
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            onClick={() => save({ telegramBotToken: refBotToken.current?.value })}
+            disabled={saving}
           >
-            <TestButton
-              label="Testar conexão"
-              onTest={handleTestTgBot}
-              status={testTgBot}
-            />
-            <button
-              type="button"
-              className="btn btn-primary btn-sm"
-              onClick={() => save({ telegramBotToken: settings?.telegramBotToken })}
-              disabled={saving}
-            >
-              {saving ? <span className="spinner spinner-sm" /> : null}
-              Salvar
-            </button>
-          </div>
-        </form>
+            {saving ? <span className="spinner spinner-sm" /> : null}
+            Salvar
+          </button>
+        </div>
       </div>
 
       {/* ── Seção 3: Telegram Conta Pessoal ── */}
       <div className="settings-section">
         <div className="settings-section-header">
           <div className="settings-section-title">📱 Telegram (Leitura — Conta Pessoal)</div>
-          <div className="settings-section-desc">
-            Conta pessoal Telegram usada para monitorar os grupos fonte via MTProto
+          <div className="settings-section-desc">Conta pessoal Telegram usada para monitorar os grupos fonte via MTProto</div>
+        </div>
+
+        <div className="grid-2" style={{ marginBottom: 16 }}>
+          <div className="form-group">
+            <label className="label">API ID</label>
+            <input
+              ref={refApiId}
+              className="input font-mono"
+              placeholder="12345678"
+              type="text"
+              autoComplete="new-password"
+              data-lpignore="true"
+              data-form-type="other"
+              name={`tg-api-id-${Date.now()}`}
+              inputMode="numeric"
+              onKeyDown={(e) => {
+                // allow: digits, backspace, delete, arrows, tab
+                if (!/^\d$/.test(e.key) && !['Backspace','Delete','ArrowLeft','ArrowRight','Tab'].includes(e.key)) {
+                  e.preventDefault()
+                }
+              }}
+            />
+          </div>
+          <div className="form-group">
+            <label className="label">API Hash</label>
+            <input
+              ref={refApiHash}
+              className="input font-mono"
+              placeholder="0a1b2c3d4e5f..."
+              type="text"
+              autoComplete="new-password"
+              data-lpignore="true"
+              data-form-type="other"
+              name={`tg-api-hash-${Date.now()}`}
+            />
           </div>
         </div>
 
-        <form autoComplete="off" onSubmit={(e) => e.preventDefault()}>
-          <div className="grid-2" style={{ marginBottom: 16 }}>
-            <div className="form-group">
-              <label className="label">API ID</label>
-              <input
-                className="input font-mono"
-                placeholder="12345678"
-                type="text"
-                autoComplete="new-password"
-                inputMode="numeric"
-                value={settings?.telegramApiId ?? ''}
-                onChange={(e) => {
-                  const val = e.target.value.replace(/\D/g, '')
-                  update('telegramApiId', val ? Number(val) : undefined)
-                }}
-              />
-            </div>
-            <div className="form-group">
-              <label className="label">API Hash</label>
-              <input
-                className="input font-mono"
-                placeholder="0a1b2c3d4e5f..."
-                type="text"
-                autoComplete="new-password"
-                value={settings?.telegramApiHash ?? ''}
-                onChange={(e) => update('telegramApiHash', e.target.value)}
-              />
-            </div>
-          </div>
+        <div className="form-group">
+          <label className="label">Número de telefone</label>
+          <input
+            className="input"
+            placeholder="+5511999999999"
+            type="tel"
+            autoComplete="tel"
+            value={tgPhone}
+            onChange={(e) => setTgPhone(e.target.value)}
+          />
+        </div>
 
-          <div className="form-group">
-            <label className="label">Número de telefone</label>
-            <input
-              className="input"
-              placeholder="+5511999999999"
-              type="tel"
-              autoComplete="tel"
-              value={tgPhone}
-              onChange={(e) => setTgPhone(e.target.value)}
-            />
-          </div>
-
-          {/* Auth flow */}
-          <div
-            style={{
-              padding: '16px 20px',
-              background: 'var(--bg-elevated)',
-              borderRadius: 'var(--radius-md)',
-              border: '1px solid var(--border-subtle)',
-              marginBottom: 16,
-            }}
-          >
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                marginBottom: authMsg ? 12 : 0,
-              }}
-            >
-              <span
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  fontSize: '0.83rem',
-                  fontWeight: 600,
-                  color:
-                    authStep === 'done'
-                      ? 'var(--accent-success)'
-                      : 'var(--text-secondary)',
-                }}
-              >
-                {authStep === 'done' ? (
-                  <>
-                    <span className="status-dot online" />
-                    Autenticado
-                  </>
-                ) : (
-                  <>
-                    <span className="status-dot offline" />
-                    Não autenticado
-                  </>
-                )}
-              </span>
-
-              {authStep !== 'done' && (
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  onClick={handleStartAuth}
-                  disabled={authLoading || !tgPhone}
-                >
-                  {authLoading && authStep === 'idle' ? (
-                    <span className="spinner spinner-sm" />
-                  ) : null}
-                  🔑 Autenticar com Telegram
-                </button>
+        {/* Auth flow */}
+        <div style={{
+          padding: '16px 20px', background: 'var(--bg-elevated)',
+          borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)', marginBottom: 16,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: authMsg ? 12 : 0 }}>
+            <span style={{
+              display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.83rem', fontWeight: 600,
+              color: authStep === 'done' ? 'var(--accent-success)' : 'var(--text-secondary)',
+            }}>
+              {authStep === 'done' ? (
+                <><span className="status-dot online" />Autenticado</>
+              ) : (
+                <><span className="status-dot offline" />Não autenticado</>
               )}
-            </div>
-
-            {authMsg && (
-              <div
-                style={{
-                  fontSize: '0.82rem',
-                  color: authMsg.startsWith('✅')
-                    ? 'var(--accent-success)'
-                    : authMsg.startsWith('❌')
-                    ? 'var(--accent-danger)'
-                    : 'var(--accent-info)',
-                  marginBottom: 8,
-                }}
+            </span>
+            {authStep !== 'done' && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={handleStartAuth}
+                disabled={authLoading || !tgPhone}
               >
-                {authMsg}
-              </div>
-            )}
-
-            {authStep === 'code' && (
-              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginTop: 8 }}>
-                <div style={{ flex: 1 }}>
-                  <label className="label">Código de verificação (5 dígitos)</label>
-                  <input
-                    className="input font-mono"
-                    placeholder="12345"
-                    type="text"
-                    autoComplete="one-time-code"
-                    inputMode="numeric"
-                    maxLength={5}
-                    value={tgCode}
-                    onChange={(e) => setTgCode(e.target.value.replace(/\D/g, ''))}
-                  />
-                </div>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={handleVerifyAuth}
-                  disabled={authLoading || tgCode.length < 5}
-                >
-                  {authLoading ? <span className="spinner spinner-sm" /> : null}
-                  Confirmar código
-                </button>
-              </div>
+                {authLoading && authStep === 'idle' ? <span className="spinner spinner-sm" /> : null}
+                🔑 Autenticar com Telegram
+              </button>
             )}
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <button
-              type="button"
-              className="btn btn-primary btn-sm"
-              onClick={() =>
-                save({
-                  telegramApiId: settings?.telegramApiId,
-                  telegramApiHash: settings?.telegramApiHash,
-                  telegramPhone: tgPhone,
-                })
-              }
-              disabled={saving}
-            >
-              {saving ? <span className="spinner spinner-sm" /> : null}
-              Salvar
-            </button>
-          </div>
-        </form>
+          {authMsg && (
+            <div style={{
+              fontSize: '0.82rem',
+              color: authMsg.startsWith('✅') ? 'var(--accent-success)'
+                   : authMsg.startsWith('❌') ? 'var(--accent-danger)'
+                   : 'var(--accent-info)',
+              marginBottom: 8,
+            }}>
+              {authMsg}
+            </div>
+          )}
+
+          {authStep === 'code' && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginTop: 8 }}>
+              <div style={{ flex: 1 }}>
+                <label className="label">Código de verificação (5 dígitos)</label>
+                <input
+                  className="input font-mono"
+                  placeholder="12345"
+                  type="text"
+                  autoComplete="one-time-code"
+                  inputMode="numeric"
+                  maxLength={5}
+                  value={tgCode}
+                  onChange={(e) => setTgCode(e.target.value.replace(/\D/g, ''))}
+                />
+              </div>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleVerifyAuth}
+                disabled={authLoading || tgCode.length < 5}
+              >
+                {authLoading ? <span className="spinner spinner-sm" /> : null}
+                Confirmar código
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            onClick={() => save({
+              telegramApiId: refApiId.current?.value ? Number(refApiId.current.value) : undefined,
+              telegramApiHash: refApiHash.current?.value,
+              telegramPhone: tgPhone,
+            })}
+            disabled={saving}
+          >
+            {saving ? <span className="spinner spinner-sm" /> : null}
+            Salvar
+          </button>
+        </div>
       </div>
 
       {/* ── Seção 4: WhatsApp ──────────────── */}
       <div className="settings-section">
         <div className="settings-section-header">
           <div className="settings-section-title">💬 WhatsApp (Evolution API)</div>
-          <div className="settings-section-desc">
-            Integração com Evolution API para envio de mensagens WhatsApp
+          <div className="settings-section-desc">Integração com Evolution API para envio de mensagens WhatsApp</div>
+        </div>
+
+        <div className="form-group">
+          <label className="label">URL da Evolution API</label>
+          <input
+            ref={refEvolutionUrl}
+            className="input"
+            placeholder="https://api.seudominio.com"
+            type="text"
+            autoComplete="off"
+            data-lpignore="true"
+            data-form-type="other"
+            name={`ev-url-${Date.now()}`}
+          />
+        </div>
+
+        <div className="grid-2">
+          <div className="form-group">
+            <label className="label">API Key</label>
+            <input
+              ref={refEvolutionKey}
+              className="input font-mono"
+              placeholder="sua-api-key"
+              type="text"
+              autoComplete="new-password"
+              data-lpignore="true"
+              data-form-type="other"
+              name={`ev-key-${Date.now()}`}
+            />
+          </div>
+          <div className="form-group">
+            <label className="label">Nome da Instância</label>
+            <input
+              ref={refEvolutionInst}
+              className="input"
+              placeholder="minha-instancia"
+              type="text"
+              autoComplete="off"
+              data-lpignore="true"
+              data-form-type="other"
+              name={`ev-inst-${Date.now()}`}
+            />
           </div>
         </div>
 
-        <form autoComplete="off" onSubmit={(e) => e.preventDefault()}>
-          <div className="form-group">
-            <label className="label">URL da Evolution API</label>
-            <input
-              className="input"
-              placeholder="https://api.seudominio.com"
-              type="url"
-              autoComplete="off"
-              value={settings?.evolutionApiUrl ?? ''}
-              onChange={(e) => update('evolutionApiUrl', e.target.value)}
-            />
-          </div>
-
-          <div className="grid-2">
-            <div className="form-group">
-              <label className="label">API Key</label>
-              <input
-                className="input font-mono"
-                placeholder="sua-api-key"
-                type="text"
-                autoComplete="new-password"
-                value={settings?.evolutionApiKey ?? ''}
-                onChange={(e) => update('evolutionApiKey', e.target.value)}
-              />
-            </div>
-            <div className="form-group">
-              <label className="label">Nome da Instância</label>
-              <input
-                className="input"
-                placeholder="minha-instancia"
-                type="text"
-                autoComplete="off"
-                value={settings?.evolutionInstance ?? ''}
-                onChange={(e) => update('evolutionInstance', e.target.value)}
-              />
-            </div>
-          </div>
-
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 12,
-              marginTop: 16,
-            }}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 16 }}>
+          <TestButton label="Testar conexão" onTest={handleTestWa} status={testWa} />
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            onClick={() => save({
+              evolutionApiUrl:  refEvolutionUrl.current?.value,
+              evolutionApiKey:  refEvolutionKey.current?.value,
+              evolutionInstance: refEvolutionInst.current?.value,
+            })}
+            disabled={saving}
           >
-            <TestButton
-              label="Testar conexão"
-              onTest={handleTestWa}
-              status={testWa}
-            />
-            <button
-              type="button"
-              className="btn btn-primary btn-sm"
-              onClick={() =>
-                save({
-                  evolutionApiUrl: settings?.evolutionApiUrl,
-                  evolutionApiKey: settings?.evolutionApiKey,
-                  evolutionInstance: settings?.evolutionInstance,
-                })
-              }
-              disabled={saving}
-            >
-              {saving ? <span className="spinner spinner-sm" /> : null}
-              Salvar
-            </button>
-          </div>
-        </form>
+            {saving ? <span className="spinner spinner-sm" /> : null}
+            Salvar
+          </button>
+        </div>
       </div>
     </div>
   )
