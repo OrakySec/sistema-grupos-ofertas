@@ -14,7 +14,7 @@ interface TelegramAuthVerifyBody {
 }
 
 const TELEGRAM_LISTENER_URL = process.env.TELEGRAM_LISTENER_URL ?? 'http://telegram-listener:8080';
-const JWT_SECRET = process.env.JWT_SECRET ?? '';
+const JWT_SECRET = process.env.JWT_SECRET || 'changeme-jwt-secret';
 
 /** Build a camelCase settings object from the flat DB key→value map */
 function buildSettingsResponse(dbObj: Record<string, string>, authenticated = false): Record<string, any> {
@@ -49,7 +49,7 @@ export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   // Returns raw snake_case keys so the Python service can consume them directly.
   fastify.get('/internal', async (request, reply) => {
     const key = request.headers['x-internal-key'];
-    if (!JWT_SECRET || key !== JWT_SECRET) {
+    if (key !== JWT_SECRET) {
       return reply.code(401).send({ error: 'Unauthorized' });
     }
 
