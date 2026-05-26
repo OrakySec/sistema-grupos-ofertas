@@ -176,11 +176,11 @@ class ApiClient {
   }
 
   async approveOffer(id: string): Promise<{ success: boolean }> {
-    return this.request('POST', `/offers/${id}/approve`)
+    return this.request('PATCH', `/offers/${id}/approve`)
   }
 
   async rejectOffer(id: string): Promise<{ success: boolean }> {
-    return this.request('POST', `/offers/${id}/reject`)
+    return this.request('PATCH', `/offers/${id}/reject`)
   }
 
   async batchApproveOffers(ids: string[]): Promise<{ success: boolean; count: number }> {
