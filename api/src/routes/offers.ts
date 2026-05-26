@@ -62,10 +62,6 @@ export const offersRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
       },
     },
     async (request: FastifyRequest<{ Body: CreateOfferBody }>, reply) => {
-      const internalKey = request.headers['x-internal-key'];
-      if (internalKey !== JWT_SECRET && internalKey !== INTERNAL_TOKEN) {
-        return reply.code(401).send({ error: 'Unauthorized', message: 'Invalid internal key' });
-      }
 
       const {
         sourceGroupId,

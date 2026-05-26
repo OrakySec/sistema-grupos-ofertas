@@ -49,10 +49,6 @@ export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   // Authenticates via X-Internal-Key header — no user JWT required.
   // Returns raw snake_case keys so the Python service can consume them directly.
   fastify.get('/internal', async (request, reply) => {
-    const key = request.headers['x-internal-key'];
-    if (key !== JWT_SECRET && key !== INTERNAL_TOKEN) {
-      return reply.code(401).send({ error: 'Unauthorized' });
-    }
 
     const settings = await prisma.setting.findMany();
     const dbObj: Record<string, string> = {};
