@@ -49,6 +49,7 @@ export default function Settings() {
   const [autoApprove, setAutoApprove] = useState(false)
   const [testTgBot, setTestTgBot] = useState<TestStatus>('idle')
   const [testWa, setTestWa] = useState<TestStatus>('idle')
+  const [settingsData, setSettingsData] = useState<any>(null)
 
   // Telegram auth flow
   const [tgPhone, setTgPhone] = useState('')
@@ -73,17 +74,10 @@ export default function Settings() {
   const fetchSettings = useCallback(async () => {
     try {
       const s = await api.getSettings()
+      setSettingsData(s)
       setAutoApprove(s.autoApprove ?? false)
       setTgPhone(s.telegramPhone ?? '')
       if (s.telegramAuthenticated) setAuthStep('done')
-
-      // Populate uncontrolled fields once after load
-      if (refBotToken.current)      refBotToken.current.value      = s.telegramBotToken && s.telegramBotToken !== '***' ? s.telegramBotToken : ''
-      if (refApiId.current)         refApiId.current.value         = s.telegramApiId ? String(s.telegramApiId) : ''
-      if (refApiHash.current)       refApiHash.current.value       = s.telegramApiHash ?? ''
-      if (refEvolutionUrl.current)  refEvolutionUrl.current.value  = s.evolutionApiUrl ?? ''
-      if (refEvolutionKey.current)  refEvolutionKey.current.value  = s.evolutionApiKey && s.evolutionApiKey !== '***' ? s.evolutionApiKey : ''
-      if (refEvolutionInst.current) refEvolutionInst.current.value = s.evolutionInstance ?? ''
     } catch {
       // silent
     } finally {
@@ -97,7 +91,10 @@ export default function Settings() {
     setSaving(true)
     setSaveMsg('')
     try {
-      await api.updateSettings(fields as any)
+      const updated = await api.updateSettings(fields as any)
+      setSettingsData(updated)
+      setAutoApprove(updated.autoApprove ?? false)
+      setTgPhone(updated.telegramPhone ?? '')
       showSaveMsg('✅ Salvo com sucesso!')
     } catch (err) {
       showSaveMsg(`❌ ${err instanceof Error ? err.message : 'Erro ao salvar'}`)
@@ -217,6 +214,7 @@ export default function Settings() {
           {/* data-lpignore and data-form-type tell LastPass, Bitwarden, and Chrome not to autofill */}
           <input
             ref={refBotToken}
+            defaultValue={settingsData?.telegramBotToken && settingsData.telegramBotToken !== '***' ? settingsData.telegramBotToken : ''}
             className="input font-mono"
             placeholder="1234567890:ABCDefGHIJKLMN..."
             type="text"
@@ -253,6 +251,7 @@ export default function Settings() {
             <label className="label">API ID</label>
             <input
               ref={refApiId}
+              defaultValue={settingsData?.telegramApiId ? String(settingsData.telegramApiId) : ''}
               className="input font-mono"
               placeholder="12345678"
               type="text"
@@ -272,6 +271,7 @@ export default function Settings() {
             <label className="label">API Hash</label>
             <input
               ref={refApiHash}
+              defaultValue={settingsData?.telegramApiHash ?? ''}
               className="input font-mono"
               placeholder="0a1b2c3d4e5f..."
               type="text"
@@ -392,6 +392,7 @@ export default function Settings() {
           <label className="label">URL da Evolution API</label>
           <input
             ref={refEvolutionUrl}
+            defaultValue={settingsData?.evolutionApiUrl ?? ''}
             className="input"
             placeholder="https://api.seudominio.com"
             type="text"
@@ -407,6 +408,7 @@ export default function Settings() {
             <label className="label">API Key</label>
             <input
               ref={refEvolutionKey}
+              defaultValue={settingsData?.evolutionApiKey && settingsData.evolutionApiKey !== '***' ? settingsData.evolutionApiKey : ''}
               className="input font-mono"
               placeholder="sua-api-key"
               type="text"
@@ -420,6 +422,7 @@ export default function Settings() {
             <label className="label">Nome da Instância</label>
             <input
               ref={refEvolutionInst}
+              defaultValue={settingsData?.evolutionInstance ?? ''}
               className="input"
               placeholder="minha-instancia"
               type="text"
