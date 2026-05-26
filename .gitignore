@@ -1,0 +1,40 @@
+# Dependências
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Ambiente
+.env
+*.env.local
+
+# Build
+dist/
+build/
+.next/
+
+# Banco / Sessions
+*.session
+*.session-journal
+prisma/dev.db
+
+# Logs
+*.log
+logs/
+
+# Mídia (volumes Docker — não vai pro git)
+media/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker/

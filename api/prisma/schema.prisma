@@ -1,0 +1,97 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DestinationType {
+  TELEGRAM
+  WHATSAPP
+}
+
+enum MediaType {
+  NONE
+  PHOTO
+  VIDEO
+  DOCUMENT
+}
+
+enum OfferStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SENT
+  FAILED
+}
+
+enum DeliveryStatus {
+  SUCCESS
+  FAILED
+}
+
+model SourceGroup {
+  id         String   @id @default(cuid())
+  telegramId BigInt   @unique
+  name       String
+  username   String?
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  offers Offer[]
+}
+
+model DestinationGroup {
+  id        String          @id @default(cuid())
+  name      String
+  type      DestinationType
+  chatId    String
+  isActive  Boolean         @default(true)
+  createdAt DateTime        @default(now())
+
+  deliveryLogs DeliveryLog[]
+}
+
+model Offer {
+  id               String      @id @default(cuid())
+  sourceGroupId    String
+  telegramMessageId BigInt
+  text             String?     @db.Text
+  mediaType        MediaType   @default(NONE)
+  mediaLocalPath   String?
+  mediaCaption     String?     @db.Text
+  senderName       String?
+  status           OfferStatus @default(PENDING)
+  originalDate     DateTime
+  createdAt        DateTime    @default(now())
+  reviewedAt       DateTime?
+  sentAt           DateTime?
+
+  sourceGroup  SourceGroup   @relation(fields: [sourceGroupId], references: [id])
+  deliveryLogs DeliveryLog[]
+
+  @@unique([telegramMessageId, sourceGroupId])
+}
+
+model DeliveryLog {
+  id                 String         @id @default(cuid())
+  offerId            String
+  destinationGroupId String
+  status             DeliveryStatus
+  errorMessage       String?
+  sentAt             DateTime       @default(now())
+
+  offer            Offer            @relation(fields: [offerId], references: [id])
+  destinationGroup DestinationGroup @relation(fields: [destinationGroupId], references: [id])
+}
+
+model Setting {
+  key       String   @id
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt
+}
