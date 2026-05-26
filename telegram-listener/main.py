@@ -468,7 +468,12 @@ async def _apply_settings(settings: dict, http_session: aiohttp.ClientSession, *
             logger.info("Credentials available — starting Telethon client …")
             await start_client(http_session)
         else:
-            logger.info("Credentials incomplete — Telethon client not started")
+            missing = []
+            if not state.api_id: missing.append("API ID")
+            if not state.api_hash: missing.append("API Hash")
+            if not state.phone: missing.append("Telefone")
+            state.last_error = f"Credenciais incompletas no banco (faltando: {', '.join(missing)})"
+            logger.info(f"Credentials incomplete (missing {', '.join(missing)}) — Telethon client not started")
         return
 
     # Credentials unchanged but groups may have changed
