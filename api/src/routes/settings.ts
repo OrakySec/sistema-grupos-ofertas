@@ -13,7 +13,7 @@ interface TelegramAuthVerifyBody {
   code: string;
 }
 
-const TELEGRAM_LISTENER_URL = process.env.TELEGRAM_LISTENER_URL ?? 'http://telegram-listener:8000';
+const TELEGRAM_LISTENER_URL = process.env.TELEGRAM_LISTENER_URL ?? 'http://telegram-listener:8080';
 
 export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   fastify.addHook('preHandler', requireAuth);
@@ -21,33 +21,69 @@ export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   // GET /settings
   fastify.get('/', async (_request, reply) => {
     const settings = await prisma.setting.findMany();
-    const obj: Record<string, string> = {};
+    const dbObj: Record<string, string> = {};
     for (const s of settings) {
-      // Mask sensitive values
-      if (s.key === 'telegram_bot_token' || s.key === 'evolution_api_key') {
-        obj[s.key] = s.value ? '***' : '';
-      } else {
-        obj[s.key] = s.value;
-      }
+      dbObj[s.key] = s.value;
     }
-    return reply.send(obj);
+
+    // Map to camelCase for the frontend
+    const responseObj: Record<string, any> = {
+      autoApprove: dbObj.auto_approve === 'true',
+      telegramBotToken: dbObj.telegram_bot_token ? '***' : '',
+      telegramApiId: dbObj.telegram_api_id ? Number(dbObj.telegram_api_id) : undefined,
+      telegramApiHash: dbObj.telegram_api_hash ?? '',
+      telegramPhone: dbObj.telegram_phone ?? '',
+      evolutionApiUrl: dbObj.evolution_api_url ?? '',
+      evolutionApiKey: dbObj.evolution_api_key ? '***' : '',
+      evolutionInstance: dbObj.evolution_instance ?? '',
+      telegramAuthenticated: false,
+    };
+
+    // Try to fetch telegram authentication status from the listener
+    try {
+      const statusResponse = await axios.get(`${TELEGRAM_LISTENER_URL}/status`, { timeout: 2000 });
+      responseObj.telegramAuthenticated = !!statusResponse.data.authenticated;
+    } catch (err: any) {
+      fastify.log.warn(`Could not fetch status from telegram-listener: ${err.message}`);
+    }
+
+    return reply.send(responseObj);
   });
 
   // PUT /settings
-  fastify.put<{ Body: UpsertSettingsBody }>(
+  fastify.put(
     '/',
-    {
-      schema: {
-        body: {
-          type: 'object',
-          additionalProperties: { type: 'string' },
-        },
-      },
-    },
     async (request, reply) => {
-      const updates = request.body;
+      const updates = request.body as Record<string, any>;
+      const dbUpdates: Record<string, string> = {};
 
-      const upsertOps = Object.entries(updates).map(([key, value]) =>
+      // Map incoming keys to DB keys
+      if ('autoApprove' in updates) {
+        dbUpdates.auto_approve = String(updates.autoApprove);
+      }
+      if ('telegramBotToken' in updates && updates.telegramBotToken !== '***') {
+        dbUpdates.telegram_bot_token = updates.telegramBotToken ?? '';
+      }
+      if ('telegramApiId' in updates) {
+        dbUpdates.telegram_api_id = updates.telegramApiId ? String(updates.telegramApiId) : '';
+      }
+      if ('telegramApiHash' in updates) {
+        dbUpdates.telegram_api_hash = updates.telegramApiHash ?? '';
+      }
+      if ('telegramPhone' in updates) {
+        dbUpdates.telegram_phone = updates.telegramPhone ?? '';
+      }
+      if ('evolutionApiUrl' in updates) {
+        dbUpdates.evolution_api_url = updates.evolutionApiUrl ?? '';
+      }
+      if ('evolutionApiKey' in updates && updates.evolutionApiKey !== '***') {
+        dbUpdates.evolution_api_key = updates.evolutionApiKey ?? '';
+      }
+      if ('evolutionInstance' in updates) {
+        dbUpdates.evolution_instance = updates.evolutionInstance ?? '';
+      }
+
+      const upsertOps = Object.entries(dbUpdates).map(([key, value]) =>
         prisma.setting.upsert({
           where: { key },
           update: { value },
@@ -57,7 +93,33 @@ export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
 
       await Promise.all(upsertOps);
 
-      return reply.send({ success: true, updatedKeys: Object.keys(updates) });
+      // Fetch the updated settings and return in the camelCase format
+      const settings = await prisma.setting.findMany();
+      const dbObj: Record<string, string> = {};
+      for (const s of settings) {
+        dbObj[s.key] = s.value;
+      }
+
+      const responseObj: Record<string, any> = {
+        autoApprove: dbObj.auto_approve === 'true',
+        telegramBotToken: dbObj.telegram_bot_token ? '***' : '',
+        telegramApiId: dbObj.telegram_api_id ? Number(dbObj.telegram_api_id) : undefined,
+        telegramApiHash: dbObj.telegram_api_hash ?? '',
+        telegramPhone: dbObj.telegram_phone ?? '',
+        evolutionApiUrl: dbObj.evolution_api_url ?? '',
+        evolutionApiKey: dbObj.evolution_api_key ? '***' : '',
+        evolutionInstance: dbObj.evolution_instance ?? '',
+        telegramAuthenticated: false,
+      };
+
+      try {
+        const statusResponse = await axios.get(`${TELEGRAM_LISTENER_URL}/status`, { timeout: 2000 });
+        responseObj.telegramAuthenticated = !!statusResponse.data.authenticated;
+      } catch (err: any) {
+        // silent warning
+      }
+
+      return reply.send(responseObj);
     },
   );
 
@@ -93,10 +155,11 @@ export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     }
   });
 
-  // POST /settings/telegram-auth-start
-  fastify.post('/telegram-auth-start', async (_request, reply) => {
+  // POST /settings/telegram-auth/start
+  fastify.post<{ Body: { phone: string } }>('/telegram-auth/start', async (request, reply) => {
+    const { phone } = request.body;
     try {
-      const response = await axios.post(`${TELEGRAM_LISTENER_URL}/auth/start`, {}, {
+      const response = await axios.post(`${TELEGRAM_LISTENER_URL}/auth/start`, { phone }, {
         timeout: 15000,
       });
       return reply.send({ success: true, data: response.data });
@@ -107,9 +170,9 @@ export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     }
   });
 
-  // POST /settings/telegram-auth-verify
+  // POST /settings/telegram-auth/verify
   fastify.post<{ Body: TelegramAuthVerifyBody }>(
-    '/telegram-auth-verify',
+    '/telegram-auth/verify',
     {
       schema: {
         body: {

@@ -284,9 +284,13 @@ export default function Settings() {
             <input
               className="input font-mono"
               placeholder="12345678"
-              type="number"
+              type="text"
+              autoComplete="off"
               value={settings?.telegramApiId ?? ''}
-              onChange={(e) => update('telegramApiId', Number(e.target.value))}
+              onChange={(e) => {
+                const val = e.target.value.replace(/\D/g, '')
+                update('telegramApiId', val ? Number(val) : '')
+              }}
             />
           </div>
           <div className="form-group">
@@ -294,7 +298,8 @@ export default function Settings() {
             <input
               className="input font-mono"
               placeholder="0a1b2c3d4e5f..."
-              type="password"
+              type="text"
+              autoComplete="off"
               value={settings?.telegramApiHash ?? ''}
               onChange={(e) => update('telegramApiHash', e.target.value)}
             />
