@@ -182,15 +182,15 @@ def _sender_name(sender) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 async def fetch_settings(session: aiohttp.ClientSession) -> Optional[dict]:
-    """GET /settings from the internal API.  Returns the JSON body or None."""
-    url = f"{INTERNAL_API_URL}/settings"
+    """GET /settings/internal from the internal API.  Returns the JSON body or None."""
+    url = f"{INTERNAL_API_URL}/settings/internal"
     try:
         async with session.get(url, headers=_internal_headers(), timeout=aiohttp.ClientTimeout(total=10)) as resp:
             if resp.status == 200:
                 data = await resp.json()
                 logger.debug(f"Settings fetched: {data}")
                 return data
-            logger.warning(f"GET /settings returned HTTP {resp.status}")
+            logger.warning(f"GET /settings/internal returned HTTP {resp.status}")
     except Exception as exc:
         logger.warning(f"Failed to fetch settings: {exc}")
     return None
@@ -592,6 +592,29 @@ async def route_reload(request: web.Request) -> web.Response:
     )
 
 
+async def route_reload_settings(request: web.Request) -> web.Response:
+    """
+    POST /reload-settings
+    Forces an immediate re-fetch of credentials from the API and recreates
+    the Telethon client if they changed.  Called by the API right after
+    PUT /settings so the user does not have to wait up to 60 s for the poll loop.
+    """
+    http_session: aiohttp.ClientSession = request.app["http_session"]
+    settings = await fetch_settings(http_session)
+    if settings is None:
+        return web.json_response({"error": "Could not fetch settings from API"}, status=502)
+
+    await _apply_settings(settings, http_session, initial=True)
+    logger.info("Settings reloaded via /reload-settings")
+    return web.json_response(
+        {
+            "ok": True,
+            "clientReady": state.client is not None,
+            "authenticated": state.authenticated,
+        }
+    )
+
+
 # ---------------------------------------------------------------------------
 # Application lifecycle
 # ---------------------------------------------------------------------------
@@ -644,6 +667,7 @@ def build_app() -> web.Application:
     app.router.add_post("/auth/start", route_auth_start)
     app.router.add_post("/auth/verify", route_auth_verify)
     app.router.add_post("/reload", route_reload)
+    app.router.add_post("/reload-settings", route_reload_settings)
 
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)

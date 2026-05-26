@@ -14,40 +14,76 @@ interface TelegramAuthVerifyBody {
 }
 
 const TELEGRAM_LISTENER_URL = process.env.TELEGRAM_LISTENER_URL ?? 'http://telegram-listener:8080';
+const JWT_SECRET = process.env.JWT_SECRET ?? '';
+
+/** Build a camelCase settings object from the flat DB key→value map */
+function buildSettingsResponse(dbObj: Record<string, string>, authenticated = false): Record<string, any> {
+  return {
+    autoApprove: dbObj.auto_approve === 'true',
+    telegramBotToken: dbObj.telegram_bot_token ? '***' : '',
+    telegramApiId: dbObj.telegram_api_id ? Number(dbObj.telegram_api_id) : undefined,
+    telegramApiHash: dbObj.telegram_api_hash ?? '',
+    telegramPhone: dbObj.telegram_phone ?? '',
+    evolutionApiUrl: dbObj.evolution_api_url ?? '',
+    evolutionApiKey: dbObj.evolution_api_key ? '***' : '',
+    evolutionInstance: dbObj.evolution_instance ?? '',
+    telegramAuthenticated: authenticated,
+  };
+}
+
+/** Notify the telegram-listener to reload settings immediately (best-effort). */
+async function notifyListenerReload(log: any): Promise<void> {
+  try {
+    await axios.post(`${TELEGRAM_LISTENER_URL}/reload-settings`, {}, { timeout: 5000 });
+    log.info('telegram-listener notified to reload settings');
+  } catch (err: any) {
+    log.warn(`Could not notify telegram-listener: ${err.message}`);
+  }
+}
 
 export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
+
+  // ── GET /settings/internal ──────────────────────────────────────────────────
+  // Internal-only endpoint used by the telegram-listener service.
+  // Authenticates via X-Internal-Key header — no user JWT required.
+  // Returns raw snake_case keys so the Python service can consume them directly.
+  fastify.get('/internal', async (request, reply) => {
+    const key = request.headers['x-internal-key'];
+    if (!JWT_SECRET || key !== JWT_SECRET) {
+      return reply.code(401).send({ error: 'Unauthorized' });
+    }
+
+    const settings = await prisma.setting.findMany();
+    const dbObj: Record<string, string> = {};
+    for (const s of settings) dbObj[s.key] = s.value;
+
+    // Return raw keys so the Python listener can read them directly
+    return reply.send({
+      telegram_api_id: dbObj.telegram_api_id ?? '',
+      telegram_api_hash: dbObj.telegram_api_hash ?? '',
+      telegram_phone: dbObj.telegram_phone ?? '',
+      telegram_bot_token: dbObj.telegram_bot_token ?? '',
+    });
+  });
+
+  // All routes below require a user JWT
   fastify.addHook('preHandler', requireAuth);
 
   // GET /settings
   fastify.get('/', async (_request, reply) => {
     const settings = await prisma.setting.findMany();
     const dbObj: Record<string, string> = {};
-    for (const s of settings) {
-      dbObj[s.key] = s.value;
-    }
+    for (const s of settings) dbObj[s.key] = s.value;
 
-    // Map to camelCase for the frontend
-    const responseObj: Record<string, any> = {
-      autoApprove: dbObj.auto_approve === 'true',
-      telegramBotToken: dbObj.telegram_bot_token ? '***' : '',
-      telegramApiId: dbObj.telegram_api_id ? Number(dbObj.telegram_api_id) : undefined,
-      telegramApiHash: dbObj.telegram_api_hash ?? '',
-      telegramPhone: dbObj.telegram_phone ?? '',
-      evolutionApiUrl: dbObj.evolution_api_url ?? '',
-      evolutionApiKey: dbObj.evolution_api_key ? '***' : '',
-      evolutionInstance: dbObj.evolution_instance ?? '',
-      telegramAuthenticated: false,
-    };
-
-    // Try to fetch telegram authentication status from the listener
+    let authenticated = false;
     try {
       const statusResponse = await axios.get(`${TELEGRAM_LISTENER_URL}/status`, { timeout: 2000 });
-      responseObj.telegramAuthenticated = !!statusResponse.data.authenticated;
+      authenticated = !!statusResponse.data.authenticated;
     } catch (err: any) {
       fastify.log.warn(`Could not fetch status from telegram-listener: ${err.message}`);
     }
 
-    return reply.send(responseObj);
+    return reply.send(buildSettingsResponse(dbObj, authenticated));
   });
 
   // PUT /settings
@@ -58,68 +94,36 @@ export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
       const dbUpdates: Record<string, string> = {};
 
       // Map incoming keys to DB keys
-      if ('autoApprove' in updates) {
-        dbUpdates.auto_approve = String(updates.autoApprove);
-      }
-      if ('telegramBotToken' in updates && updates.telegramBotToken !== '***') {
-        dbUpdates.telegram_bot_token = updates.telegramBotToken ?? '';
-      }
-      if ('telegramApiId' in updates) {
-        dbUpdates.telegram_api_id = updates.telegramApiId ? String(updates.telegramApiId) : '';
-      }
-      if ('telegramApiHash' in updates) {
-        dbUpdates.telegram_api_hash = updates.telegramApiHash ?? '';
-      }
-      if ('telegramPhone' in updates) {
-        dbUpdates.telegram_phone = updates.telegramPhone ?? '';
-      }
-      if ('evolutionApiUrl' in updates) {
-        dbUpdates.evolution_api_url = updates.evolutionApiUrl ?? '';
-      }
-      if ('evolutionApiKey' in updates && updates.evolutionApiKey !== '***') {
-        dbUpdates.evolution_api_key = updates.evolutionApiKey ?? '';
-      }
-      if ('evolutionInstance' in updates) {
-        dbUpdates.evolution_instance = updates.evolutionInstance ?? '';
-      }
+      if ('autoApprove' in updates) dbUpdates.auto_approve = String(updates.autoApprove);
+      if ('telegramBotToken' in updates && updates.telegramBotToken !== '***') dbUpdates.telegram_bot_token = updates.telegramBotToken ?? '';
+      if ('telegramApiId' in updates) dbUpdates.telegram_api_id = updates.telegramApiId ? String(updates.telegramApiId) : '';
+      if ('telegramApiHash' in updates) dbUpdates.telegram_api_hash = updates.telegramApiHash ?? '';
+      if ('telegramPhone' in updates) dbUpdates.telegram_phone = updates.telegramPhone ?? '';
+      if ('evolutionApiUrl' in updates) dbUpdates.evolution_api_url = updates.evolutionApiUrl ?? '';
+      if ('evolutionApiKey' in updates && updates.evolutionApiKey !== '***') dbUpdates.evolution_api_key = updates.evolutionApiKey ?? '';
+      if ('evolutionInstance' in updates) dbUpdates.evolution_instance = updates.evolutionInstance ?? '';
 
-      const upsertOps = Object.entries(dbUpdates).map(([key, value]) =>
-        prisma.setting.upsert({
-          where: { key },
-          update: { value },
-          create: { key, value },
-        }),
+      await Promise.all(
+        Object.entries(dbUpdates).map(([key, value]) =>
+          prisma.setting.upsert({ where: { key }, update: { value }, create: { key, value } }),
+        ),
       );
 
-      await Promise.all(upsertOps);
+      // If Telegram credentials were touched, notify the listener immediately
+      const touchedTelegram = ['telegramApiId', 'telegramApiHash', 'telegramPhone'].some((k) => k in updates);
+      if (touchedTelegram) await notifyListenerReload(fastify.log);
 
-      // Fetch the updated settings and return in the camelCase format
       const settings = await prisma.setting.findMany();
       const dbObj: Record<string, string> = {};
-      for (const s of settings) {
-        dbObj[s.key] = s.value;
-      }
+      for (const s of settings) dbObj[s.key] = s.value;
 
-      const responseObj: Record<string, any> = {
-        autoApprove: dbObj.auto_approve === 'true',
-        telegramBotToken: dbObj.telegram_bot_token ? '***' : '',
-        telegramApiId: dbObj.telegram_api_id ? Number(dbObj.telegram_api_id) : undefined,
-        telegramApiHash: dbObj.telegram_api_hash ?? '',
-        telegramPhone: dbObj.telegram_phone ?? '',
-        evolutionApiUrl: dbObj.evolution_api_url ?? '',
-        evolutionApiKey: dbObj.evolution_api_key ? '***' : '',
-        evolutionInstance: dbObj.evolution_instance ?? '',
-        telegramAuthenticated: false,
-      };
-
+      let authenticated = false;
       try {
         const statusResponse = await axios.get(`${TELEGRAM_LISTENER_URL}/status`, { timeout: 2000 });
-        responseObj.telegramAuthenticated = !!statusResponse.data.authenticated;
-      } catch (err: any) {
-        // silent warning
-      }
+        authenticated = !!statusResponse.data.authenticated;
+      } catch { /* silent */ }
 
-      return reply.send(responseObj);
+      return reply.send(buildSettingsResponse(dbObj, authenticated));
     },
   );
 
