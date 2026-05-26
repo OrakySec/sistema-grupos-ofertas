@@ -98,10 +98,8 @@ class ApiClient {
     return localStorage.getItem('auth_token')
   }
 
-  private getHeaders(): HeadersInit {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    }
+  private getHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {}
     const token = this.getToken()
     if (token) {
       headers['Authorization'] = `Bearer ${token}`
@@ -114,9 +112,14 @@ class ApiClient {
     path: string,
     body?: unknown
   ): Promise<T> {
+    const headers = this.getHeaders()
+    if (body !== undefined) {
+      headers['Content-Type'] = 'application/json'
+    }
+
     const res = await fetch(`${this.baseUrl}${path}`, {
       method,
-      headers: this.getHeaders(),
+      headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
 
