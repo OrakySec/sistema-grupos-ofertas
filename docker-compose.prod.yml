@@ -2,9 +2,7 @@ version: '3.8'
 
 services:
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    image: ghcr.io/orakysec/sistema-grupos-ofertas-frontend:latest
     container_name: ofertas_frontend
     restart: unless-stopped
     depends_on:
@@ -21,9 +19,7 @@ services:
       - "traefik.http.services.ofertas-frontend.loadbalancer.server.port=80"
 
   api:
-    build:
-      context: ./api
-      dockerfile: Dockerfile
+    image: ghcr.io/orakysec/sistema-grupos-ofertas-api:latest
     container_name: ofertas_api
     restart: unless-stopped
     depends_on:
@@ -55,9 +51,7 @@ services:
       - "traefik.http.services.ofertas-api.loadbalancer.server.port=3001"
 
   worker:
-    build:
-      context: ./api
-      dockerfile: Dockerfile.worker
+    image: ghcr.io/orakysec/sistema-grupos-ofertas-worker:latest
     container_name: ofertas_worker
     restart: unless-stopped
     depends_on:
@@ -74,9 +68,7 @@ services:
       - ofertas_net
 
   telegram-listener:
-    build:
-      context: ./telegram-listener
-      dockerfile: Dockerfile
+    image: ghcr.io/orakysec/sistema-grupos-ofertas-telegram-listener:latest
     container_name: ofertas_telegram_listener
     restart: unless-stopped
     depends_on:
