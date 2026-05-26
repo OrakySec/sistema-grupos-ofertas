@@ -224,7 +224,7 @@ export default function Settings() {
           {/* data-lpignore and data-form-type tell LastPass, Bitwarden, and Chrome not to autofill */}
           <input
             ref={refBotToken}
-            defaultValue={settingsData?.telegramBotToken && settingsData.telegramBotToken !== '***' ? settingsData.telegramBotToken : ''}
+            defaultValue={settingsData?.telegramBotToken || ''}
             className="input font-mono"
             placeholder="1234567890:ABCDefGHIJKLMN..."
             type="text"
@@ -418,7 +418,7 @@ export default function Settings() {
             <label className="label">API Key</label>
             <input
               ref={refEvolutionKey}
-              defaultValue={settingsData?.evolutionApiKey && settingsData.evolutionApiKey !== '***' ? settingsData.evolutionApiKey : ''}
+              defaultValue={settingsData?.evolutionApiKey ? '***' : ''}
               className="input font-mono"
               placeholder="sua-api-key"
               type="text"
