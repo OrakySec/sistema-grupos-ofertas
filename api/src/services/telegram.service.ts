@@ -33,20 +33,25 @@ export class TelegramService {
 
   async sendText(chatId: string, text: string): Promise<void> {
     const apiUrl = await this.getApiUrl();
-    const response = await axios.post(
-      `${apiUrl}/sendMessage`,
-      {
-        chat_id: chatId,
-        text,
-        parse_mode: 'HTML',
-      },
-      { timeout: 30000 },
-    );
-
-    if (!response.data?.ok) {
-      throw new Error(
-        `Telegram sendMessage failed: ${JSON.stringify(response.data)}`,
+    try {
+      const response = await axios.post(
+        `${apiUrl}/sendMessage`,
+        {
+          chat_id: chatId,
+          text,
+          parse_mode: 'HTML',
+        },
+        { timeout: 30000 },
       );
+
+      if (!response.data?.ok) {
+        throw new Error(
+          `Telegram sendMessage failed: ${JSON.stringify(response.data)}`,
+        );
+      }
+    } catch (err: any) {
+      const details = err.response?.data?.description || err.message;
+      throw new Error(`Telegram sendText failed: ${details}`);
     }
   }
 
@@ -67,15 +72,20 @@ export class TelegramService {
       form.append('parse_mode', 'HTML');
     }
 
-    const response = await axios.post(`${apiUrl}/sendPhoto`, form, {
-      headers: form.getHeaders(),
-      timeout: 60000,
-    });
+    try {
+      const response = await axios.post(`${apiUrl}/sendPhoto`, form, {
+        headers: form.getHeaders(),
+        timeout: 60000,
+      });
 
-    if (!response.data?.ok) {
-      throw new Error(
-        `Telegram sendPhoto failed: ${JSON.stringify(response.data)}`,
-      );
+      if (!response.data?.ok) {
+        throw new Error(
+          `Telegram sendPhoto failed: ${JSON.stringify(response.data)}`,
+        );
+      }
+    } catch (err: any) {
+      const details = err.response?.data?.description || err.message;
+      throw new Error(`Telegram sendPhoto failed: ${details}`);
     }
   }
 
@@ -96,15 +106,20 @@ export class TelegramService {
       form.append('parse_mode', 'HTML');
     }
 
-    const response = await axios.post(`${apiUrl}/sendDocument`, form, {
-      headers: form.getHeaders(),
-      timeout: 60000,
-    });
+    try {
+      const response = await axios.post(`${apiUrl}/sendDocument`, form, {
+        headers: form.getHeaders(),
+        timeout: 60000,
+      });
 
-    if (!response.data?.ok) {
-      throw new Error(
-        `Telegram sendDocument failed: ${JSON.stringify(response.data)}`,
-      );
+      if (!response.data?.ok) {
+        throw new Error(
+          `Telegram sendDocument failed: ${JSON.stringify(response.data)}`,
+        );
+      }
+    } catch (err: any) {
+      const details = err.response?.data?.description || err.message;
+      throw new Error(`Telegram sendDocument failed: ${details}`);
     }
   }
 }
