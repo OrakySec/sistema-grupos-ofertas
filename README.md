@@ -20,7 +20,7 @@ Sistema web para monitorar grupos do Telegram e replicar ofertas automaticamente
 ## Pré-requisitos
 
 - Docker + Docker Compose instalado no servidor
-- Traefik configurado com rede externa `traefik_public` e certresolver `letsencrypt`
+- Traefik configurado com rede externa `YkaroNET` e certresolver `letsencrypt`
 - Evolution API rodando separadamente (opcional no início)
 
 ---
@@ -78,9 +78,9 @@ docker compose -f docker-compose.prod.yml up -d
 Este projeto está pronto para deploy no Portainer utilizando **GitHub Container Registry (GHCR)**.
 
 ### Passo 1: Pré-requisitos
-Certifique-se de que a rede externa do Traefik existe no seu Docker host:
+Certifique-se de que a rede externa do Traefik (`YkaroNET`) existe no seu Docker host:
 ```bash
-docker network create traefik_public
+docker network create --driver overlay --attachable YkaroNET
 ```
 
 ### Passo 2: Adicionar a Stack no Portainer
