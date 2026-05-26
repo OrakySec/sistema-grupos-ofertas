@@ -9,10 +9,10 @@ services:
       - api
     networks:
       - ofertas_net
-      - traefik_public
+      - YkaroNET
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=traefik_public"
+      - "traefik.docker.network=YkaroNET"
       - "traefik.http.routers.ofertas-frontend.rule=Host(`ofertas.ykaromarques.com`)"
       - "traefik.http.routers.ofertas-frontend.entrypoints=websecure"
       - "traefik.http.routers.ofertas-frontend.tls.certresolver=letsencrypt"
@@ -39,10 +39,10 @@ services:
       - media_data:/app/media
     networks:
       - ofertas_net
-      - traefik_public
+      - YkaroNET
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=traefik_public"
+      - "traefik.docker.network=YkaroNET"
       - "traefik.http.routers.ofertas-api.rule=Host(`ofertas.ykaromarques.com`) && PathPrefix(`/api`)"
       - "traefik.http.routers.ofertas-api.entrypoints=websecure"
       - "traefik.http.routers.ofertas-api.tls.certresolver=letsencrypt"
@@ -125,5 +125,5 @@ volumes:
 networks:
   ofertas_net:
     driver: bridge
-  traefik_public:
+  YkaroNET:
     external: true
