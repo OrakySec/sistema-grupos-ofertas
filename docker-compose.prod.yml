@@ -3,25 +3,27 @@ version: '3.8'
 services:
   frontend:
     image: ghcr.io/orakysec/sistema-grupos-ofertas-frontend:latest
-    container_name: ofertas_frontend
-    restart: unless-stopped
     depends_on:
       - api
     networks:
       - ofertas_net
       - YkaroNET
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=YkaroNET"
-      - "traefik.http.routers.ofertas-frontend.rule=Host(`ofertas.ykaromarques.com`)"
-      - "traefik.http.routers.ofertas-frontend.entrypoints=websecure"
-      - "traefik.http.routers.ofertas-frontend.tls.certresolver=letsencrypt"
-      - "traefik.http.services.ofertas-frontend.loadbalancer.server.port=80"
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=YkaroNET"
+        - "traefik.http.routers.ofertas-frontend.rule=Host(`ofertas.ykaromarques.com`)"
+        - "traefik.http.routers.ofertas-frontend.entrypoints=websecure"
+        - "traefik.http.routers.ofertas-frontend.tls.certresolver=letsencryptresolver"
+        - "traefik.http.services.ofertas-frontend.loadbalancer.server.port=80"
 
   api:
     image: ghcr.io/orakysec/sistema-grupos-ofertas-api:latest
-    container_name: ofertas_api
-    restart: unless-stopped
     depends_on:
       - postgres
       - redis
@@ -40,20 +42,24 @@ services:
     networks:
       - ofertas_net
       - YkaroNET
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=YkaroNET"
-      - "traefik.http.routers.ofertas-api.rule=Host(`ofertas.ykaromarques.com`) && PathPrefix(`/api`)"
-      - "traefik.http.routers.ofertas-api.entrypoints=websecure"
-      - "traefik.http.routers.ofertas-api.tls.certresolver=letsencrypt"
-      - "traefik.http.middlewares.ofertas-api-strip.stripprefix.prefixes=/api"
-      - "traefik.http.routers.ofertas-api.middlewares=ofertas-api-strip"
-      - "traefik.http.services.ofertas-api.loadbalancer.server.port=3001"
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=YkaroNET"
+        - "traefik.http.routers.ofertas-api.rule=Host(`ofertas.ykaromarques.com`) && PathPrefix(`/api`)"
+        - "traefik.http.routers.ofertas-api.entrypoints=websecure"
+        - "traefik.http.routers.ofertas-api.tls.certresolver=letsencryptresolver"
+        - "traefik.http.middlewares.ofertas-api-strip.stripprefix.prefixes=/api"
+        - "traefik.http.routers.ofertas-api.middlewares=ofertas-api-strip"
+        - "traefik.http.services.ofertas-api.loadbalancer.server.port=3001"
 
   worker:
     image: ghcr.io/orakysec/sistema-grupos-ofertas-worker:latest
-    container_name: ofertas_worker
-    restart: unless-stopped
     depends_on:
       - postgres
       - redis
@@ -66,11 +72,13 @@ services:
       - media_data:/app/media
     networks:
       - ofertas_net
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
 
   telegram-listener:
     image: ghcr.io/orakysec/sistema-grupos-ofertas-telegram-listener:latest
-    container_name: ofertas_telegram_listener
-    restart: unless-stopped
     depends_on:
       - api
     environment:
@@ -82,11 +90,13 @@ services:
       - telegram_sessions:/app/sessions
     networks:
       - ofertas_net
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
 
   postgres:
     image: postgres:16-alpine
-    container_name: ofertas_postgres
-    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -100,11 +110,13 @@ services:
       retries: 5
     networks:
       - ofertas_net
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
 
   redis:
     image: redis:7-alpine
-    container_name: ofertas_redis
-    restart: unless-stopped
     command: redis-server --appendonly yes
     volumes:
       - redis_data:/data
@@ -115,6 +127,10 @@ services:
       retries: 5
     networks:
       - ofertas_net
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
 
 volumes:
   postgres_data:
