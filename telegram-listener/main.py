@@ -84,6 +84,7 @@ class AppState:
         self.client: Optional[TelegramClient] = None
         self.authenticated: bool = False
         self.connected: bool = False
+        self.last_error: Optional[str] = None
 
         # Used during the phone-code sign-in flow
         self.phone_code_hash: Optional[str] = None
@@ -340,6 +341,7 @@ async def start_client(http_session: aiohttp.ClientSession) -> bool:
     async with state.client_lock:
         if state.api_id is None or state.api_hash is None or state.phone is None:
             logger.warning("Cannot start client: api_id / api_hash / phone not yet configured")
+            state.last_error = "Credenciais incompletas no banco (API ID, API Hash ou Telefone ausente)"
             return False
 
         # Disconnect previous client if any
@@ -353,17 +355,30 @@ async def start_client(http_session: aiohttp.ClientSession) -> bool:
             state.authenticated = False
 
         logger.info(f"Creating TelegramClient (api_id={state.api_id})")
-        client = _build_client(state.api_id, state.api_hash)
+        
+        try:
+            client = _build_client(state.api_id, state.api_hash)
+        except Exception as exc:
+            logger.error(f"Failed to build TelegramClient: {exc}")
+            state.last_error = f"Erro de construção do cliente: {str(exc)}"
+            return False
 
         try:
             await client.connect()
+            state.last_error = None
         except Exception as exc:
             logger.error(f"Failed to connect TelegramClient: {exc}")
+            state.last_error = f"Falha de conexão com os servidores do Telegram: {str(exc)}"
             return False
 
         state.client = client
         state.connected = client.is_connected()
-        state.authenticated = await client.is_user_authorized()
+        try:
+            state.authenticated = await client.is_user_authorized()
+        except Exception as exc:
+            logger.error(f"Failed to check user authorization: {exc}")
+            state.last_error = f"Erro de autorização: {str(exc)}"
+            return False
 
         logger.info(f"Client connected={state.connected}, authenticated={state.authenticated}")
 
@@ -481,12 +496,13 @@ def _clear_all_handlers(client: TelegramClient) -> None:
 # ---------------------------------------------------------------------------
 
 async def route_status(request: web.Request) -> web.Response:
-    """GET /status → { authenticated, connected, monitoredGroups }"""
+    """GET /status → { authenticated, connected, monitoredGroups, lastError }"""
     return web.json_response(
         {
             "authenticated": state.authenticated,
             "connected": state.connected,
             "monitoredGroups": len(state.source_groups),
+            "lastError": state.last_error,
         }
     )
 
@@ -507,7 +523,10 @@ async def route_auth_start(request: web.Request) -> web.Response:
         return web.json_response({"error": "phone is required"}, status=400)
 
     if state.client is None:
-        return web.json_response({"error": "Telethon client not initialised"}, status=503)
+        err_msg = "Telethon client not initialised"
+        if state.last_error:
+            err_msg = f"{err_msg} ({state.last_error})"
+        return web.json_response({"error": err_msg}, status=503)
 
     try:
         result = await state.client.send_code_request(phone)

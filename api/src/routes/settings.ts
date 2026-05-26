@@ -167,10 +167,15 @@ export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
         timeout: 15000,
       });
       return reply.send({ success: true, data: response.data });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
+    } catch (err: any) {
+      let message = err instanceof Error ? err.message : String(err);
+      let code = 502;
+      if (err.response) {
+        code = err.response.status;
+        message = err.response.data?.error || err.response.data?.message || message;
+      }
       fastify.log.error({ err }, 'Failed to start Telegram auth');
-      return reply.code(502).send({ success: false, message });
+      return reply.code(code).send({ success: false, message });
     }
   });
 
@@ -197,10 +202,15 @@ export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
           { timeout: 15000 },
         );
         return reply.send({ success: true, data: response.data });
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
+      } catch (err: any) {
+        let message = err instanceof Error ? err.message : String(err);
+        let code = 502;
+        if (err.response) {
+          code = err.response.status;
+          message = err.response.data?.error || err.response.data?.message || message;
+        }
         fastify.log.error({ err }, 'Failed to verify Telegram auth code');
-        return reply.code(502).send({ success: false, message });
+        return reply.code(code).send({ success: false, message });
       }
     },
   );
