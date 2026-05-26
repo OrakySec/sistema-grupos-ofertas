@@ -1,15 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react'
-import api from '../lib/api'
-
-interface DeliveryLog {
-  id: string
-  offerId: string
-  offer?: { text?: string; mediaType: string }
-  destinationGroup?: { name: string; type: string }
-  status: 'SUCCESS' | 'FAILED'
-  errorMessage?: string
-  sentAt: string
-}
+import api, { type DeliveryLog } from '../lib/api'
 
 function timeAgo(date: string) {
   const diff = Date.now() - new Date(date).getTime()

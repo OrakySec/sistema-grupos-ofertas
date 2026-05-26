@@ -28,12 +28,12 @@ export interface Offer {
 export interface DeliveryLog {
   id: string
   offerId: string
+  offer?: { text?: string; mediaType: string }
   destinationGroupId: string
-  destinationGroupName: string
-  type: 'TELEGRAM' | 'WHATSAPP'
+  destinationGroup?: { name: string; type: 'TELEGRAM' | 'WHATSAPP' }
   status: 'SUCCESS' | 'FAILED'
-  error?: string | null
-  createdAt: string
+  errorMessage?: string | null
+  sentAt: string
 }
 
 export interface PaginatedResponse<T> {

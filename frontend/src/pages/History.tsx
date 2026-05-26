@@ -268,14 +268,14 @@ export default function History() {
                                           className={`status-dot ${log.status === 'SUCCESS' ? 'online' : 'error'}`}
                                         />
                                         <span className="mono" style={{ color: 'var(--text-secondary)' }}>
-                                          {log.type}
+                                          {log.destinationGroup?.type}
                                         </span>
                                         <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>
-                                          {log.destinationGroupName}
+                                          {log.destinationGroup?.name}
                                         </span>
-                                        {log.error && (
+                                        {log.errorMessage && (
                                           <span style={{ color: 'var(--accent-danger)', fontSize: '0.78rem' }}>
-                                            — {log.error}
+                                            — {log.errorMessage}
                                           </span>
                                         )}
                                         <span
@@ -285,7 +285,7 @@ export default function History() {
                                             fontSize: '0.75rem',
                                           }}
                                         >
-                                          {new Date(log.createdAt).toLocaleTimeString('pt-BR')}
+                                          {new Date(log.sentAt).toLocaleTimeString('pt-BR')}
                                         </span>
                                       </div>
                                     ))}
