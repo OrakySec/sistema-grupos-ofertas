@@ -46,20 +46,22 @@ export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
 
   // ── GET /settings/internal ──────────────────────────────────────────────────
   // Internal-only endpoint used by the telegram-listener service.
-  // Authenticates via X-Internal-Key header — no user JWT required.
-  // Returns raw snake_case keys so the Python service can consume them directly.
-  fastify.get('/internal', async (request, reply) => {
+  // Must be registered in an isolated child scope so that the requireAuth
+  // preHandler hook (added below) does NOT apply to this route.
+  // In Fastify, addHook within a plugin scope applies to ALL routes in that
+  // scope regardless of registration order — hence the child scope isolation.
+  await fastify.register(async (internalScope) => {
+    internalScope.get('/internal', async (_request, reply) => {
+      const settings = await prisma.setting.findMany();
+      const dbObj: Record<string, string> = {};
+      for (const s of settings) dbObj[s.key] = s.value;
 
-    const settings = await prisma.setting.findMany();
-    const dbObj: Record<string, string> = {};
-    for (const s of settings) dbObj[s.key] = s.value;
-
-    // Return raw keys so the Python listener can read them directly
-    return reply.send({
-      telegram_api_id: dbObj.telegram_api_id ?? '',
-      telegram_api_hash: dbObj.telegram_api_hash ?? '',
-      telegram_phone: dbObj.telegram_phone ?? '',
-      telegram_bot_token: dbObj.telegram_bot_token ?? '',
+      return reply.send({
+        telegram_api_id: dbObj.telegram_api_id ?? '',
+        telegram_api_hash: dbObj.telegram_api_hash ?? '',
+        telegram_phone: dbObj.telegram_phone ?? '',
+        telegram_bot_token: dbObj.telegram_bot_token ?? '',
+      });
     });
   });
 
