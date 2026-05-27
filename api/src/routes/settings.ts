@@ -20,15 +20,21 @@ const INTERNAL_TOKEN = 'sistema-grupos-ofertas-internal-token-fallback-key-2026'
 /** Build a camelCase settings object from the flat DB key→value map */
 function buildSettingsResponse(dbObj: Record<string, string>, authenticated = false): Record<string, any> {
   return {
-    autoApprove: dbObj.auto_approve === 'true',
-    telegramBotToken: dbObj.telegram_bot_token ? '***' : '',
-    telegramApiId: dbObj.telegram_api_id ? Number(dbObj.telegram_api_id) : undefined,
-    telegramApiHash: dbObj.telegram_api_hash ?? '',
-    telegramPhone: dbObj.telegram_phone ?? '',
-    evolutionApiUrl: dbObj.evolution_api_url ?? '',
-    evolutionApiKey: dbObj.evolution_api_key ? '***' : '',
-    evolutionInstance: dbObj.evolution_instance ?? '',
-    telegramAuthenticated: authenticated,
+    autoApprove:            dbObj.auto_approve === 'true',
+    telegramBotToken:       dbObj.telegram_bot_token ? '***' : '',
+    telegramApiId:          dbObj.telegram_api_id ? Number(dbObj.telegram_api_id) : undefined,
+    telegramApiHash:        dbObj.telegram_api_hash ?? '',
+    telegramPhone:          dbObj.telegram_phone ?? '',
+    evolutionApiUrl:        dbObj.evolution_api_url ?? '',
+    evolutionApiKey:        dbObj.evolution_api_key ? '***' : '',
+    evolutionInstance:      dbObj.evolution_instance ?? '',
+    telegramAuthenticated:  authenticated,
+    // Affiliate link conversion
+    amazonAffiliateTag:     dbObj.amazon_affiliate_tag ?? '',
+    shopeeAffiliateId:      dbObj.shopee_affiliate_id ?? '',
+    aliexpressTrackingId:   dbObj.aliexpress_tracking_id ?? '',
+    magaluStoreName:        dbObj.magalu_store_name ?? '',
+    linkShortenerEnabled:   dbObj.link_shortener_enabled !== 'false',
   };
 }
 
@@ -76,14 +82,20 @@ export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
       const dbUpdates: Record<string, string> = {};
 
       // Map incoming keys to DB keys
-      if ('autoApprove' in updates) dbUpdates.auto_approve = String(updates.autoApprove);
+      if ('autoApprove' in updates)        dbUpdates.auto_approve       = String(updates.autoApprove);
       if ('telegramBotToken' in updates && updates.telegramBotToken !== '***') dbUpdates.telegram_bot_token = updates.telegramBotToken ?? '';
-      if ('telegramApiId' in updates) dbUpdates.telegram_api_id = updates.telegramApiId ? String(updates.telegramApiId) : '';
-      if ('telegramApiHash' in updates) dbUpdates.telegram_api_hash = updates.telegramApiHash ?? '';
-      if ('telegramPhone' in updates) dbUpdates.telegram_phone = updates.telegramPhone ?? '';
-      if ('evolutionApiUrl' in updates) dbUpdates.evolution_api_url = updates.evolutionApiUrl ?? '';
+      if ('telegramApiId' in updates)      dbUpdates.telegram_api_id    = updates.telegramApiId ? String(updates.telegramApiId) : '';
+      if ('telegramApiHash' in updates)    dbUpdates.telegram_api_hash   = updates.telegramApiHash ?? '';
+      if ('telegramPhone' in updates)      dbUpdates.telegram_phone      = updates.telegramPhone ?? '';
+      if ('evolutionApiUrl' in updates)    dbUpdates.evolution_api_url   = updates.evolutionApiUrl ?? '';
       if ('evolutionApiKey' in updates && updates.evolutionApiKey !== '***') dbUpdates.evolution_api_key = updates.evolutionApiKey ?? '';
-      if ('evolutionInstance' in updates) dbUpdates.evolution_instance = updates.evolutionInstance ?? '';
+      if ('evolutionInstance' in updates)  dbUpdates.evolution_instance  = updates.evolutionInstance ?? '';
+      // Affiliate link conversion
+      if ('amazonAffiliateTag' in updates)   dbUpdates.amazon_affiliate_tag   = updates.amazonAffiliateTag ?? '';
+      if ('shopeeAffiliateId' in updates)    dbUpdates.shopee_affiliate_id    = updates.shopeeAffiliateId ?? '';
+      if ('aliexpressTrackingId' in updates) dbUpdates.aliexpress_tracking_id = updates.aliexpressTrackingId ?? '';
+      if ('magaluStoreName' in updates)      dbUpdates.magalu_store_name      = updates.magaluStoreName ?? '';
+      if ('linkShortenerEnabled' in updates) dbUpdates.link_shortener_enabled = String(updates.linkShortenerEnabled);
 
       await Promise.all(
         Object.entries(dbUpdates).map(([key, value]) =>

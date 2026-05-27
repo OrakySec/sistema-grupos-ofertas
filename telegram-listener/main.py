@@ -32,6 +32,7 @@ from telethon.tl.types import (
     DocumentAttributeFilename,
     DocumentAttributeVideo,
 )
+from affiliate_converter import AffiliateConverter
 
 # ---------------------------------------------------------------------------
 # Bootstrap
@@ -95,6 +96,9 @@ class AppState:
 
         # Lock to protect client recreation
         self.client_lock = asyncio.Lock()
+
+        # Affiliate link conversion settings (refreshed from API on every poll)
+        self.affiliate_settings: dict = {}
 
 
 state = AppState()
@@ -295,6 +299,17 @@ async def _make_message_handler(http_session: aiohttp.ClientSession):
 
             text = message.message if media_type == "NONE" else None
 
+            # ── Affiliate link conversion ─────────────────────────────────
+            # Run the converter on both plain text and media captions.
+            # Uses the affiliate_settings stored in AppState (refreshed every 60 s).
+            if state.affiliate_settings:
+                converter = AffiliateConverter(state.affiliate_settings)
+                if text:
+                    text = await converter.convert(text, http_session)
+                if media_caption:
+                    media_caption = await converter.convert(media_caption, http_session)
+            # ─────────────────────────────────────────────────────────────
+
             original_date: str = (
                 message.date.astimezone(timezone.utc).isoformat()
                 if message.date
@@ -458,6 +473,17 @@ async def _apply_settings(settings: dict, http_session: aiohttp.ClientSession, *
     state.api_id = new_api_id
     state.api_hash = new_api_hash
     state.phone = new_phone
+
+    # ── Affiliate settings (always refresh from latest settings) ──────────
+    state.affiliate_settings = {
+        "amazon_affiliate_tag":   settings.get("amazon_affiliate_tag") or "",
+        "shopee_affiliate_id":    settings.get("shopee_affiliate_id") or "",
+        "aliexpress_tracking_id": settings.get("aliexpress_tracking_id") or "",
+        "magalu_store_name":      settings.get("magalu_store_name") or "",
+        "link_shortener_enabled": settings.get("link_shortener_enabled", "true"),
+    }
+    logger.debug(f"Affiliate settings refreshed: { {k: ('✓' if v else '–') for k, v in state.affiliate_settings.items()} }")
+    # ─────────────────────────────────────────────────────────────────────
 
     # Fetch source groups regardless
     new_groups = await fetch_source_groups(http_session)

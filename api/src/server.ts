@@ -52,10 +52,16 @@ async function buildApp() {
     const dbObj: Record<string, string> = {};
     for (const s of settings) dbObj[s.key] = s.value;
     return reply.send({
-      telegram_api_id: dbObj.telegram_api_id ?? '',
-      telegram_api_hash: dbObj.telegram_api_hash ?? '',
-      telegram_phone: dbObj.telegram_phone ?? '',
-      telegram_bot_token: dbObj.telegram_bot_token ?? '',
+      telegram_api_id:        dbObj.telegram_api_id ?? '',
+      telegram_api_hash:      dbObj.telegram_api_hash ?? '',
+      telegram_phone:         dbObj.telegram_phone ?? '',
+      telegram_bot_token:     dbObj.telegram_bot_token ?? '',
+      // Affiliate link conversion
+      amazon_affiliate_tag:   dbObj.amazon_affiliate_tag ?? '',
+      shopee_affiliate_id:    dbObj.shopee_affiliate_id ?? '',
+      aliexpress_tracking_id: dbObj.aliexpress_tracking_id ?? '',
+      magalu_store_name:      dbObj.magalu_store_name ?? '',
+      link_shortener_enabled: dbObj.link_shortener_enabled ?? 'true',
     });
   });
 

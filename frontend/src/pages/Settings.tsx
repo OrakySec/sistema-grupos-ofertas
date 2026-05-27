@@ -67,6 +67,12 @@ export default function Settings() {
   const refEvolutionUrl  = useRef<HTMLInputElement>(null)
   const refEvolutionKey  = useRef<HTMLInputElement>(null)
   const refEvolutionInst = useRef<HTMLInputElement>(null)
+  // Affiliate refs
+  const refAmazonTag     = useRef<HTMLInputElement>(null)
+  const refShopeeId      = useRef<HTMLInputElement>(null)
+  const refAliTrackId    = useRef<HTMLInputElement>(null)
+  const refMagaluStore   = useRef<HTMLInputElement>(null)
+  const [linkShortenerEnabled, setLinkShortenerEnabled] = useState(true)
 
   const fetchSettings = useCallback(async () => {
     try {
@@ -74,6 +80,7 @@ export default function Settings() {
       setSettingsData(s)
       setAutoApprove(s.autoApprove ?? false)
       setTgPhone(s.telegramPhone ?? '')
+      setLinkShortenerEnabled(s.linkShortenerEnabled ?? true)
       if (s.telegramAuthenticated) setAuthStep('done')
     } catch {
       // silent
@@ -453,6 +460,153 @@ export default function Settings() {
               evolutionApiUrl:  refEvolutionUrl.current?.value,
               evolutionApiKey:  refEvolutionKey.current?.value,
               evolutionInstance: refEvolutionInst.current?.value,
+            })}
+            disabled={saving}
+          >
+            {saving ? <span className="spinner spinner-sm" /> : null}
+            Salvar
+          </button>
+        </div>
+      </div>
+
+      {/* ── Seção: Links de Afiliado ─────────────────────────────── */}
+      <div className="settings-section">
+        <div className="settings-section-header">
+          <div className="settings-section-title">🔗 Links de Afiliado</div>
+          <div className="settings-section-desc">
+            Configure suas tags de afiliado. Os links detectados nas mensagens serão convertidos
+            automaticamente e encurtados via TinyURL antes de serem enviados ao grupo de destino.
+          </div>
+        </div>
+
+        {/* Tags de afiliado */}
+        <div className="settings-grid">
+          <div className="form-group">
+            <label className="label">
+              🛒 Amazon Associates Tag
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 8 }}>
+                ex: seusite-20
+              </span>
+            </label>
+            <input
+              ref={refAmazonTag}
+              defaultValue={settingsData?.amazonAffiliateTag ?? ''}
+              className="input font-mono"
+              placeholder="seusite-20"
+              type="text"
+              autoComplete="off"
+              data-lpignore="true"
+            />
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>
+              Encontrado em: Associates Central → sua conta → Tracking ID
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label className="label">
+              🛒 Shopee Affiliate ID
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 8 }}>
+                ex: 123456789
+              </span>
+            </label>
+            <input
+              ref={refShopeeId}
+              defaultValue={settingsData?.shopeeAffiliateId ?? ''}
+              className="input font-mono"
+              placeholder="123456789"
+              type="text"
+              autoComplete="off"
+              data-lpignore="true"
+            />
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>
+              Encontrado em: Shopee Affiliate Program → painel → ID do afiliado
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label className="label">
+              🛒 AliExpress Tracking ID
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 8 }}>
+                ex: meucanal
+              </span>
+            </label>
+            <input
+              ref={refAliTrackId}
+              defaultValue={settingsData?.aliexpressTrackingId ?? ''}
+              className="input font-mono"
+              placeholder="meucanal"
+              type="text"
+              autoComplete="off"
+              data-lpignore="true"
+            />
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>
+              Encontrado em: AliExpress Portals → conta → Tracking ID
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label className="label">
+              🛒 Parceiro Magalu — Nome da loja
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 8 }}>
+                ex: minhaloja
+              </span>
+            </label>
+            <input
+              ref={refMagaluStore}
+              defaultValue={settingsData?.magaluStoreName ?? ''}
+              className="input font-mono"
+              placeholder="minhaloja"
+              type="text"
+              autoComplete="off"
+              data-lpignore="true"
+            />
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>
+              É o nome que aparece na URL: magazinevoce.com.br/magazine<strong>minhaloja</strong>
+            </div>
+          </div>
+        </div>
+
+        {/* Toggle encurtador */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            padding: '12px 16px',
+            background: 'var(--surface-2)',
+            borderRadius: 8,
+            marginTop: 16,
+            border: '1px solid var(--border)',
+          }}
+        >
+          <Toggle
+            id="link-shortener-toggle"
+            checked={linkShortenerEnabled}
+            onChange={(v) => {
+              setLinkShortenerEnabled(v)
+              save({ linkShortenerEnabled: v })
+            }}
+          />
+          <div>
+            <div style={{ fontWeight: 600, fontSize: '0.88rem' }}>Encurtar links via TinyURL</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+              {linkShortenerEnabled
+                ? '✅ Ativo — links de afiliado serão encurtados antes de enviar'
+                : '➖ Desativado — links de afiliado serão enviados no formato longo'}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            onClick={() => save({
+              amazonAffiliateTag:   refAmazonTag.current?.value,
+              shopeeAffiliateId:    refShopeeId.current?.value,
+              aliexpressTrackingId: refAliTrackId.current?.value,
+              magaluStoreName:      refMagaluStore.current?.value,
+              linkShortenerEnabled,
             })}
             disabled={saving}
           >
