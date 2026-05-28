@@ -1,5 +1,6 @@
 import { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { requireAuth } from '../middleware/auth';
+import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { addNewOfferJob, addSendOfferJob } from '../lib/queue';
 
@@ -117,7 +118,7 @@ export const offersRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
           mediaCaption,
           senderName,
           originalDate: new Date(originalDate),
-          ...(processingLog ? { processingLog } : {}),
+          ...(processingLog ? { processingLog: processingLog as Prisma.InputJsonValue } : {}),
         },
       });
 
