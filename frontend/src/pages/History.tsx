@@ -168,8 +168,10 @@ export default function History() {
                             whiteSpace: 'nowrap',
                           }}
                         >
-                          {offer.text.slice(0, 60)}
-                          {offer.text.length > 60 ? '…' : ''}
+                          {offer.text
+                            ? offer.text.slice(0, 60) + (offer.text.length > 60 ? '…' : '')
+                            : <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>{offer.mediaType === 'PHOTO' ? '📷 Foto' : offer.mediaType === 'VIDEO' ? '🎬 Vídeo' : '📎 Arquivo'}</span>
+                          }
                         </span>
                       </td>
                       <td>

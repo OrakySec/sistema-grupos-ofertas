@@ -42,7 +42,7 @@ export default function Layout() {
     { to: '/history', icon: '📋', label: 'Histórico' },
     { to: '/groups', icon: '👥', label: 'Grupos' },
     { to: '/settings', icon: '⚙️', label: 'Configurações' },
-    { to: '/logs', icon: '📡', label: 'Logs' },
+    { to: '/logs', icon: '📊', label: 'Logs & Debug' },
   ]
 
   return (

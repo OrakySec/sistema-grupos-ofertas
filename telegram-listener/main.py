@@ -300,6 +300,8 @@ async def _make_message_handler(http_session: aiohttp.ClientSession):
             text = message.message if media_type == "NONE" else None
 
             # ── Affiliate link conversion (safe — never blocks message delivery) ──
+            processing_events: list[dict] = []
+
             if state.affiliate_settings:
                 _original_text    = text
                 _original_caption = media_caption
@@ -307,39 +309,34 @@ async def _make_message_handler(http_session: aiohttp.ClientSession):
                     converter = AffiliateConverter(state.affiliate_settings)
 
                     async def _convert_all() -> None:
-                        nonlocal text, media_caption
+                        nonlocal text, media_caption, processing_events
                         if text:
-                            text = await converter.convert(text, http_session)
+                            text, evts = await converter.convert(text, http_session)
+                            processing_events.extend(evts)
                         if media_caption:
-                            media_caption = await converter.convert(media_caption, http_session)
+                            media_caption, evts = await converter.convert(media_caption, http_session)
+                            processing_events.extend(evts)
 
                     await asyncio.wait_for(_convert_all(), timeout=20.0)
 
-                    if text != _original_text or media_caption != _original_caption:
-                        logger.info(
-                            f"[affiliate] msg {message.id}: links converted OK"
-                        )
+                    converted = any(e.get("status") == "ok" for e in processing_events)
+                    if converted:
+                        logger.info(f"[affiliate] msg {message.id}: links converted OK ({len(processing_events)} event(s))")
                     else:
-                        logger.debug(
-                            f"[affiliate] msg {message.id}: no convertible links found"
-                        )
+                        logger.debug(f"[affiliate] msg {message.id}: no convertible links found")
 
                 except asyncio.TimeoutError:
-                    logger.warning(
-                        f"[affiliate] msg {message.id}: conversion timed out after 20 s "
-                        f"— sending original text"
-                    )
-                    text         = _original_text
+                    logger.warning(f"[affiliate] msg {message.id}: conversion timed out — sending original text")
+                    text          = _original_text
                     media_caption = _original_caption
+                    processing_events = [{"status": "error", "error": "Timeout de conversão (>20s)"}]
 
                 except Exception as conv_exc:
-                    logger.warning(
-                        f"[affiliate] msg {message.id}: conversion error ({conv_exc}) "
-                        f"— sending original text"
-                    )
-                    text         = _original_text
+                    logger.warning(f"[affiliate] msg {message.id}: conversion error ({conv_exc}) — sending original text")
+                    text          = _original_text
                     media_caption = _original_caption
-            # ─────────────────────────────────────────────────────────────
+                    processing_events = [{"status": "error", "error": str(conv_exc)}]
+            # ──────────────────────────────────────────────────────────────────────
 
             original_date: str = (
                 message.date.astimezone(timezone.utc).isoformat()
@@ -348,14 +345,15 @@ async def _make_message_handler(http_session: aiohttp.ClientSession):
             )
 
             payload = {
-                "sourceGroupId": uuid,
+                "sourceGroupId":    uuid,
                 "telegramMessageId": message.id,
-                "text": text,
-                "mediaType": media_type,
-                "mediaLocalPath": media_local_path,
-                "mediaCaption": media_caption,
-                "senderName": name,
-                "originalDate": original_date,
+                "text":             text,
+                "mediaType":        media_type,
+                "mediaLocalPath":   media_local_path,
+                "mediaCaption":     media_caption,
+                "senderName":       name,
+                "originalDate":     original_date,
+                "processingLog":    processing_events if processing_events else None,
             }
 
             logger.debug(f"Sending offer payload: {payload}")

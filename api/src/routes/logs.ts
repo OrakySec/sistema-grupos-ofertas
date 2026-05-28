@@ -108,4 +108,54 @@ export const logsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
 
     return reply.send(serialized);
   });
+
+  // GET /logs/processing — last 200 messages with processing trace (for debug panel)
+  fastify.get('/processing', async (request, reply) => {
+    // Auto-cleanup: delete offers older than 7 days that are already SENT or FAILED
+    const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    await prisma.offer.deleteMany({
+      where: {
+        createdAt: { lt: cutoff },
+        status: { in: ['SENT', 'FAILED', 'REJECTED'] },
+      },
+    }).catch(() => {/* non-critical */});
+
+    const offers = await prisma.offer.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+      select: {
+        id: true,
+        telegramMessageId: true,
+        text: true,
+        mediaType: true,
+        mediaCaption: true,
+        senderName: true,
+        status: true,
+        createdAt: true,
+        sentAt: true,
+        processingLog: true,
+        sourceGroup: {
+          select: { id: true, name: true },
+        },
+        deliveryLogs: {
+          select: {
+            id: true,
+            status: true,
+            errorMessage: true,
+            sentAt: true,
+            destinationGroup: {
+              select: { id: true, name: true, type: true },
+            },
+          },
+        },
+      },
+    });
+
+    const serialized = offers.map((o) => ({
+      ...o,
+      telegramMessageId: o.telegramMessageId.toString(),
+    }));
+
+    return reply.send(serialized);
+  });
 };

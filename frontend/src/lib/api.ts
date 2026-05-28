@@ -12,17 +12,51 @@ export interface PaginationParams {
   dateRange?: string
 }
 
+export interface ProcessingEvent {
+  ts: string
+  original: string
+  expanded?: string | null
+  platform?: string | null
+  affiliate?: string | null
+  shortened?: string | null
+  final?: string | null
+  status: 'ok' | 'skipped' | 'error'
+  error?: string | null
+}
+
 export interface Offer {
   id: string
   sourceGroupId: string
   sourceGroupName: string
-  text: string
+  text?: string | null
   mediaType?: 'PHOTO' | 'VIDEO' | 'DOCUMENT' | null
   mediaPath?: string | null
   status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'SENT' | 'FAILED'
   createdAt: string
   updatedAt: string
   deliveryLogs?: DeliveryLog[]
+  processingLog?: ProcessingEvent[] | null
+}
+
+export interface ProcessingOffer {
+  id: string
+  telegramMessageId: string
+  text?: string | null
+  mediaType: string
+  mediaCaption?: string | null
+  senderName?: string | null
+  status: string
+  createdAt: string
+  sentAt?: string | null
+  processingLog?: ProcessingEvent[] | null
+  sourceGroup?: { id: string; name: string }
+  deliveryLogs?: Array<{
+    id: string
+    status: 'SUCCESS' | 'FAILED'
+    errorMessage?: string | null
+    sentAt: string
+    destinationGroup?: { id: string; name: string; type: string }
+  }>
 }
 
 export interface DeliveryLog {
@@ -274,6 +308,10 @@ class ApiClient {
   // ── Logs ──────────────────────────────────────
   async getDeliveryLogs(limit = 100): Promise<DeliveryLog[]> {
     return this.request('GET', `/logs?limit=${limit}`)
+  }
+
+  async getProcessingLogs(): Promise<ProcessingOffer[]> {
+    return this.request('GET', '/logs/processing')
   }
 }
 

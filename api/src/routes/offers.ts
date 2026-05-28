@@ -21,6 +21,7 @@ interface CreateOfferBody {
   mediaCaption?: string;
   senderName?: string;
   originalDate: string;
+  processingLog?: unknown[];
 }
 
 interface BatchApproveBody {
@@ -57,6 +58,7 @@ export const offersRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
             mediaCaption: { type: 'string' },
             senderName: { type: 'string' },
             originalDate: { type: 'string' },
+            processingLog: { type: 'array' },
           },
         },
       },
@@ -72,6 +74,7 @@ export const offersRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
         mediaCaption,
         senderName,
         originalDate,
+        processingLog,
       } = request.body;
 
       let telegramMessageIdBig: bigint;
@@ -114,6 +117,7 @@ export const offersRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
           mediaCaption,
           senderName,
           originalDate: new Date(originalDate),
+          ...(processingLog ? { processingLog } : {}),
         },
       });
 

@@ -71,6 +71,7 @@ model Offer {
   createdAt        DateTime    @default(now())
   reviewedAt       DateTime?
   sentAt           DateTime?
+  processingLog    Json?
 
   sourceGroup  SourceGroup   @relation(fields: [sourceGroupId], references: [id])
   deliveryLogs DeliveryLog[]

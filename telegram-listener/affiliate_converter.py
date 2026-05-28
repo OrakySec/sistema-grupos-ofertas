@@ -11,17 +11,15 @@ Supported platforms
 - AliExpress       (aliexpress.com / s.click.aliexpress.com)
 - Magazine Luiza   (magazineluiza.com.br / magalu.com)
 
-Pipeline per URL found in the message text
-------------------------------------------
-1. expand_url()         — follow redirects to get the real product URL
-2. identify_platform()  — which store is this?
-3. build_affiliate_url()— inject the affiliate tag/id
-4. shorten_url()        — shorten via TinyURL (if shortening is enabled)
-5. Replace original URL in the text with the final URL
+Returns
+-------
+convert() returns (modified_text, events_list) where events_list is a list of
+dicts describing what happened to each URL found — used for the debug panel.
 """
 
 import re
 import asyncio
+from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import urlparse, urlencode, urlunparse, parse_qs, urljoin
 import urllib.parse
@@ -30,7 +28,7 @@ import aiohttp
 from loguru import logger
 
 # ---------------------------------------------------------------------------
-# URL extraction — grab every http/https URL from free text
+# URL extraction
 # ---------------------------------------------------------------------------
 
 _URL_RE = re.compile(
@@ -39,7 +37,7 @@ _URL_RE = re.compile(
 )
 
 # ---------------------------------------------------------------------------
-# Platform detection helpers
+# Platform detection
 # ---------------------------------------------------------------------------
 
 _AMAZON_HOSTS = {
@@ -47,61 +45,56 @@ _AMAZON_HOSTS = {
     "amzn.to", "www.amzn.to",
     "amzn.com", "www.amzn.com",
 }
-
 _SHOPEE_HOSTS = {
     "shopee.com.br", "www.shopee.com.br",
     "shope.ee", "www.shope.ee",
     "s.shopee.com.br",
 }
-
 _ALIEXPRESS_HOSTS = {
     "aliexpress.com", "www.aliexpress.com",
     "s.click.aliexpress.com",
     "pt.aliexpress.com",
 }
-
 _MAGALU_HOSTS = {
     "magazineluiza.com.br", "www.magazineluiza.com.br",
     "magalu.com", "www.magalu.com",
     "magazinevoce.com.br", "www.magazinevoce.com.br",
 }
 
-# ASIN regex: 10 uppercase alphanumeric characters
 _ASIN_RE = re.compile(r"/(?:dp|gp/product|exec/obidos/ASIN)/([A-Z0-9]{10})")
-
-# Magalu product URL: /p/{slug}/{id}/
 _MAGALU_PRODUCT_RE = re.compile(r"/p/([^/]+)/([^/]+)/?$")
-# Magalu alternate: /{name}/{sku}/p
-_MAGALU_ALT_RE = re.compile(r"/([^/]+)/p$")
 
 
 def _host(url: str) -> str:
     try:
-        return urlparse(url).netloc.lower().lstrip("www.")
+        return urlparse(url).netloc.lower()
     except Exception:
         return ""
 
 
 def _platform(url: str) -> Optional[str]:
     host = urlparse(url).netloc.lower()
-    clean = host.lstrip("www.")
-    if clean in _AMAZON_HOSTS or host in _AMAZON_HOSTS:
+    clean = host.replace("www.", "", 1)
+    if host in _AMAZON_HOSTS or clean in _AMAZON_HOSTS:
         return "amazon"
-    if clean in _SHOPEE_HOSTS or host in _SHOPEE_HOSTS:
+    if host in _SHOPEE_HOSTS or clean in _SHOPEE_HOSTS:
         return "shopee"
-    if clean in _ALIEXPRESS_HOSTS or host in _ALIEXPRESS_HOSTS:
+    if host in _ALIEXPRESS_HOSTS or clean in _ALIEXPRESS_HOSTS:
         return "aliexpress"
-    if clean in _MAGALU_HOSTS or host in _MAGALU_HOSTS:
+    if host in _MAGALU_HOSTS or clean in _MAGALU_HOSTS:
         return "magalu"
     return None
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 # ---------------------------------------------------------------------------
-# URL expansion — follow HTTP redirects asynchronously
+# URL expansion
 # ---------------------------------------------------------------------------
 
 async def expand_url(url: str, session: aiohttp.ClientSession) -> str:
-    """Follow redirects and return the final URL. Returns original on failure."""
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -118,8 +111,6 @@ async def expand_url(url: str, session: aiohttp.ClientSession) -> str:
             ssl=False,
         ) as resp:
             final = str(resp.url)
-            if final != url:
-                logger.debug(f"Expanded: {url} → {final}")
             return final
     except Exception as exc:
         logger.debug(f"expand_url failed for {url}: {exc}")
@@ -130,86 +121,56 @@ async def expand_url(url: str, session: aiohttp.ClientSession) -> str:
 # Affiliate URL builders
 # ---------------------------------------------------------------------------
 
-def build_amazon_url(expanded_url: str, tag: str) -> Optional[str]:
-    """Extract ASIN and build a clean affiliate URL."""
+def build_amazon_url(expanded_url: str, tag: str) -> tuple[Optional[str], Optional[str]]:
+    """Returns (affiliate_url, error_message)."""
     m = _ASIN_RE.search(expanded_url)
     if not m:
-        logger.debug(f"Amazon: no ASIN found in {expanded_url}")
-        return None
+        return None, f"ASIN não encontrado na URL: {expanded_url[:80]}"
     asin = m.group(1)
-    url = f"https://www.amazon.com.br/dp/{asin}/?tag={tag}"
-    logger.info(f"Amazon affiliate: {expanded_url} → {url}")
-    return url
+    return f"https://www.amazon.com.br/dp/{asin}/?tag={tag}", None
 
 
-def build_shopee_url(expanded_url: str, affiliate_id: str) -> Optional[str]:
-    """Wrap original product URL in the Shopee affiliate redirect."""
-    # Make sure we have a proper shopee.com.br product URL after expansion
+def build_shopee_url(expanded_url: str, affiliate_id: str) -> tuple[Optional[str], Optional[str]]:
     parsed = urlparse(expanded_url)
-    host = parsed.netloc.lower()
-    if "shopee" not in host:
-        logger.debug(f"Shopee: expanded URL is not shopee: {expanded_url}")
-        return None
+    if "shopee" not in parsed.netloc.lower():
+        return None, f"URL expandida não é Shopee: {expanded_url[:80]}"
     encoded = urllib.parse.quote(expanded_url, safe="")
-    url = f"https://s.shopee.com.br/an_redir?origin_link={encoded}&affiliate_id={affiliate_id}"
-    logger.info(f"Shopee affiliate: {expanded_url} → {url}")
-    return url
+    return f"https://s.shopee.com.br/an_redir?origin_link={encoded}&affiliate_id={affiliate_id}", None
 
 
-def build_aliexpress_url(expanded_url: str, tracking_id: str) -> Optional[str]:
-    """Add/replace affiliate parameters in the AliExpress URL."""
+def build_aliexpress_url(expanded_url: str, tracking_id: str) -> tuple[Optional[str], Optional[str]]:
     try:
         parsed = urlparse(expanded_url)
         params = parse_qs(parsed.query, keep_blank_values=True)
-
-        # Remove existing affiliate params to avoid conflicts
-        for key in ["aff_fcid", "aff_fsk", "aff_platform", "aff_trace_key",
-                    "af_id", "af_ad", "terminal_id"]:
+        for key in ["aff_fcid", "aff_fsk", "aff_platform", "aff_trace_key", "af_id", "af_ad", "terminal_id"]:
             params.pop(key, None)
-
-        # Inject our tracking
         params["aff_platform"] = ["portals-tool"]
         params["af_id"] = [tracking_id]
-
-        new_query = urlencode(
-            {k: v[0] for k, v in params.items()},
-            quote_via=urllib.parse.quote,
-        )
+        new_query = urlencode({k: v[0] for k, v in params.items()}, quote_via=urllib.parse.quote)
         url = urlunparse(parsed._replace(query=new_query))
-        logger.info(f"AliExpress affiliate: {expanded_url} → {url}")
-        return url
+        return url, None
     except Exception as exc:
-        logger.debug(f"AliExpress build failed: {exc}")
-        return None
+        return None, f"Erro ao construir URL AliExpress: {exc}"
 
 
-def build_magalu_url(expanded_url: str, store_name: str) -> Optional[str]:
-    """Convert a magalu/magazineluiza URL to a Parceiro Magalu affiliate URL."""
+def build_magalu_url(expanded_url: str, store_name: str) -> tuple[Optional[str], Optional[str]]:
     try:
         parsed = urlparse(expanded_url)
-        path = parsed.path
-
-        # Pattern: /p/{slug}/{sku}/
-        m = _MAGALU_PRODUCT_RE.search(path)
+        m = _MAGALU_PRODUCT_RE.search(parsed.path)
         if m:
             slug, sku = m.group(1), m.group(2)
-            url = f"https://magazinevoce.com.br/magazine{store_name}/p/{slug}/{sku}/"
-            logger.info(f"Magalu affiliate: {expanded_url} → {url}")
-            return url
-
-        logger.debug(f"Magalu: no product pattern found in {expanded_url}")
-        return None
+            return f"https://magazinevoce.com.br/magazine{store_name}/p/{slug}/{sku}/", None
+        return None, f"Padrão de produto Magalu não encontrado em: {parsed.path}"
     except Exception as exc:
-        logger.debug(f"Magalu build failed: {exc}")
-        return None
+        return None, f"Erro ao construir URL Magalu: {exc}"
 
 
 # ---------------------------------------------------------------------------
 # TinyURL shortener
 # ---------------------------------------------------------------------------
 
-async def shorten_tinyurl(url: str, session: aiohttp.ClientSession) -> str:
-    """Shorten a URL using TinyURL's free API. Returns original on failure."""
+async def shorten_tinyurl(url: str, session: aiohttp.ClientSession) -> tuple[str, Optional[str]]:
+    """Returns (final_url, error_message). On error returns original url."""
     api = f"https://tinyurl.com/api-create.php?url={urllib.parse.quote(url, safe='')}"
     try:
         async with session.get(
@@ -220,138 +181,150 @@ async def shorten_tinyurl(url: str, session: aiohttp.ClientSession) -> str:
             if resp.status == 200:
                 short = (await resp.text()).strip()
                 if short.startswith("https://tinyurl.com/"):
-                    logger.info(f"Shortened: {url} → {short}")
-                    return short
+                    return short, None
+            return url, f"TinyURL retornou status {resp.status}"
+    except asyncio.TimeoutError:
+        return url, "TinyURL timeout (>8s)"
     except Exception as exc:
-        logger.debug(f"TinyURL failed for {url}: {exc}")
-    return url
+        return url, f"TinyURL erro: {exc}"
 
 
 # ---------------------------------------------------------------------------
 # Main converter
 # ---------------------------------------------------------------------------
 
+PLATFORM_LABELS = {
+    "amazon":     "Amazon",
+    "shopee":     "Shopee",
+    "aliexpress": "AliExpress",
+    "magalu":     "Magazine Luiza",
+}
+
+
 class AffiliateConverter:
     """
     Converts product links in message text to affiliate links + shortens them.
-
-    Settings dict expected keys (all optional — skips platform if missing):
-      amazon_affiliate_tag   : str
-      shopee_affiliate_id    : str
-      aliexpress_tracking_id : str
-      magalu_store_name      : str
-      link_shortener_enabled : str  "true" | "false"  (default: "true")
+    convert() returns (modified_text, events_list).
     """
 
     def __init__(self, settings: dict) -> None:
-        self.amazon_tag      = (settings.get("amazon_affiliate_tag") or "").strip()
-        self.shopee_id       = (settings.get("shopee_affiliate_id") or "").strip()
-        self.ali_tracking    = (settings.get("aliexpress_tracking_id") or "").strip()
-        self.magalu_store    = (settings.get("magalu_store_name") or "").strip()
-        self.shortener_on    = settings.get("link_shortener_enabled", "true") != "false"
+        self.amazon_tag   = (settings.get("amazon_affiliate_tag") or "").strip()
+        self.shopee_id    = (settings.get("shopee_affiliate_id") or "").strip()
+        self.ali_tracking = (settings.get("aliexpress_tracking_id") or "").strip()
+        self.magalu_store = (settings.get("magalu_store_name") or "").strip()
+        self.shortener_on = settings.get("link_shortener_enabled", "true") != "false"
 
-    async def convert(self, text: str, session: aiohttp.ClientSession) -> str:
+    async def convert(self, text: str, session: aiohttp.ClientSession) -> tuple[str, list[dict]]:
         """
-        Find all URLs in *text*, convert affiliate links, shorten, and return
-        the modified text. Returns original text unchanged if no URLs found or
-        no affiliate settings are configured.
+        Returns (modified_text, events).
+        events is a list of dicts with the processing trace for each URL found.
         """
         urls = _URL_RE.findall(text)
         if not urls:
-            return text
+            return text, []
 
-        logger.info(f"[affiliate] Found {len(urls)} URL(s) in text: {urls}")
+        logger.info(f"[affiliate] Found {len(urls)} URL(s): {urls}")
 
-        # Deduplicate while preserving order
         seen: set[str] = set()
         unique_urls = [u for u in urls if not (u in seen or seen.add(u))]  # type: ignore[func-returns-value]
 
+        all_events: list[dict] = []
         replacements: dict[str, str] = {}
 
         for raw_url in unique_urls:
-            final = await self._process_url(raw_url, session)
-            if final and final != raw_url:
-                replacements[raw_url] = final
-                logger.info(f"[affiliate] Replacement: {raw_url} → {final}")
-            else:
-                logger.debug(f"[affiliate] No replacement for: {raw_url}")
-
-        if not replacements:
-            return text
+            final_url, event = await self._process_url(raw_url, session)
+            all_events.append(event)
+            if final_url and final_url != raw_url:
+                replacements[raw_url] = final_url
+                logger.info(f"[affiliate] Replaced: {raw_url} → {final_url}")
 
         for original, replacement in replacements.items():
             text = text.replace(original, replacement)
 
-        return text
+        return text, all_events
 
-    async def _process_url(self, raw_url: str, session: aiohttp.ClientSession) -> Optional[str]:
-        """Process a single URL through the full pipeline."""
+    async def _process_url(self, raw_url: str, session: aiohttp.ClientSession) -> tuple[Optional[str], dict]:
+        """Process a single URL. Returns (final_url_or_None, event_dict)."""
+        event: dict = {
+            "ts":         _now_iso(),
+            "original":   raw_url,
+            "expanded":   None,
+            "platform":   None,
+            "affiliate":  None,
+            "shortened":  None,
+            "final":      None,
+            "status":     "skipped",  # ok | skipped | error
+            "error":      None,
+        }
+
         try:
-            # Step 1 — expand redirects (resolves amzn.to, shope.ee, bit.ly, etc.)
+            # Step 1 — expand
             expanded = await expand_url(raw_url, session)
-            logger.debug(f"[affiliate] Expanded: {raw_url} → {expanded}")
+            event["expanded"] = expanded if expanded != raw_url else None
 
-            # Step 2 — identify platform from expanded URL
+            # Step 2 — detect platform
             platform = _platform(expanded)
-
-            # If still a shortener after expansion, try raw URL as fallback
             if platform is None:
                 platform = _platform(raw_url)
                 if platform:
-                    expanded = raw_url  # use raw if platform detected from original
+                    expanded = raw_url
 
             if platform is None:
-                logger.debug(f"[affiliate] Platform not recognized for: {expanded}")
-                return None  # not a supported platform
+                event["status"] = "skipped"
+                event["error"] = "Plataforma não reconhecida"
+                logger.debug(f"[affiliate] Platform not recognized: {expanded[:80]}")
+                return None, event
 
-            logger.info(f"[affiliate] Platform detected: {platform} for {expanded}")
+            event["platform"] = PLATFORM_LABELS.get(platform, platform)
+            logger.info(f"[affiliate] Platform: {platform} — {expanded[:80]}")
 
             # Step 3 — build affiliate URL
-            affiliate_url = self._build_affiliate(platform, expanded)
+            affiliate_url, build_error = self._build_affiliate(platform, expanded)
             if affiliate_url is None:
-                logger.debug(f"[affiliate] Could not build affiliate URL for {platform}: {expanded}")
-                return None  # platform matched but couldn't build URL (e.g. no ASIN, missing config)
+                event["status"] = "error"
+                event["error"] = build_error or "Não foi possível gerar link de afiliado"
+                logger.warning(f"[affiliate] Build failed ({platform}): {build_error}")
+                return None, event
 
-            logger.info(f"[affiliate] Affiliate URL: {affiliate_url}")
+            event["affiliate"] = affiliate_url
+            logger.info(f"[affiliate] Affiliate: {affiliate_url[:80]}")
 
             # Step 4 — shorten
             if self.shortener_on:
-                final = await shorten_tinyurl(affiliate_url, session)
-                logger.info(f"[affiliate] Final (shortened): {final}")
+                final, shorten_error = await shorten_tinyurl(affiliate_url, session)
+                if shorten_error:
+                    logger.warning(f"[affiliate] Shorten failed: {shorten_error} — using affiliate URL")
+                    event["error"] = f"TinyURL falhou ({shorten_error}) — usando link longo"
+                event["shortened"] = final if final != affiliate_url else None
+                event["final"] = final
             else:
                 final = affiliate_url
-                logger.info(f"[affiliate] Final (not shortened): {final}")
+                event["final"] = final
 
-            return final
+            event["status"] = "ok"
+            return final, event
 
         except Exception as exc:
-            logger.warning(f"[affiliate] _process_url failed for {raw_url}: {exc}")
-            return None
+            event["status"] = "error"
+            event["error"] = str(exc)
+            logger.warning(f"[affiliate] Unexpected error for {raw_url}: {exc}")
+            return None, event
 
-    def _build_affiliate(self, platform: str, expanded_url: str) -> Optional[str]:
-        """Dispatch to the correct affiliate URL builder."""
+    def _build_affiliate(self, platform: str, expanded_url: str) -> tuple[Optional[str], Optional[str]]:
         if platform == "amazon":
             if not self.amazon_tag:
-                logger.debug("Amazon: no affiliate tag configured — skipping")
-                return None
+                return None, "Tag Amazon não configurada (vá em Configurações → Links de Afiliado)"
             return build_amazon_url(expanded_url, self.amazon_tag)
-
         if platform == "shopee":
             if not self.shopee_id:
-                logger.debug("Shopee: no affiliate id configured — skipping")
-                return None
+                return None, "ID Shopee não configurado"
             return build_shopee_url(expanded_url, self.shopee_id)
-
         if platform == "aliexpress":
             if not self.ali_tracking:
-                logger.debug("AliExpress: no tracking id configured — skipping")
-                return None
+                return None, "Tracking ID AliExpress não configurado"
             return build_aliexpress_url(expanded_url, self.ali_tracking)
-
         if platform == "magalu":
             if not self.magalu_store:
-                logger.debug("Magalu: no store name configured — skipping")
-                return None
+                return None, "Nome da loja Magalu não configurado"
             return build_magalu_url(expanded_url, self.magalu_store)
-
-        return None
+        return None, f"Plataforma desconhecida: {platform}"
