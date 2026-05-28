@@ -170,23 +170,41 @@ def build_magalu_url(expanded_url: str, store_name: str) -> tuple[Optional[str],
 # ---------------------------------------------------------------------------
 
 async def shorten_tinyurl(url: str, session: aiohttp.ClientSession) -> tuple[str, Optional[str]]:
-    """Returns (final_url, error_message). On error returns original url."""
+    """Returns (final_url, error_message). On error returns original url. Retries up to 3x on 503."""
     api = f"https://tinyurl.com/api-create.php?url={urllib.parse.quote(url, safe='')}"
-    try:
-        async with session.get(
-            api,
-            timeout=aiohttp.ClientTimeout(total=8),
-            headers={"User-Agent": "Mozilla/5.0"},
-        ) as resp:
-            if resp.status == 200:
-                short = (await resp.text()).strip()
-                if short.startswith("https://tinyurl.com/"):
-                    return short, None
-            return url, f"TinyURL retornou status {resp.status}"
-    except asyncio.TimeoutError:
-        return url, "TinyURL timeout (>8s)"
-    except Exception as exc:
-        return url, f"TinyURL erro: {exc}"
+    last_error: Optional[str] = None
+
+    for attempt in range(3):
+        try:
+            async with session.get(
+                api,
+                timeout=aiohttp.ClientTimeout(total=8),
+                headers={"User-Agent": "Mozilla/5.0"},
+            ) as resp:
+                if resp.status == 200:
+                    short = (await resp.text()).strip()
+                    if short.startswith("https://tinyurl.com/"):
+                        return short, None
+                    last_error = f"TinyURL resposta inesperada: {short[:60]}"
+                elif resp.status in (503, 502, 429) and attempt < 2:
+                    last_error = f"TinyURL status {resp.status} (tentativa {attempt + 1}/3)"
+                    logger.debug(f"[shorten] {last_error} — aguardando 1s")
+                    await asyncio.sleep(1)
+                    continue
+                else:
+                    last_error = f"TinyURL retornou status {resp.status}"
+                    break
+        except asyncio.TimeoutError:
+            last_error = "TinyURL timeout (>8s)"
+            if attempt < 2:
+                await asyncio.sleep(1)
+                continue
+            break
+        except Exception as exc:
+            last_error = f"TinyURL erro: {exc}"
+            break
+
+    return url, last_error
 
 
 # ---------------------------------------------------------------------------
