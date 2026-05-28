@@ -32,25 +32,50 @@ const STATUS_COLORS = {
   error:   { bg: 'rgba(239,68,68,0.12)',  color: 'var(--accent-danger)',   label: '❌ Erro'       },
   skipped: { bg: 'rgba(234,179,8,0.12)',  color: '#eab308',               label: '⚠️ Ignorado'  },
   nolink:  { bg: 'rgba(100,116,139,0.12)',color: 'var(--text-muted)',      label: '💬 Sem link'   },
+  pending: { bg: 'rgba(234,179,8,0.08)',  color: '#eab308',               label: '⏳ Aguardando log' },
 }
 
 const PLATFORM_ICON: Record<string, string> = {
   Amazon: '🛒', Shopee: '🛍️', AliExpress: '📦', 'Magazine Luiza': '🛒',
 }
 
-function offerProcStatus(offer: ProcessingOffer): 'ok' | 'error' | 'skipped' | 'nolink' {
+function offerProcStatus(offer: ProcessingOffer): 'ok' | 'error' | 'skipped' | 'nolink' | 'pending' {
   const events = offer.processingLog
-  if (!events || events.length === 0) return 'nolink'
+  if (events === null || events === undefined) return 'pending' // container not redeployed yet
+  if (events.length === 0) return 'nolink'
   if (events.some(e => e.status === 'ok')) return 'ok'
   if (events.some(e => e.status === 'error')) return 'error'
   return 'nolink'
 }
 
-function EventTimeline({ events }: { events: ProcessingEvent[] }) {
+function EventTimeline({ events, isNull }: { events: ProcessingEvent[], isNull: boolean }) {
+  if (isNull) {
+    return (
+      <div style={{
+        fontSize: '0.8rem',
+        color: '#eab308',
+        padding: '10px 12px',
+        background: 'rgba(234,179,8,0.08)',
+        border: '1px solid rgba(234,179,8,0.2)',
+        borderRadius: 6,
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 8,
+      }}>
+        <span style={{ flexShrink: 0 }}>\u23f3</span>
+        <span>
+          Log de processamento n\u00e3o dispon\u00edvel para esta mensagem.{' '}
+          <strong>Redeploye o container telegram-listener no Portainer</strong>{' '}
+          para ativar o rastreamento nas pr\u00f3ximas mensagens.
+        </span>
+      </div>
+    )
+  }
+
   if (!events || events.length === 0) {
     return (
       <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', padding: '8px 0' }}>
-        💬 Nenhum link detectado — mensagem enviada sem alterações.
+        \ud83d\udcac Nenhum link detectado \u2014 mensagem enviada sem altera\u00e7\u00f5es.
       </div>
     )
   }
@@ -273,7 +298,7 @@ function ProcessingCard({ offer }: { offer: ProcessingOffer }) {
             <div style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8 }}>
               🔍 Processamento de Links
             </div>
-            <EventTimeline events={events} />
+            <EventTimeline events={events} isNull={offer.processingLog === null || offer.processingLog === undefined} />
           </div>
 
           {/* Full text preview */}
