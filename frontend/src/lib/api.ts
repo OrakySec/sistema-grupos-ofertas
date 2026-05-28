@@ -30,6 +30,7 @@ export interface Offer {
   sourceGroupName: string
   text?: string | null
   mediaType?: 'PHOTO' | 'VIDEO' | 'DOCUMENT' | null
+  mediaCaption?: string | null
   mediaPath?: string | null
   status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'SENT' | 'FAILED'
   createdAt: string
