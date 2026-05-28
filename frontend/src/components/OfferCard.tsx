@@ -34,7 +34,8 @@ export default function OfferCard({
   loading = false,
   compact = false,
 }: OfferCardProps) {
-  const text = compact ? offer.text.slice(0, 80) + (offer.text.length > 80 ? '…' : '') : offer.text
+  const rawText = offer.text ?? offer.mediaCaption ?? ''
+  const text = compact ? rawText.slice(0, 80) + (rawText.length > 80 ? '…' : '') : rawText
 
   return (
     <div className="offer-card">

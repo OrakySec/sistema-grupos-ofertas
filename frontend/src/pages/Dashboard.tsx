@@ -235,8 +235,8 @@ export default function Dashboard() {
                       minWidth: 0,
                     }}
                   >
-                    {offer.text.slice(0, 80)}
-                    {offer.text.length > 80 ? '…' : ''}
+                    {(offer.text ?? offer.mediaCaption ?? '').slice(0, 80)}
+                    {((offer.text ?? offer.mediaCaption ?? '').length > 80) ? '…' : ''}
                   </div>
 
                   {/* Status + actions */}
