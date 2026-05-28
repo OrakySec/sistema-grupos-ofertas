@@ -260,6 +260,8 @@ class AffiliateConverter:
         if not urls:
             return text
 
+        logger.info(f"[affiliate] Found {len(urls)} URL(s) in text: {urls}")
+
         # Deduplicate while preserving order
         seen: set[str] = set()
         unique_urls = [u for u in urls if not (u in seen or seen.add(u))]  # type: ignore[func-returns-value]
@@ -270,6 +272,9 @@ class AffiliateConverter:
             final = await self._process_url(raw_url, session)
             if final and final != raw_url:
                 replacements[raw_url] = final
+                logger.info(f"[affiliate] Replacement: {raw_url} → {final}")
+            else:
+                logger.debug(f"[affiliate] No replacement for: {raw_url}")
 
         if not replacements:
             return text
@@ -284,6 +289,7 @@ class AffiliateConverter:
         try:
             # Step 1 — expand redirects (resolves amzn.to, shope.ee, bit.ly, etc.)
             expanded = await expand_url(raw_url, session)
+            logger.debug(f"[affiliate] Expanded: {raw_url} → {expanded}")
 
             # Step 2 — identify platform from expanded URL
             platform = _platform(expanded)
@@ -295,23 +301,31 @@ class AffiliateConverter:
                     expanded = raw_url  # use raw if platform detected from original
 
             if platform is None:
+                logger.debug(f"[affiliate] Platform not recognized for: {expanded}")
                 return None  # not a supported platform
+
+            logger.info(f"[affiliate] Platform detected: {platform} for {expanded}")
 
             # Step 3 — build affiliate URL
             affiliate_url = self._build_affiliate(platform, expanded)
             if affiliate_url is None:
+                logger.debug(f"[affiliate] Could not build affiliate URL for {platform}: {expanded}")
                 return None  # platform matched but couldn't build URL (e.g. no ASIN, missing config)
+
+            logger.info(f"[affiliate] Affiliate URL: {affiliate_url}")
 
             # Step 4 — shorten
             if self.shortener_on:
                 final = await shorten_tinyurl(affiliate_url, session)
+                logger.info(f"[affiliate] Final (shortened): {final}")
             else:
                 final = affiliate_url
+                logger.info(f"[affiliate] Final (not shortened): {final}")
 
             return final
 
         except Exception as exc:
-            logger.warning(f"AffiliateConverter._process_url failed for {raw_url}: {exc}")
+            logger.warning(f"[affiliate] _process_url failed for {raw_url}: {exc}")
             return None
 
     def _build_affiliate(self, platform: str, expanded_url: str) -> Optional[str]:

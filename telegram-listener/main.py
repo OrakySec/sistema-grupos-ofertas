@@ -299,15 +299,46 @@ async def _make_message_handler(http_session: aiohttp.ClientSession):
 
             text = message.message if media_type == "NONE" else None
 
-            # ── Affiliate link conversion ─────────────────────────────────
-            # Run the converter on both plain text and media captions.
-            # Uses the affiliate_settings stored in AppState (refreshed every 60 s).
+            # ── Affiliate link conversion (safe — never blocks message delivery) ──
             if state.affiliate_settings:
-                converter = AffiliateConverter(state.affiliate_settings)
-                if text:
-                    text = await converter.convert(text, http_session)
-                if media_caption:
-                    media_caption = await converter.convert(media_caption, http_session)
+                _original_text    = text
+                _original_caption = media_caption
+                try:
+                    converter = AffiliateConverter(state.affiliate_settings)
+
+                    async def _convert_all() -> None:
+                        nonlocal text, media_caption
+                        if text:
+                            text = await converter.convert(text, http_session)
+                        if media_caption:
+                            media_caption = await converter.convert(media_caption, http_session)
+
+                    await asyncio.wait_for(_convert_all(), timeout=20.0)
+
+                    if text != _original_text or media_caption != _original_caption:
+                        logger.info(
+                            f"[affiliate] msg {message.id}: links converted OK"
+                        )
+                    else:
+                        logger.debug(
+                            f"[affiliate] msg {message.id}: no convertible links found"
+                        )
+
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"[affiliate] msg {message.id}: conversion timed out after 20 s "
+                        f"— sending original text"
+                    )
+                    text         = _original_text
+                    media_caption = _original_caption
+
+                except Exception as conv_exc:
+                    logger.warning(
+                        f"[affiliate] msg {message.id}: conversion error ({conv_exc}) "
+                        f"— sending original text"
+                    )
+                    text         = _original_text
+                    media_caption = _original_caption
             # ─────────────────────────────────────────────────────────────
 
             original_date: str = (
