@@ -9,19 +9,18 @@ const DEFAULT_SETTINGS: Record<string, string> = {
   evolution_api_url: '',
   evolution_api_key: '',
   evolution_instance: '',
+  // Marketplaces
+  marketplace_amazon_enabled: 'true',
+  marketplace_shopee_enabled: 'true',
+  marketplace_aliexpress_enabled: 'true',
+  marketplace_magalu_enabled: 'true',
+  marketplace_mercadolivre_enabled: 'true',
 };
 
-async function seed() {
+export async function seed() {
   console.log('[Seed] Starting database seed...');
 
-  // Check if settings table is empty
-  const existingCount = await prisma.setting.count();
-
-  if (existingCount > 0) {
-    console.log(`[Seed] Settings table already has ${existingCount} records. Skipping seed.`);
-    return;
-  }
-
+  // Seeding default settings...
   console.log('[Seed] Seeding default settings...');
 
   const upsertOps = Object.entries(DEFAULT_SETTINGS).map(([key, value]) =>
@@ -38,11 +37,13 @@ async function seed() {
   console.log('[Seed] Done!');
 }
 
-seed()
-  .catch((err) => {
-    console.error('[Seed] Error during seeding:', err);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
+if (typeof require !== 'undefined' && require.main === module) {
+  seed()
+    .catch((err) => {
+      console.error('[Seed] Error during seeding:', err);
+      process.exit(1);
+    })
+    .finally(async () => {
+      await prisma.$disconnect();
+    });
+}

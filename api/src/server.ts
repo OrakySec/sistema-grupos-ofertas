@@ -8,6 +8,7 @@ import { settingsRoutes } from './routes/settings';
 import { logsRoutes } from './routes/logs';
 import { statsRoutes } from './routes/stats';
 import prisma from './lib/prisma';
+import { seed } from './seed';
 
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
 const JWT_SECRET = process.env.JWT_SECRET ?? 'changeme-jwt-secret';
@@ -79,6 +80,12 @@ async function buildApp() {
 async function start() {
   try {
     const app = await buildApp();
+
+    try {
+      await seed();
+    } catch (seedErr) {
+      app.log.error({ err: seedErr }, 'Database auto-seed failed');
+    }
 
     await app.listen({ port: PORT, host: '0.0.0.0' });
     app.log.info(`Server is running on port ${PORT}`);

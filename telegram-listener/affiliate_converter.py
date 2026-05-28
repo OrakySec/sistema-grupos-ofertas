@@ -60,6 +60,11 @@ _MAGALU_HOSTS = {
     "magalu.com", "www.magalu.com",
     "magazinevoce.com.br", "www.magazinevoce.com.br",
 }
+_MERCADOLIVRE_HOSTS = {
+    "mercadolivre.com.br", "www.mercadolivre.com.br",
+    "produto.mercadolivre.com.br", "mlb.link", "www.mlb.link",
+    "mercadolibre.com", "www.mercadolibre.com",
+}
 
 _ASIN_RE = re.compile(r"/(?:dp|gp/product|exec/obidos/ASIN)/([A-Z0-9]{10})")
 _MAGALU_PRODUCT_RE = re.compile(r"/p/([^/]+)/([^/]+)/?$")
@@ -83,6 +88,8 @@ def _platform(url: str) -> Optional[str]:
         return "aliexpress"
     if host in _MAGALU_HOSTS or clean in _MAGALU_HOSTS:
         return "magalu"
+    if host in _MERCADOLIVRE_HOSTS or clean in _MERCADOLIVRE_HOSTS:
+        return "mercadolivre"
     return None
 
 
@@ -216,6 +223,7 @@ PLATFORM_LABELS = {
     "shopee":     "Shopee",
     "aliexpress": "AliExpress",
     "magalu":     "Magazine Luiza",
+    "mercadolivre": "Mercado Livre",
 }
 
 
@@ -347,4 +355,6 @@ class AffiliateConverter:
             if not self.magalu_store:
                 return None, "Nome da loja Magalu não configurado"
             return build_magalu_url(expanded_url, self.magalu_store)
+        if platform == "mercadolivre":
+            return expanded_url, None
         return None, f"Plataforma desconhecida: {platform}"

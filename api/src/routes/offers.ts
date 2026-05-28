@@ -107,6 +107,56 @@ export const offersRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
         });
       }
 
+      // Get all settings to check disabled marketplaces
+      const settings = await prisma.setting.findMany();
+      const settingsMap: Record<string, string> = {};
+      for (const s of settings) settingsMap[s.key] = s.value;
+
+      // Parse processingLog
+      let logEvents: any[] = [];
+      if (processingLog) {
+        if (typeof processingLog === 'string') {
+          try {
+            logEvents = JSON.parse(processingLog);
+          } catch {
+            logEvents = [];
+          }
+        } else if (Array.isArray(processingLog)) {
+          logEvents = [...processingLog];
+        }
+      }
+
+      let isRejectedMarketplace = false;
+      let rejectionReason = '';
+
+      for (const ev of logEvents) {
+        if (ev.step === 'url' && ev.platform) {
+          const platLower = ev.platform.toLowerCase();
+          let settingKey = '';
+          if (platLower.includes('amazon')) settingKey = 'marketplace_amazon_enabled';
+          else if (platLower.includes('shopee')) settingKey = 'marketplace_shopee_enabled';
+          else if (platLower.includes('aliexpress')) settingKey = 'marketplace_aliexpress_enabled';
+          else if (platLower.includes('magazine luiza') || platLower.includes('magalu')) settingKey = 'marketplace_magalu_enabled';
+          else if (platLower.includes('mercado livre') || platLower.includes('mercadolivre')) settingKey = 'marketplace_mercadolivre_enabled';
+
+          if (settingKey && settingsMap[settingKey] === 'false') {
+            isRejectedMarketplace = true;
+            rejectionReason = `Marketplace ${ev.platform} está desativado nas configurações`;
+            break;
+          }
+        }
+      }
+
+      if (isRejectedMarketplace) {
+        logEvents.push({
+          ts: new Date().toISOString(),
+          step: 'marketplace_filter',
+          status: 'skipped',
+          label: 'Filtro de Marketplace',
+          detail: rejectionReason,
+        });
+      }
+
       // Create offer
       const offer = await prisma.offer.create({
         data: {
@@ -117,24 +167,23 @@ export const offersRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
           mediaLocalPath,
           mediaCaption,
           senderName,
+          status: isRejectedMarketplace ? 'REJECTED' : 'PENDING',
           originalDate: new Date(originalDate),
-          ...(processingLog ? { processingLog: processingLog as Prisma.InputJsonValue } : {}),
+          processingLog: logEvents as Prisma.InputJsonValue,
         },
       });
 
-      // Check auto_approve setting
-      const autoApproveSetting = await prisma.setting.findUnique({
-        where: { key: 'auto_approve' },
-      });
-
-      if (autoApproveSetting?.value === 'true') {
-        await prisma.offer.update({
-          where: { id: offer.id },
-          data: { status: 'APPROVED', reviewedAt: new Date() },
-        });
-        await addSendOfferJob(offer.id);
-      } else {
-        await addNewOfferJob(offer.id);
+      if (!isRejectedMarketplace) {
+        // Check auto_approve setting
+        if (settingsMap['auto_approve'] === 'true') {
+          await prisma.offer.update({
+            where: { id: offer.id },
+            data: { status: 'APPROVED', reviewedAt: new Date() },
+          });
+          await addSendOfferJob(offer.id);
+        } else {
+          await addNewOfferJob(offer.id);
+        }
       }
 
       return reply.code(201).send({ ...serializeOffer(offer as unknown as Record<string, unknown>) });

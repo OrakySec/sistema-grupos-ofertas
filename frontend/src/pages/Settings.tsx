@@ -74,6 +74,13 @@ export default function Settings() {
   const refMagaluStore   = useRef<HTMLInputElement>(null)
   const [linkShortenerEnabled, setLinkShortenerEnabled] = useState(true)
 
+  // Marketplaces states
+  const [marketplaceAmazonEnabled, setMarketplaceAmazonEnabled] = useState(true)
+  const [marketplaceShopeeEnabled, setMarketplaceShopeeEnabled] = useState(true)
+  const [marketplaceAliExpressEnabled, setMarketplaceAliExpressEnabled] = useState(true)
+  const [marketplaceMagaluEnabled, setMarketplaceMagaluEnabled] = useState(true)
+  const [marketplaceMercadoLivreEnabled, setMarketplaceMercadoLivreEnabled] = useState(true)
+
   const fetchSettings = useCallback(async () => {
     try {
       const s = await api.getSettings()
@@ -81,6 +88,11 @@ export default function Settings() {
       setAutoApprove(s.autoApprove ?? false)
       setTgPhone(s.telegramPhone ?? '')
       setLinkShortenerEnabled(s.linkShortenerEnabled ?? true)
+      setMarketplaceAmazonEnabled(s.marketplaceAmazonEnabled ?? true)
+      setMarketplaceShopeeEnabled(s.marketplaceShopeeEnabled ?? true)
+      setMarketplaceAliExpressEnabled(s.marketplaceAliExpressEnabled ?? true)
+      setMarketplaceMagaluEnabled(s.marketplaceMagaluEnabled ?? true)
+      setMarketplaceMercadoLivreEnabled(s.marketplaceMercadoLivreEnabled ?? true)
       if (s.telegramAuthenticated) setAuthStep('done')
     } catch {
       // silent
@@ -98,6 +110,11 @@ export default function Settings() {
       setSettingsData(updated)
       setAutoApprove(updated.autoApprove ?? false)
       setTgPhone(updated.telegramPhone ?? '')
+      if (updated.marketplaceAmazonEnabled !== undefined) setMarketplaceAmazonEnabled(updated.marketplaceAmazonEnabled)
+      if (updated.marketplaceShopeeEnabled !== undefined) setMarketplaceShopeeEnabled(updated.marketplaceShopeeEnabled)
+      if (updated.marketplaceAliExpressEnabled !== undefined) setMarketplaceAliExpressEnabled(updated.marketplaceAliExpressEnabled)
+      if (updated.marketplaceMagaluEnabled !== undefined) setMarketplaceMagaluEnabled(updated.marketplaceMagaluEnabled)
+      if (updated.marketplaceMercadoLivreEnabled !== undefined) setMarketplaceMercadoLivreEnabled(updated.marketplaceMercadoLivreEnabled)
       addToast('Configurações salvas com sucesso!', 'success')
     } catch (err) {
       addToast(err instanceof Error ? err.message : 'Erro ao salvar configurações', 'error')
@@ -216,6 +233,88 @@ export default function Settings() {
             <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 3 }}>Aprova e envia ofertas automaticamente sem revisão manual</div>
           </div>
           <Toggle checked={autoApprove} onChange={(v) => { setAutoApprove(v); save({ autoApprove: v }) }} />
+        </div>
+      </div>
+
+      {/* ── Seção: Marketplaces Ativos ─────────── */}
+      <div className="settings-section">
+        <div className="settings-section-header">
+          <div className="settings-section-title">🛒 Marketplaces Ativos</div>
+          <div className="settings-section-desc">Ative ou desative o encaminhamento de ofertas de cada marketplace</div>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {[
+            {
+              id: 'amazon',
+              label: 'Amazon Brasil',
+              desc: 'Permitir o envio de ofertas da Amazon',
+              value: marketplaceAmazonEnabled,
+              setter: setMarketplaceAmazonEnabled,
+              key: 'marketplaceAmazonEnabled',
+            },
+            {
+              id: 'shopee',
+              label: 'Shopee Brasil',
+              desc: 'Permitir o envio de ofertas da Shopee',
+              value: marketplaceShopeeEnabled,
+              setter: setMarketplaceShopeeEnabled,
+              key: 'marketplaceShopeeEnabled',
+            },
+            {
+              id: 'aliexpress',
+              label: 'AliExpress',
+              desc: 'Permitir o envio de ofertas do AliExpress',
+              value: marketplaceAliExpressEnabled,
+              setter: setMarketplaceAliExpressEnabled,
+              key: 'marketplaceAliExpressEnabled',
+            },
+            {
+              id: 'magalu',
+              label: 'Magazine Luiza',
+              desc: 'Permitir o envio de ofertas do Magazine Luiza / Magalu',
+              value: marketplaceMagaluEnabled,
+              setter: setMarketplaceMagaluEnabled,
+              key: 'marketplaceMagaluEnabled',
+            },
+            {
+              id: 'mercadolivre',
+              label: 'Mercado Livre',
+              desc: 'Permitir o envio de ofertas do Mercado Livre',
+              value: marketplaceMercadoLivreEnabled,
+              setter: setMarketplaceMercadoLivreEnabled,
+              key: 'marketplaceMercadoLivreEnabled',
+            },
+          ].map((item) => (
+            <div
+              key={item.id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '12px 16px',
+                background: 'var(--bg-elevated)',
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid var(--border-subtle)',
+              }}
+            >
+              <div>
+                <div style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                  {item.label}
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                  {item.desc}
+                </div>
+              </div>
+              <Toggle
+                id={`toggle-mp-${item.id}`}
+                checked={item.value}
+                onChange={(v) => {
+                  item.setter(v)
+                  save({ [item.key]: v })
+                }}
+              />
+            </div>
+          ))}
         </div>
       </div>
 

@@ -35,6 +35,12 @@ function buildSettingsResponse(dbObj: Record<string, string>, authenticated = fa
     aliexpressTrackingId:   dbObj.aliexpress_tracking_id ?? '',
     magaluStoreName:        dbObj.magalu_store_name ?? '',
     linkShortenerEnabled:   dbObj.link_shortener_enabled !== 'false',
+    // Marketplaces toggles
+    marketplaceAmazonEnabled:       dbObj.marketplace_amazon_enabled !== 'false',
+    marketplaceShopeeEnabled:       dbObj.marketplace_shopee_enabled !== 'false',
+    marketplaceAliExpressEnabled:   dbObj.marketplace_aliexpress_enabled !== 'false',
+    marketplaceMagaluEnabled:       dbObj.marketplace_magalu_enabled !== 'false',
+    marketplaceMercadoLivreEnabled: dbObj.marketplace_mercadolivre_enabled !== 'false',
   };
 }
 
@@ -96,6 +102,12 @@ export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
       if ('aliexpressTrackingId' in updates) dbUpdates.aliexpress_tracking_id = updates.aliexpressTrackingId ?? '';
       if ('magaluStoreName' in updates)      dbUpdates.magalu_store_name      = updates.magaluStoreName ?? '';
       if ('linkShortenerEnabled' in updates) dbUpdates.link_shortener_enabled = String(updates.linkShortenerEnabled);
+      // Marketplaces toggles
+      if ('marketplaceAmazonEnabled' in updates)       dbUpdates.marketplace_amazon_enabled = String(updates.marketplaceAmazonEnabled);
+      if ('marketplaceShopeeEnabled' in updates)       dbUpdates.marketplace_shopee_enabled = String(updates.marketplaceShopeeEnabled);
+      if ('marketplaceAliExpressEnabled' in updates)   dbUpdates.marketplace_aliexpress_enabled = String(updates.marketplaceAliExpressEnabled);
+      if ('marketplaceMagaluEnabled' in updates)       dbUpdates.marketplace_magalu_enabled = String(updates.marketplaceMagaluEnabled);
+      if ('marketplaceMercadoLivreEnabled' in updates) dbUpdates.marketplace_mercadolivre_enabled = String(updates.marketplaceMercadoLivreEnabled);
 
       await Promise.all(
         Object.entries(dbUpdates).map(([key, value]) =>
