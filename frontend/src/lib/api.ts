@@ -72,6 +72,12 @@ export interface Settings {
   evolutionApiUrl?: string
   evolutionApiKey?: string
   evolutionInstance?: string
+  // Affiliate link conversion
+  amazonAffiliateTag?: string
+  shopeeAffiliateId?: string
+  aliexpressTrackingId?: string
+  magaluStoreName?: string
+  linkShortenerEnabled?: boolean
 }
 
 export interface Stats {
