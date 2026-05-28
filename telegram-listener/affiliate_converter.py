@@ -247,6 +247,8 @@ class AffiliateConverter:
         """Process a single URL. Returns (final_url_or_None, event_dict)."""
         event: dict = {
             "ts":         _now_iso(),
+            "step":       "url",
+            "label":      "Conversão de link",
             "original":   raw_url,
             "expanded":   None,
             "platform":   None,

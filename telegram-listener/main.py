@@ -280,36 +280,81 @@ async def _make_message_handler(http_session: aiohttp.ClientSession):
         )
 
         try:
-            # Sender info
+            _ts = lambda: datetime.now(timezone.utc).isoformat()
+
+            # ── STEP 1: Message received ──────────────────────────────────────────
+            processing_events: list[dict] = [{
+                "ts":     _ts(),
+                "step":   "received",
+                "status": "ok",
+                "label":  "Mensagem recebida",
+                "detail": (
+                    f"Chat {chat_id} • Msg #{message.id}"
+                    + (" • com mídia" if message.media else " • texto puro")
+                ),
+            }]
+
+            # ── STEP 2: Sender ────────────────────────────────────────────────────
             try:
                 sender = await event.get_sender()
             except Exception:
                 sender = None
             name = _sender_name(sender)
+            processing_events.append({
+                "ts":     _ts(),
+                "step":   "sender",
+                "status": "ok",
+                "label":  "Remetente identificado",
+                "detail": name or "Anônimo / Canal",
+            })
 
-            # Media
+            # ── STEP 3: Media ─────────────────────────────────────────────────────
             media_type = _media_type_from_message(message)
             media_local_path: Optional[str] = None
             media_caption: Optional[str] = None
 
             if media_type != "NONE" and state.client is not None:
+                processing_events.append({
+                    "ts":     _ts(),
+                    "step":   "media_download",
+                    "status": "info",
+                    "label":  f"Mídia ({media_type})",
+                    "detail": "Baixando arquivo...",
+                })
                 media_local_path = await _download_media(state.client, message, chat_id)
-                # Caption lives on the message itself (same as text for media messages)
+                processing_events[-1]["status"] = "ok" if media_local_path else "error"
+                processing_events[-1]["detail"] = (
+                    f"Salvo: {media_local_path}" if media_local_path
+                    else "Falha no download de mídia"
+                )
                 media_caption = message.message or None
 
             text = message.message if media_type == "NONE" else None
 
-            # ── Affiliate link conversion (safe — never blocks message delivery) ──
-            processing_events: list[dict] = []
+            # ── STEP 4: URL detection ─────────────────────────────────────────────
+            _raw = text or media_caption or ""
+            _has_url = "http://" in _raw or "https://" in _raw
+            processing_events.append({
+                "ts":     _ts(),
+                "step":   "url_detect",
+                "status": "ok" if _has_url else "skipped",
+                "label":  "Detecção de links",
+                "detail": (
+                    "Link(s) encontrado(s) — iniciando conversão de afiliado"
+                    if _has_url else
+                    "Nenhum link HTTP detectado na mensagem"
+                ),
+            })
 
-            if state.affiliate_settings:
+            # ── STEP 5: Affiliate link conversion ─────────────────────────────────
+            if state.affiliate_settings and _has_url:
                 _original_text    = text
                 _original_caption = media_caption
                 try:
                     converter = AffiliateConverter(state.affiliate_settings)
 
                     async def _convert_all() -> None:
-                        nonlocal text, media_caption, processing_events
+                        nonlocal text, media_caption
                         if text:
                             text, evts = await converter.convert(text, http_session)
                             processing_events.extend(evts)
@@ -329,20 +374,43 @@ async def _make_message_handler(http_session: aiohttp.ClientSession):
                     logger.warning(f"[affiliate] msg {message.id}: conversion timed out — sending original text")
                     text          = _original_text
                     media_caption = _original_caption
-                    processing_events = [{"status": "error", "error": "Timeout de conversão (>20s)"}]
+                    processing_events.append({
+                        "ts": _ts(), "step": "url_convert", "status": "error",
+                        "label": "Conversão de afiliado", "error": "Timeout (>20s) — texto original mantido",
+                    })
 
                 except Exception as conv_exc:
                     logger.warning(f"[affiliate] msg {message.id}: conversion error ({conv_exc}) — sending original text")
                     text          = _original_text
                     media_caption = _original_caption
-                    processing_events = [{"status": "error", "error": str(conv_exc)}]
-            # ──────────────────────────────────────────────────────────────────────
+                    processing_events.append({
+                        "ts": _ts(), "step": "url_convert", "status": "error",
+                        "label": "Conversão de afiliado", "error": str(conv_exc),
+                    })
 
+            elif not state.affiliate_settings:
+                processing_events.append({
+                    "ts":     _ts(),
+                    "step":   "url_convert",
+                    "status": "skipped",
+                    "label":  "Conversão de afiliado",
+                    "detail": "Configurações de afiliado não carregadas do servidor",
+                })
+
+            # ── STEP 6: Send to API ───────────────────────────────────────────────
             original_date: str = (
                 message.date.astimezone(timezone.utc).isoformat()
                 if message.date
                 else datetime.now(timezone.utc).isoformat()
             )
+
+            processing_events.append({
+                "ts":     _ts(),
+                "step":   "api_post",
+                "status": "ok",
+                "label":  "Enviado para API",
+                "detail": "POST /offers/internal → salvo no banco de dados",
+            })
 
             payload = {
                 "sourceGroupId":    uuid,
@@ -353,7 +421,7 @@ async def _make_message_handler(http_session: aiohttp.ClientSession):
                 "mediaCaption":     media_caption,
                 "senderName":       name,
                 "originalDate":     original_date,
-                "processingLog":    processing_events if processing_events else None,
+                "processingLog":    processing_events,
             }
 
             logger.debug(f"Sending offer payload: {payload}")

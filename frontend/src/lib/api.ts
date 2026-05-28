@@ -14,13 +14,18 @@ export interface PaginationParams {
 
 export interface ProcessingEvent {
   ts: string
-  original: string
+  // pipeline step identifier
+  step?: string           // 'received' | 'sender' | 'media_download' | 'url_detect' | 'url' | 'url_convert' | 'api_post'
+  label?: string          // human-readable step name
+  detail?: string         // extra info for non-url steps
+  // url-specific fields (step === 'url')
+  original?: string | null
   expanded?: string | null
   platform?: string | null
   affiliate?: string | null
   shortened?: string | null
   final?: string | null
-  status: 'ok' | 'skipped' | 'error'
+  status: 'ok' | 'skipped' | 'error' | 'info'
   error?: string | null
 }
 

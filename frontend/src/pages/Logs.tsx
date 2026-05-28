@@ -48,25 +48,38 @@ function offerProcStatus(offer: ProcessingOffer): 'ok' | 'error' | 'skipped' | '
   return 'nolink'
 }
 
+// ─── Step icons & colors ─────────────────────────────────────────────────────
+
+const STEP_ICON: Record<string, string> = {
+  received:      '📨',
+  sender:        '👤',
+  media_download:'📎',
+  url_detect:    '🔍',
+  url:           '🔗',
+  url_convert:   '💰',
+  api_post:      '🚀',
+}
+
+function stepColor(status: string): { border: string; bg: string; text: string } {
+  if (status === 'ok')      return { border: 'rgba(34,197,94,0.25)',   bg: 'rgba(34,197,94,0.06)',   text: 'var(--accent-success)' }
+  if (status === 'error')   return { border: 'rgba(239,68,68,0.3)',    bg: 'rgba(239,68,68,0.06)',   text: 'var(--accent-danger)'  }
+  if (status === 'skipped') return { border: 'rgba(100,116,139,0.2)', bg: 'rgba(100,116,139,0.04)', text: 'var(--text-muted)'     }
+  /* info */                return { border: 'rgba(234,179,8,0.2)',    bg: 'rgba(234,179,8,0.05)',   text: '#eab308'               }
+}
+
 function EventTimeline({ events, isNull }: { events: ProcessingEvent[], isNull: boolean }) {
   if (isNull) {
     return (
       <div style={{
-        fontSize: '0.8rem',
-        color: '#eab308',
-        padding: '10px 12px',
-        background: 'rgba(234,179,8,0.08)',
-        border: '1px solid rgba(234,179,8,0.2)',
-        borderRadius: 6,
-        display: 'flex',
-        alignItems: 'flex-start',
-        gap: 8,
+        fontSize: '0.8rem', color: '#eab308', padding: '10px 12px',
+        background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.2)',
+        borderRadius: 6, display: 'flex', alignItems: 'flex-start', gap: 8,
       }}>
-        <span style={{ flexShrink: 0 }}>\u23f3</span>
+        <span style={{ flexShrink: 0 }}>⏳</span>
         <span>
-          Log de processamento n\u00e3o dispon\u00edvel para esta mensagem.{' '}
+          Log de processamento não disponível para esta mensagem.{' '}
           <strong>Redeploye o container telegram-listener no Portainer</strong>{' '}
-          para ativar o rastreamento nas pr\u00f3ximas mensagens.
+          para ativar o rastreamento nas próximas mensagens.
         </span>
       </div>
     )
@@ -75,67 +88,75 @@ function EventTimeline({ events, isNull }: { events: ProcessingEvent[], isNull: 
   if (!events || events.length === 0) {
     return (
       <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', padding: '8px 0' }}>
-        \ud83d\udcac Nenhum link detectado \u2014 mensagem enviada sem altera\u00e7\u00f5es.
+        💬 Nenhum evento registrado.
       </div>
     )
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
       {events.map((ev, i) => {
-        const isOk    = ev.status === 'ok'
-        const isError = ev.status === 'error'
-        const icon    = isOk ? '✅' : isError ? '❌' : '⚠️'
-        const borderColor = isOk
-          ? 'rgba(34,197,94,0.3)'
-          : isError
-          ? 'rgba(239,68,68,0.3)'
-          : 'rgba(234,179,8,0.3)'
+        const step = ev.step || 'url'
+        const isUrl = step === 'url'
+        const icon = ev.status === 'error' ? '❌'
+          : ev.status === 'skipped' ? '⏩'
+          : ev.status === 'info' ? (STEP_ICON[step] || '⏳')
+          : (STEP_ICON[step] || '✅')
+        const { border, bg } = stepColor(ev.status)
+        const label = ev.label || (isUrl && ev.platform ? ev.platform : step)
 
         return (
-          <div
-            key={i}
-            style={{
-              background: 'var(--bg-base)',
-              border: `1px solid ${borderColor}`,
-              borderRadius: 8,
-              padding: '10px 14px',
-              fontSize: '0.8rem',
-            }}
-          >
-            {/* Header row */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
-              <span>{icon}</span>
-              {ev.platform && (
+          <div key={i} style={{
+            background: bg,
+            border: `1px solid ${border}`,
+            borderRadius: 8,
+            padding: '8px 12px',
+            fontSize: '0.78rem',
+          }}>
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+              <span style={{ fontSize: '1rem', flexShrink: 0 }}>{icon}</span>
+              <span style={{ fontWeight: 600, flex: 1 }}>{label}</span>
+              {isUrl && ev.platform && (
                 <span style={{
-                  background: 'var(--surface-2)',
-                  borderRadius: 4,
-                  padding: '1px 7px',
-                  fontSize: '0.72rem',
-                  fontWeight: 600,
-                  color: 'var(--text-secondary)',
+                  background: 'var(--surface-2)', borderRadius: 4,
+                  padding: '1px 6px', fontSize: '0.68rem', fontWeight: 600, color: 'var(--text-secondary)',
                 }}>
                   {PLATFORM_ICON[ev.platform] ?? '🔗'} {ev.platform}
                 </span>
               )}
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginLeft: 'auto' }}>
-                {fmtTime(ev.ts)}
+              <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', flexShrink: 0 }}>
+                {ev.ts ? fmtTime(ev.ts) : ''}
               </span>
             </div>
 
-            {/* Step rows */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, paddingLeft: 4 }}>
-              <StepRow icon="🔗" label="Original"  val={ev.original}  />
-              {ev.expanded  && <StepRow icon="🔄" label="Expandido"  val={ev.expanded}  />}
-              {ev.affiliate && <StepRow icon="🏷️"  label="Afiliado"   val={ev.affiliate} truncate />}
-              {ev.shortened && <StepRow icon="✂️"  label="Encurtado"  val={ev.shortened} highlight />}
-              {ev.final && !ev.shortened && <StepRow icon="📤" label="Final" val={ev.final} highlight />}
-              {ev.error  && (
-                <div style={{ color: 'var(--accent-danger)', fontSize: '0.75rem', marginTop: 2 }}>
-                  ⚠️ {ev.error}
-                </div>
-              )}
-            </div>
+            {/* Detail: non-url steps */}
+            {!isUrl && ev.detail && (
+              <div style={{ marginTop: 4, paddingLeft: 27, fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                {ev.detail}
+              </div>
+            )}
+            {!isUrl && ev.error && (
+              <div style={{ marginTop: 4, paddingLeft: 27, fontSize: '0.72rem', color: 'var(--accent-danger)' }}>
+                ⚠️ {ev.error}
+              </div>
+            )}
+
+            {/* Detail: url steps */}
+            {isUrl && (
+              <div style={{ marginTop: 5, paddingLeft: 27, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {ev.original  && <StepRow icon="🔗" label="Original"  val={ev.original}  />}
+                {ev.expanded  && <StepRow icon="🔄" label="Expandido"  val={ev.expanded}  />}
+                {ev.affiliate && <StepRow icon="🏷️"  label="Afiliado"   val={ev.affiliate} truncate />}
+                {ev.shortened && <StepRow icon="✂️"  label="Encurtado"  val={ev.shortened} highlight />}
+                {ev.final && !ev.shortened && <StepRow icon="📤" label="Final" val={ev.final} highlight />}
+                {ev.error && (
+                  <div style={{ color: 'var(--accent-danger)', fontSize: '0.72rem', marginTop: 2 }}>
+                    ⚠️ {ev.error}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )
       })}
@@ -146,9 +167,10 @@ function EventTimeline({ events, isNull }: { events: ProcessingEvent[], isNull: 
 function StepRow({
   icon, label, val, truncate, highlight,
 }: {
-  icon: string; label: string; val: string; truncate?: boolean; highlight?: boolean
+  icon: string; label: string; val?: string | null; truncate?: boolean; highlight?: boolean
 }) {
   const [copied, setCopied] = useState(false)
+  if (!val) return null
   const copy = () => {
     navigator.clipboard.writeText(val).then(() => {
       setCopied(true)
@@ -158,19 +180,17 @@ function StepRow({
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, minHeight: 20 }}>
       <span style={{ width: 16, textAlign: 'center', flexShrink: 0 }}>{icon}</span>
-      <span style={{ color: 'var(--text-muted)', width: 70, flexShrink: 0, fontSize: '0.72rem' }}>{label}</span>
+      <span style={{ color: 'var(--text-muted)', width: 70, flexShrink: 0, fontSize: '0.7rem' }}>{label}</span>
       <span
         onClick={copy}
         title={val}
         style={{
           fontFamily: 'var(--font-mono)',
-          fontSize: '0.72rem',
+          fontSize: '0.7rem',
           color: highlight ? 'var(--accent-primary)' : 'var(--text-secondary)',
           fontWeight: highlight ? 600 : 400,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-          maxWidth: truncate ? 280 : 400,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          maxWidth: truncate ? 260 : 380,
           cursor: 'pointer',
         }}
       >
