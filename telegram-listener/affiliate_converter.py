@@ -64,6 +64,7 @@ _MERCADOLIVRE_HOSTS = {
     "mercadolivre.com.br", "www.mercadolivre.com.br",
     "produto.mercadolivre.com.br", "mlb.link", "www.mlb.link",
     "mercadolibre.com", "www.mercadolibre.com",
+    "meli.la", "www.meli.la",
 }
 
 _ASIN_RE = re.compile(r"/(?:dp|gp/product|exec/obidos/ASIN)/([A-Z0-9]{10})")
@@ -110,6 +111,7 @@ async def expand_url(url: str, session: aiohttp.ClientSession) -> str:
         )
     }
     try:
+        # Try HEAD first
         async with session.head(
             url,
             headers=headers,
@@ -117,10 +119,24 @@ async def expand_url(url: str, session: aiohttp.ClientSession) -> str:
             timeout=aiohttp.ClientTimeout(total=8),
             ssl=False,
         ) as resp:
-            final = str(resp.url)
-            return final
+            if resp.status < 400:
+                return str(resp.url)
+            logger.debug(f"expand_url HEAD returned status {resp.status} for {url}")
     except Exception as exc:
-        logger.debug(f"expand_url failed for {url}: {exc}")
+        logger.debug(f"expand_url HEAD failed for {url}: {exc}")
+
+    # Fallback to GET
+    try:
+        async with session.get(
+            url,
+            headers=headers,
+            allow_redirects=True,
+            timeout=aiohttp.ClientTimeout(total=8),
+            ssl=False,
+        ) as resp:
+            return str(resp.url)
+    except Exception as exc:
+        logger.debug(f"expand_url GET failed for {url}: {exc}")
         return url
 
 
