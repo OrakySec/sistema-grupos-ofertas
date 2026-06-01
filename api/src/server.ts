@@ -12,6 +12,7 @@ import { seed } from './seed';
 
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
 const JWT_SECRET = process.env.JWT_SECRET ?? 'changeme-jwt-secret';
+const INTERNAL_TOKEN = 'sistema-grupos-ofertas-internal-token-fallback-key-2026';
 const NODE_ENV = process.env.NODE_ENV ?? 'development';
 const CORS_ORIGIN = process.env.CORS_ORIGIN ?? '*';
 
@@ -43,6 +44,89 @@ async function buildApp() {
     return reply.send({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
+  // Redirect route for internal shortener (no auth required)
+  server.get('/s/:code', async (request, reply) => {
+    const { code } = request.params as { code: string };
+    try {
+      const shortUrl = await prisma.shortUrl.findUnique({
+        where: { code },
+      });
+      if (shortUrl) {
+        // Increment clicks asynchronously
+        prisma.shortUrl.update({
+          where: { code },
+          data: { clicks: { increment: 1 } },
+        }).catch(err => server.log.error({ err }, `Failed to increment clicks for code ${code}`));
+
+        return reply.redirect(302, shortUrl.originalUrl);
+      }
+    } catch (err) {
+      server.log.error({ err }, `Error looking up short code ${code}`);
+    }
+    return reply.status(404).send('Link não encontrado');
+  });
+
+  // Internal shorten route (requires X-Internal-Key)
+  server.post('/s/internal', async (request, reply) => {
+    const internalKey = request.headers['x-internal-key'];
+    if (internalKey !== JWT_SECRET && internalKey !== INTERNAL_TOKEN) {
+      return reply.status(401).send({ error: 'Unauthorized' });
+    }
+
+    const { url } = request.body as { url?: string };
+    if (!url) {
+      return reply.status(400).send({ error: 'Missing url parameter' });
+    }
+
+    try {
+      // Find if we already shortened this URL to save space
+      const existing = await prisma.shortUrl.findFirst({
+        where: { originalUrl: url },
+      });
+      if (existing) {
+        const domainSetting = await prisma.setting.findUnique({ where: { key: 'shortener_domain' } });
+        const domain = (domainSetting?.value || 'https://ofertas.ykaromarques.com').replace(/\/$/, '');
+        return reply.send({ code: existing.code, shortUrl: `${domain}/s/${existing.code}` });
+      }
+
+      // Generate a unique code
+      const pool = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+      let code = '';
+      let isUnique = false;
+      let attempts = 0;
+
+      while (!isUnique && attempts < 10) {
+        code = '';
+        for (let i = 0; i < 6; i++) {
+          code += pool.charAt(Math.floor(Math.random() * pool.length));
+        }
+        const conflict = await prisma.shortUrl.findUnique({ where: { code } });
+        if (!conflict) {
+          isUnique = true;
+        }
+        attempts++;
+      }
+
+      if (!isUnique) {
+        return reply.status(500).send({ error: 'Failed to generate a unique short code' });
+      }
+
+      const created = await prisma.shortUrl.create({
+        data: {
+          code,
+          originalUrl: url,
+        },
+      });
+
+      const domainSetting = await prisma.setting.findUnique({ where: { key: 'shortener_domain' } });
+      const domain = (domainSetting?.value || 'https://ofertas.ykaromarques.com').replace(/\/$/, '');
+      return reply.send({ code: created.code, shortUrl: `${domain}/s/${created.code}` });
+    } catch (err) {
+      server.log.error({ err }, 'Failed to create short link');
+      return reply.status(500).send({ error: 'Internal server error' });
+    }
+  });
+
   // ── GET /settings/internal ────────────────────────────────────────────────
   // Registered at the TOP-LEVEL scope (no requireAuth hook here).
   // The telegram-listener uses this to fetch credentials without a user JWT.
@@ -63,6 +147,7 @@ async function buildApp() {
       aliexpress_tracking_id: dbObj.aliexpress_tracking_id ?? '',
       magalu_store_name:      dbObj.magalu_store_name ?? '',
       link_shortener_enabled: dbObj.link_shortener_enabled ?? 'true',
+      shortener_provider:     dbObj.shortener_provider ?? 'internal',
     });
   });
 

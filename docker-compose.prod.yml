@@ -52,7 +52,7 @@ services:
       labels:
         - "traefik.enable=true"
         - "traefik.docker.network=YkaroNET"
-        - "traefik.http.routers.ofertas-api.rule=Host(`ofertas.ykaromarques.com`) && PathPrefix(`/api`)"
+        - "traefik.http.routers.ofertas-api.rule=Host(`ofertas.ykaromarques.com`) && (PathPrefix(`/api`) || PathPrefix(`/s`))"
         - "traefik.http.routers.ofertas-api.entrypoints=websecure"
         - "traefik.http.routers.ofertas-api.tls.certresolver=letsencryptresolver"
         - "traefik.http.middlewares.ofertas-api-strip.stripprefix.prefixes=/api"

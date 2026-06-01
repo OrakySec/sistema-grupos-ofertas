@@ -230,6 +230,29 @@ async def shorten_tinyurl(url: str, session: aiohttp.ClientSession) -> tuple[str
     return url, last_error
 
 
+async def shorten_internal(url: str, session: aiohttp.ClientSession, internal_api_url: str, internal_token: str) -> tuple[str, Optional[str]]:
+    """Shortens a URL using our own internal shortener endpoint."""
+    api = f"{internal_api_url}/s/internal"
+    try:
+        async with session.post(
+            api,
+            json={"url": url},
+            headers={"X-Internal-Key": internal_token},
+            timeout=aiohttp.ClientTimeout(total=8),
+        ) as resp:
+            if resp.status == 200:
+                res_data = await resp.json()
+                short_url = res_data.get("shortUrl")
+                if short_url:
+                    return short_url, None
+                return url, "API retornou JSON sem shortUrl"
+            else:
+                body = await resp.text()
+                return url, f"API retornou status {resp.status}: {body[:60]}"
+    except Exception as exc:
+        return url, f"Erro de conexão com API interna: {exc}"
+
+
 # ---------------------------------------------------------------------------
 # Main converter
 # ---------------------------------------------------------------------------
@@ -255,6 +278,9 @@ class AffiliateConverter:
         self.ali_tracking = (settings.get("aliexpress_tracking_id") or "").strip()
         self.magalu_store = (settings.get("magalu_store_name") or "").strip()
         self.shortener_on = settings.get("link_shortener_enabled", "true") != "false"
+        self.shortener_provider = settings.get("shortener_provider", "internal")
+        self.internal_api_url = settings.get("internal_api_url", "http://api:3001")
+        self.internal_token = settings.get("internal_token", "")
 
     async def convert(self, text: str, session: aiohttp.ClientSession) -> tuple[str, list[dict]]:
         """
@@ -335,10 +361,16 @@ class AffiliateConverter:
 
             # Step 4 — shorten
             if self.shortener_on:
-                final, shorten_error = await shorten_tinyurl(affiliate_url, session)
-                if shorten_error:
-                    logger.warning(f"[affiliate] Shorten failed: {shorten_error} — using affiliate URL")
-                    event["error"] = f"TinyURL falhou ({shorten_error}) — usando link longo"
+                if self.shortener_provider == "tinyurl":
+                    final, shorten_error = await shorten_tinyurl(affiliate_url, session)
+                    if shorten_error:
+                        logger.warning(f"[affiliate] TinyURL shorten failed: {shorten_error} — using affiliate URL")
+                        event["error"] = f"TinyURL falhou ({shorten_error}) — usando link longo"
+                else:
+                    final, shorten_error = await shorten_internal(affiliate_url, session, self.internal_api_url, self.internal_token)
+                    if shorten_error:
+                        logger.warning(f"[affiliate] Internal shorten failed: {shorten_error} — using affiliate URL")
+                        event["error"] = f"Encurtador interno falhou ({shorten_error}) — usando link longo"
                 event["shortened"] = final if final != affiliate_url else None
                 event["final"] = final
             else:

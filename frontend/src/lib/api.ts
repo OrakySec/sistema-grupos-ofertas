@@ -118,6 +118,8 @@ export interface Settings {
   aliexpressTrackingId?: string
   magaluStoreName?: string
   linkShortenerEnabled?: boolean
+  shortenerProvider?: string
+  shortenerDomain?: string
   // Marketplace toggles
   marketplaceAmazonEnabled?: boolean
   marketplaceShopeeEnabled?: boolean

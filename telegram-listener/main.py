@@ -571,13 +571,15 @@ async def _apply_settings(settings: dict, http_session: aiohttp.ClientSession, *
     state.api_hash = new_api_hash
     state.phone = new_phone
 
-    # ── Affiliate settings (always refresh from latest settings) ──────────
     state.affiliate_settings = {
         "amazon_affiliate_tag":   settings.get("amazon_affiliate_tag") or "",
         "shopee_affiliate_id":    settings.get("shopee_affiliate_id") or "",
         "aliexpress_tracking_id": settings.get("aliexpress_tracking_id") or "",
         "magalu_store_name":      settings.get("magalu_store_name") or "",
         "link_shortener_enabled": settings.get("link_shortener_enabled", "true"),
+        "shortener_provider":     settings.get("shortener_provider", "internal"),
+        "internal_api_url":       INTERNAL_API_URL,
+        "internal_token":         INTERNAL_TOKEN,
     }
     logger.debug(f"Affiliate settings refreshed: { {k: ('✓' if v else '–') for k, v in state.affiliate_settings.items()} }")
     # ─────────────────────────────────────────────────────────────────────

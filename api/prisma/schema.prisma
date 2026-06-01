@@ -96,3 +96,10 @@ model Setting {
   value     String   @db.Text
   updatedAt DateTime @updatedAt
 }
+
+model ShortUrl {
+  code        String   @id
+  originalUrl String   @db.Text
+  clicks      Int      @default(0)
+  createdAt   DateTime @default(now())
+}

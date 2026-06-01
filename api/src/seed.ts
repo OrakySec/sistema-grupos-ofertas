@@ -15,6 +15,9 @@ const DEFAULT_SETTINGS: Record<string, string> = {
   marketplace_aliexpress_enabled: 'true',
   marketplace_magalu_enabled: 'true',
   marketplace_mercadolivre_enabled: 'true',
+  // Shortener settings
+  shortener_provider: 'internal',
+  shortener_domain: 'https://ofertas.ykaromarques.com',
 };
 
 export async function seed() {

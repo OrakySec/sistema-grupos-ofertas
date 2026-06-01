@@ -72,7 +72,9 @@ export default function Settings() {
   const refShopeeId      = useRef<HTMLInputElement>(null)
   const refAliTrackId    = useRef<HTMLInputElement>(null)
   const refMagaluStore   = useRef<HTMLInputElement>(null)
+  const refShortenerDomain = useRef<HTMLInputElement>(null)
   const [linkShortenerEnabled, setLinkShortenerEnabled] = useState(true)
+  const [shortenerProvider, setShortenerProvider] = useState('internal')
 
   // Marketplaces states
   const [marketplaceAmazonEnabled, setMarketplaceAmazonEnabled] = useState(true)
@@ -88,6 +90,7 @@ export default function Settings() {
       setAutoApprove(s.autoApprove ?? false)
       setTgPhone(s.telegramPhone ?? '')
       setLinkShortenerEnabled(s.linkShortenerEnabled ?? true)
+      setShortenerProvider(s.shortenerProvider ?? 'internal')
       setMarketplaceAmazonEnabled(s.marketplaceAmazonEnabled ?? true)
       setMarketplaceShopeeEnabled(s.marketplaceShopeeEnabled ?? true)
       setMarketplaceAliExpressEnabled(s.marketplaceAliExpressEnabled ?? true)
@@ -110,6 +113,8 @@ export default function Settings() {
       setSettingsData(updated)
       setAutoApprove(updated.autoApprove ?? false)
       setTgPhone(updated.telegramPhone ?? '')
+      if (updated.linkShortenerEnabled !== undefined) setLinkShortenerEnabled(updated.linkShortenerEnabled)
+      if (updated.shortenerProvider !== undefined) setShortenerProvider(updated.shortenerProvider)
       if (updated.marketplaceAmazonEnabled !== undefined) setMarketplaceAmazonEnabled(updated.marketplaceAmazonEnabled)
       if (updated.marketplaceShopeeEnabled !== undefined) setMarketplaceShopeeEnabled(updated.marketplaceShopeeEnabled)
       if (updated.marketplaceAliExpressEnabled !== undefined) setMarketplaceAliExpressEnabled(updated.marketplaceAliExpressEnabled)
@@ -665,35 +670,84 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* Toggle encurtador */}
+        {/* Encurtador de Links */}
         <div
           style={{
             display: 'flex',
-            alignItems: 'center',
-            gap: 12,
-            padding: '12px 16px',
+            flexDirection: 'column',
+            gap: 16,
+            padding: '16px',
             background: 'var(--surface-2)',
             borderRadius: 8,
             marginTop: 16,
             border: '1px solid var(--border)',
           }}
         >
-          <Toggle
-            id="link-shortener-toggle"
-            checked={linkShortenerEnabled}
-            onChange={(v) => {
-              setLinkShortenerEnabled(v)
-              save({ linkShortenerEnabled: v })
-            }}
-          />
-          <div>
-            <div style={{ fontWeight: 600, fontSize: '0.88rem' }}>Encurtar links via TinyURL</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-              {linkShortenerEnabled
-                ? '✅ Ativo — links de afiliado serão encurtados antes de enviar'
-                : '➖ Desativado — links de afiliado serão enviados no formato longo'}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <Toggle
+              id="link-shortener-toggle"
+              checked={linkShortenerEnabled}
+              onChange={(v) => {
+                setLinkShortenerEnabled(v)
+                save({ linkShortenerEnabled: v })
+              }}
+            />
+            <div>
+              <div style={{ fontWeight: 600, fontSize: '0.88rem' }}>Encurtador de Links</div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                {linkShortenerEnabled
+                  ? '✅ Ativo — links de afiliado serão encurtados antes de enviar'
+                  : '➖ Desativado — links de afiliado serão enviados no formato longo'}
+              </div>
             </div>
           </div>
+
+          {linkShortenerEnabled && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+              <div className="form-group">
+                <label className="label">Provedor do Encurtador</label>
+                <select
+                  value={shortenerProvider}
+                  onChange={(e) => setShortenerProvider(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    background: 'var(--bg-elevated, #1a1a24)',
+                    color: 'var(--text-primary)',
+                    border: '1px solid var(--border-subtle, rgba(255,255,255,0.08))',
+                    borderRadius: 'var(--radius-md, 12px)',
+                    outline: 'none',
+                  }}
+                >
+                  <option value="internal">Encurtador Próprio (Recomendado — Sem atrasos/captchas)</option>
+                  <option value="tinyurl">TinyURL (Externo)</option>
+                </select>
+              </div>
+
+              {shortenerProvider === 'internal' && (
+                <div className="form-group">
+                  <label className="label">
+                    🔗 Domínio do Encurtador
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 8 }}>
+                      ex: https://ofertas.ykaromarques.com
+                    </span>
+                  </label>
+                  <input
+                    ref={refShortenerDomain}
+                    defaultValue={settingsData?.shortenerDomain ?? 'https://ofertas.ykaromarques.com'}
+                    className="input font-mono"
+                    placeholder="https://ofertas.ykaromarques.com"
+                    type="text"
+                    autoComplete="off"
+                    data-lpignore="true"
+                  />
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>
+                    O domínio da sua aplicação usado para construir e redirecionar os links encurtados.
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
@@ -706,6 +760,8 @@ export default function Settings() {
               aliexpressTrackingId: refAliTrackId.current?.value,
               magaluStoreName:      refMagaluStore.current?.value,
               linkShortenerEnabled,
+              shortenerProvider,
+              shortenerDomain:      refShortenerDomain.current?.value || settingsData?.shortenerDomain,
             })}
             disabled={saving}
           >
