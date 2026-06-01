@@ -102,6 +102,39 @@ def _now_iso() -> str:
 # URL expansion
 # ---------------------------------------------------------------------------
 
+_MARKETPLACE_URL_RE = re.compile(
+    r"https?://(?:www\.)?(?:amazon\.com\.br|amazon\.com|amzn\.to|shopee\.com\.br|shope\.ee|s\.shopee\.com\.br|aliexpress\.com|s\.click\.aliexpress\.com|magazineluiza\.com\.br|magalu\.com|magazinevoce\.com\.br|mercadolivre\.com\.br|meli\.la|mlb\.link|mercadolibre\.com)[^\s\"'<>)\u2019\u201d\u300d\u3011\uff09\u300f\u3015\uff3d,，。？！]+"
+)
+
+def _find_redirect_url_in_html(html: str) -> Optional[str]:
+    # 1. Try to find meta refresh URL
+    meta_match = re.search(
+        r'<meta\s+http-equiv=["\']refresh["\']\s+content=["\'].*?url=([^"\']+)["\']',
+        html,
+        re.IGNORECASE
+    )
+    if meta_match:
+        import html as html_lib
+        return html_lib.unescape(meta_match.group(1).strip())
+
+    # 2. Try to find window.location redirects
+    js_match = re.search(
+        r'window\.location(?:\.href)?\s*=\s*["\']([^"\']+)["\']',
+        html,
+        re.IGNORECASE
+    )
+    if js_match:
+        return js_match.group(1).strip()
+
+    # 3. Find the first link that points to a recognized marketplace
+    marketplace_match = _MARKETPLACE_URL_RE.search(html)
+    if marketplace_match:
+        import html as html_lib
+        return html_lib.unescape(marketplace_match.group(0))
+
+    return None
+
+
 async def expand_url(url: str, session: aiohttp.ClientSession) -> str:
     headers = {
         "User-Agent": (
@@ -120,8 +153,10 @@ async def expand_url(url: str, session: aiohttp.ClientSession) -> str:
             ssl=False,
         ) as resp:
             if resp.status < 400:
-                return str(resp.url)
-            logger.debug(f"expand_url HEAD returned status {resp.status} for {url}")
+                final_url = str(resp.url)
+                if _platform(final_url):
+                    return final_url
+                logger.debug(f"expand_url HEAD returned non-platform url: {final_url}")
     except Exception as exc:
         logger.debug(f"expand_url HEAD failed for {url}: {exc}")
 
@@ -134,7 +169,37 @@ async def expand_url(url: str, session: aiohttp.ClientSession) -> str:
             timeout=aiohttp.ClientTimeout(total=8),
             ssl=False,
         ) as resp:
-            return str(resp.url)
+            final_url = str(resp.url)
+            if _platform(final_url):
+                return final_url
+            
+            # If not a recognized platform, check HTML content
+            content_type = resp.headers.get("Content-Type", "")
+            if "text/html" in content_type.lower():
+                html_body = await resp.text()
+                extracted_url = _find_redirect_url_in_html(html_body)
+                if extracted_url:
+                    # Resolve relative URLs if any
+                    resolved_url = urljoin(str(resp.url), extracted_url)
+                    logger.info(f"Extracted destination URL from HTML: {resolved_url[:80]}")
+                    
+                    # If the extracted URL is also a short URL or another redirect, recursively expand it once
+                    if not _platform(resolved_url):
+                        logger.debug(f"Recursively expanding extracted URL: {resolved_url[:80]}")
+                        try:
+                            async with session.head(
+                                resolved_url,
+                                headers=headers,
+                                allow_redirects=True,
+                                timeout=aiohttp.ClientTimeout(total=8),
+                                ssl=False,
+                            ) as r_resp:
+                                if r_resp.status < 400:
+                                    resolved_url = str(r_resp.url)
+                        except Exception:
+                            pass
+                    return resolved_url
+            return final_url
     except Exception as exc:
         logger.debug(f"expand_url GET failed for {url}: {exc}")
         return url
