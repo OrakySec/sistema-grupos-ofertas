@@ -117,16 +117,34 @@ def _find_redirect_url_in_html(html: str) -> Optional[str]:
         import html as html_lib
         return html_lib.unescape(meta_match.group(1).strip())
 
-    # 2. Try to find window.location redirects
-    js_match = re.search(
+    # 2. Try to find window.location/location redirects (redundant patterns)
+    js_patterns = [
         r'window\.location(?:\.href)?\s*=\s*["\']([^"\']+)["\']',
-        html,
-        re.IGNORECASE
-    )
-    if js_match:
-        return js_match.group(1).strip()
+        r'location\.replace\(\s*["\']([^"\']+)["\']\s*\)',
+        r'location\.href\s*=\s*["\']([^"\']+)["\']',
+        r'window\.location\.replace\(\s*["\']([^"\']+)["\']\s*\)',
+        r'window\.navigate\(\s*["\']([^"\']+)["\']\s*\)',
+        r'self\.location(?:\.href)?\s*=\s*["\']([^"\']+)["\']',
+        r'top\.location(?:\.href)?\s*=\s*["\']([^"\']+)["\']',
+    ]
+    for pattern in js_patterns:
+        js_match = re.search(pattern, html, re.IGNORECASE)
+        if js_match:
+            return js_match.group(1).strip()
 
-    # 3. Find the first link that points to a recognized marketplace
+    # 3. Try to find marketplace URLs inside JSON blocks (e.g. structured data or page variables)
+    json_patterns = [
+        r'"url"\s*:\s*"(https?://[^"]+)"',
+        r'"targetUrl"\s*:\s*"(https?://[^"]+)"',
+        r'"redirectUrl"\s*:\s*"(https?://[^"]+)"',
+    ]
+    for pattern in json_patterns:
+        for json_match in re.finditer(pattern, html, re.IGNORECASE):
+            found_url = json_match.group(1).replace("\\/", "/")  # unescape JSON slashes
+            if _platform(found_url):
+                return found_url
+
+    # 4. Find the first link in the HTML body that points to a recognized marketplace
     marketplace_match = _MARKETPLACE_URL_RE.search(html)
     if marketplace_match:
         import html as html_lib
@@ -135,13 +153,43 @@ def _find_redirect_url_in_html(html: str) -> Optional[str]:
     return None
 
 
+def _extract_url_from_query(url: str) -> Optional[str]:
+    """Check if the URL query string contains a marketplace URL as a parameter."""
+    try:
+        parsed = urlparse(url)
+        params = parse_qs(parsed.query)
+        for key, values in params.items():
+            for val in values:
+                val = val.strip()
+                if val.startswith(("http://", "https://")):
+                    if _platform(val):
+                        logger.info(f"Extracted marketplace URL from query parameter '{key}': {val[:80]}")
+                        return val
+    except Exception as exc:
+        logger.debug(f"Failed to extract URL from query parameters of {url}: {exc}")
+    return None
+
+
 async def expand_url(url: str, session: aiohttp.ClientSession) -> str:
+    # Pre-check: try to extract from query parameters to save requests
+    query_extracted = _extract_url_from_query(url)
+    if query_extracted:
+        # Recursively expand the extracted URL in case it is another short link
+        return await expand_url(query_extracted, session)
+
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/124.0.0.0 Safari/537.36"
-        )
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Cache-Control": "max-age=0",
+        "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Upgrade-Insecure-Requests": "1",
     }
     try:
         # Try HEAD first
