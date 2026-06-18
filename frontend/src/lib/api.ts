@@ -265,6 +265,14 @@ class ApiClient {
     return this.request('DELETE', `/groups/source/${id}`)
   }
 
+  async getSourceGroupDestinations(sourceGroupId: string): Promise<DestinationGroup[]> {
+    return this.request('GET', `/groups/source/${sourceGroupId}/destinations`)
+  }
+
+  async setSourceGroupDestinations(sourceGroupId: string, destinationIds: string[]): Promise<DestinationGroup[]> {
+    return this.request('PUT', `/groups/source/${sourceGroupId}/destinations`, { destinationIds })
+  }
+
   // ── Destination Groups ────────────────────────
   async getDestinationGroups(): Promise<DestinationGroup[]> {
     return this.request('GET', '/groups/destination')

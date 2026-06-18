@@ -57,9 +57,23 @@ async function handleSendOffer(job: Job<SendOfferJobData>): Promise<void> {
     return;
   }
 
-  const destinationGroups = await prisma.destinationGroup.findMany({
-    where: { isActive: true },
+  // Fetch destinations linked to this source group.
+  // If no links are configured, fall back to all active destinations (legacy behaviour).
+  const links = await prisma.sourceGroupDestination.findMany({
+    where: { sourceGroupId: offer.sourceGroupId },
+    include: { destinationGroup: true },
   });
+
+  const destinationGroups =
+    links.length > 0
+      ? links.map((l) => l.destinationGroup).filter((d) => d.isActive)
+      : await prisma.destinationGroup.findMany({ where: { isActive: true } });
+
+  console.log(
+    `[Worker] Offer ${offerId}: using ${links.length > 0 ? 'linked' : 'all-active (legacy)'} ` +
+    `destinations — ${destinationGroups.length} group(s)`,
+  );
+
 
   if (destinationGroups.length === 0) {
     console.warn(`[Worker] No active destination groups found for offer ${offerId}`);

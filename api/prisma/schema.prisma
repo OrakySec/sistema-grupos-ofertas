@@ -43,7 +43,8 @@ model SourceGroup {
   isActive   Boolean  @default(true)
   createdAt  DateTime @default(now())
 
-  offers Offer[]
+  offers       Offer[]
+  destinations SourceGroupDestination[]
 }
 
 model DestinationGroup {
@@ -54,7 +55,18 @@ model DestinationGroup {
   isActive  Boolean         @default(true)
   createdAt DateTime        @default(now())
 
-  deliveryLogs DeliveryLog[]
+  deliveryLogs  DeliveryLog[]
+  sourceGroups  SourceGroupDestination[]
+}
+
+model SourceGroupDestination {
+  sourceGroupId      String
+  destinationGroupId String
+
+  sourceGroup      SourceGroup      @relation(fields: [sourceGroupId], references: [id], onDelete: Cascade)
+  destinationGroup DestinationGroup @relation(fields: [destinationGroupId], references: [id], onDelete: Cascade)
+
+  @@id([sourceGroupId, destinationGroupId])
 }
 
 model Offer {

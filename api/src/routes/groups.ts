@@ -152,6 +152,83 @@ export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
     },
   );
 
+  // GET /groups/source/:id/destinations — list linked destinations
+  fastify.get<{ Params: { id: string } }>(
+    '/source/:id/destinations',
+    {
+      schema: {
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: { id: { type: 'string' } },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+
+      const existing = await prisma.sourceGroup.findUnique({ where: { id } });
+      if (!existing) {
+        return reply.code(404).send({ error: 'Source group not found' });
+      }
+
+      const links = await prisma.sourceGroupDestination.findMany({
+        where: { sourceGroupId: id },
+        include: { destinationGroup: true },
+      });
+
+      return reply.send(links.map((l) => l.destinationGroup));
+    },
+  );
+
+  // PUT /groups/source/:id/destinations — replace all linked destinations
+  fastify.put<{ Params: { id: string }; Body: { destinationIds: string[] } }>(
+    '/source/:id/destinations',
+    {
+      schema: {
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: { id: { type: 'string' } },
+        },
+        body: {
+          type: 'object',
+          required: ['destinationIds'],
+          properties: {
+            destinationIds: { type: 'array', items: { type: 'string' } },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+      const { destinationIds } = request.body;
+
+      const existing = await prisma.sourceGroup.findUnique({ where: { id } });
+      if (!existing) {
+        return reply.code(404).send({ error: 'Source group not found' });
+      }
+
+      // Replace all links atomically
+      await prisma.$transaction([
+        prisma.sourceGroupDestination.deleteMany({ where: { sourceGroupId: id } }),
+        ...destinationIds.map((destinationGroupId) =>
+          prisma.sourceGroupDestination.create({
+            data: { sourceGroupId: id, destinationGroupId },
+          }),
+        ),
+      ]);
+
+      const updated = await prisma.sourceGroupDestination.findMany({
+        where: { sourceGroupId: id },
+        include: { destinationGroup: true },
+      });
+
+      return reply.send(updated.map((l) => l.destinationGroup));
+    },
+  );
+
+
   // ──────────────────────────────────────────────
   // DESTINATION GROUPS
   // ──────────────────────────────────────────────

@@ -9,6 +9,187 @@ import Toggle from '../components/Toggle'
 import { Skeleton } from '../components/LoadingSkeleton'
 import { useToast } from '../lib/toast'
 
+/* ─── Link Destinations Modal ────────────── */
+interface LinkDestinationsModalProps {
+  isOpen: boolean
+  sourceGroup: SourceGroup | null
+  allDestinations: DestinationGroup[]
+  onClose: () => void
+  onSaved: () => void
+}
+
+function LinkDestinationsModal({
+  isOpen,
+  sourceGroup,
+  allDestinations,
+  onClose,
+  onSaved,
+}: LinkDestinationsModalProps) {
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const { addToast } = useToast()
+
+  // Load currently linked destinations when modal opens
+  useEffect(() => {
+    if (!isOpen || !sourceGroup) return
+    setLoading(true)
+    api
+      .getSourceGroupDestinations(sourceGroup.id)
+      .then((linked) => setSelected(new Set(linked.map((d) => d.id))))
+      .catch(() => setSelected(new Set()))
+      .finally(() => setLoading(false))
+  }, [isOpen, sourceGroup])
+
+  const toggle = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const handleSave = async () => {
+    if (!sourceGroup) return
+    setSaving(true)
+    try {
+      await api.setSourceGroupDestinations(sourceGroup.id, [...selected])
+      addToast('Vínculos salvos com sucesso!', 'success')
+      onSaved()
+      onClose()
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : 'Erro ao salvar vínculos.', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const typeIcon = (t: 'TELEGRAM' | 'WHATSAPP') => (t === 'TELEGRAM' ? '✈️' : '💬')
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={`Vincular destinos — ${sourceGroup?.name ?? ''}`}
+      width={480}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose}>
+            Cancelar
+          </button>
+          <button className="btn btn-primary" onClick={handleSave} disabled={saving || loading}>
+            {saving ? <span className="spinner spinner-sm" /> : null}
+            Salvar vínculos
+          </button>
+        </>
+      }
+    >
+      {loading ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} height={44} />
+          ))}
+        </div>
+      ) : allDestinations.length === 0 ? (
+        <div className="empty-state" style={{ padding: '24px 0' }}>
+          <span className="empty-state-icon">📤</span>
+          <span className="empty-state-title">Nenhum grupo destino</span>
+          <span className="empty-state-desc">
+            Adicione grupos destino antes de criar vínculos.
+          </span>
+        </div>
+      ) : (
+        <div>
+          <p
+            style={{
+              fontSize: '0.85rem',
+              color: 'var(--text-muted)',
+              marginBottom: 14,
+              lineHeight: 1.5,
+            }}
+          >
+            Selecione quais grupos destino receberão as ofertas deste grupo fonte.
+            {selected.size === 0 && (
+              <span style={{ color: 'var(--color-warning, #f59e0b)', fontWeight: 500 }}>
+                {' '}Nenhum selecionado = envia para todos (comportamento padrão).
+              </span>
+            )}
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {allDestinations.map((d) => (
+              <label
+                key={d.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '10px 14px',
+                  borderRadius: 'var(--radius-md)',
+                  border: `1.5px solid ${
+                    selected.has(d.id) ? 'var(--accent-primary)' : 'var(--border-subtle)'
+                  }`,
+                  background: selected.has(d.id)
+                    ? 'var(--accent-primary-dim, rgba(99,102,241,0.1))'
+                    : 'transparent',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                  userSelect: 'none',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.has(d.id)}
+                  onChange={() => toggle(d.id)}
+                  style={{ accentColor: 'var(--accent-primary)', width: 16, height: 16 }}
+                />
+                <span style={{ fontSize: '1.1rem' }}>{typeIcon(d.type)}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{
+                      fontWeight: 600,
+                      fontSize: '0.9rem',
+                      color: 'var(--text-primary)',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {d.name}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: '0.75rem',
+                      color: 'var(--text-muted)',
+                      fontFamily: 'monospace',
+                    }}
+                  >
+                    {d.chatId}
+                  </div>
+                </div>
+                {!d.isActive && (
+                  <span
+                    style={{
+                      fontSize: '0.7rem',
+                      background: 'var(--color-error-dim, rgba(239,68,68,0.15))',
+                      color: 'var(--color-error, #ef4444)',
+                      padding: '2px 6px',
+                      borderRadius: 4,
+                      fontWeight: 600,
+                    }}
+                  >
+                    inativo
+                  </span>
+                )}
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+    </Modal>
+  )
+}
+
 /* ─── Source Group Modal ─────────────────── */
 interface SourceGroupModalProps {
   isOpen: boolean
@@ -354,6 +535,10 @@ export default function Groups() {
   const [showAddDest, setShowAddDest] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [togglingId, setTogglingId] = useState<string | null>(null)
+  // Link destinations modal
+  const [linkTarget, setLinkTarget] = useState<SourceGroup | null>(null)
+  // Track linked destination counts per source group
+  const [linkedCounts, setLinkedCounts] = useState<Record<string, number>>({})
 
   const fetchAll = useCallback(async () => {
     try {
@@ -363,6 +548,16 @@ export default function Groups() {
       ])
       setSourceGroups(src)
       setDestGroups(dest)
+      // Fetch linked counts for each source group
+      const counts = await Promise.all(
+        src.map((s) =>
+          api
+            .getSourceGroupDestinations(s.id)
+            .then((linked) => ({ id: s.id, count: linked.length }))
+            .catch(() => ({ id: s.id, count: 0 }))
+        )
+      )
+      setLinkedCounts(Object.fromEntries(counts.map((c) => [c.id, c.count])))
     } catch {
       // silent
     } finally {
@@ -439,6 +634,13 @@ export default function Groups() {
         onClose={() => setShowAddDest(false)}
         onSaved={() => { fetchAll(); addToast('Grupo de destino adicionado com sucesso!', 'success'); }}
       />
+      <LinkDestinationsModal
+        isOpen={linkTarget !== null}
+        sourceGroup={linkTarget}
+        allDestinations={destGroups}
+        onClose={() => setLinkTarget(null)}
+        onSaved={() => { fetchAll(); }}
+      />
 
       {/* Header */}
       <div className="page-header">
@@ -489,6 +691,7 @@ export default function Groups() {
                   <th>Nome</th>
                   <th>Username</th>
                   <th>Telegram ID</th>
+                  <th>Destinos vinculados</th>
                   <th>Status</th>
                   <th>Ações</th>
                 </tr>
@@ -506,6 +709,35 @@ export default function Groups() {
                     </td>
                     <td>
                       <span className="mono">{g.telegramId}</span>
+                    </td>
+                    <td>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => setLinkTarget(g)}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                        title="Gerenciar grupos destino vinculados"
+                      >
+                        🔗
+                        {(linkedCounts[g.id] ?? 0) > 0 ? (
+                          <span
+                            style={{
+                              background: 'var(--accent-primary)',
+                              color: '#fff',
+                              borderRadius: '999px',
+                              fontSize: '0.7rem',
+                              fontWeight: 700,
+                              padding: '1px 7px',
+                              lineHeight: 1.4,
+                            }}
+                          >
+                            {linkedCounts[g.id]}
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                            Todos
+                          </span>
+                        )}
+                      </button>
                     </td>
                     <td>
                       <Toggle
