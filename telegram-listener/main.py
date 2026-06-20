@@ -206,25 +206,40 @@ async def fetch_source_groups(session: aiohttp.ClientSession) -> dict[int, str]:
     """
     GET /groups/source from the internal API.
     Returns a dict mapping Telegram chat-id (int) → UUID string.
+    We map multiple forms (base, negative, -100 prefix) so Telethon
+    and the handler match reliably regardless of how the user typed it.
     """
     url = f"{INTERNAL_API_URL}/groups/source"
     try:
         async with session.get(url, headers=_internal_headers(), timeout=aiohttp.ClientTimeout(total=10)) as resp:
             if resp.status == 200:
                 groups = await resp.json()
-                # Expected shape: list of { telegramId: int|str, id: uuid }
                 mapping: dict[int, str] = {}
                 for g in groups:
                     tg_id = g.get("telegramId") or g.get("telegram_id")
                     uuid = g.get("id") or g.get("uuid")
                     if tg_id and uuid:
-                        mapping[int(tg_id)] = str(uuid)
-                logger.info(f"Source groups loaded: {list(mapping.keys())}")
+                        tg_id = int(tg_id)
+                        str_id = str(tg_id)
+                        if str_id.startswith("-100"):
+                            base_id = int(str_id[4:])
+                        elif str_id.startswith("-"):
+                            base_id = int(str_id[1:])
+                        else:
+                            base_id = tg_id
+
+                        # Map all possible Telegram ID variants
+                        mapping[base_id] = str(uuid)
+                        mapping[-base_id] = str(uuid)
+                        mapping[int(f"-100{base_id}")] = str(uuid)
+
+                logger.info(f"Source groups loaded (expanded to variants): {list(mapping.keys())}")
                 return mapping
             logger.warning(f"GET /groups/source returned HTTP {resp.status}")
     except Exception as exc:
         logger.warning(f"Failed to fetch source groups: {exc}")
     return {}
+
 
 
 async def post_offer(session: aiohttp.ClientSession, payload: dict) -> None:
