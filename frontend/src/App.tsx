@@ -16,6 +16,7 @@ import History from './pages/History'
 import Groups from './pages/Groups'
 import Settings from './pages/Settings'
 import Logs from './pages/Logs'
+import Landing3D from './pages/Landing3D'
 
 // Shows a full-page spinner while auth state loads
 function AuthLoading() {
@@ -61,6 +62,9 @@ function AppRoutes() {
       <Route element={<PublicRoute />}>
         <Route path="/login" element={<Login />} />
       </Route>
+
+      {/* Landing pages */}
+      <Route path="/3d" element={<Landing3D />} />
 
       {/* Protected routes with sidebar layout */}
       <Route element={<ProtectedRoute />}>
