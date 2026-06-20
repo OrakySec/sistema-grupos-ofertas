@@ -153,7 +153,7 @@ export default function Landing3D() {
           </div>
 
           <a
-            href="https://t.me/seu_grupo_aqui"
+            href="https://t.me/ferreira3d"
             target="_blank"
             rel="noopener noreferrer"
             style={{
