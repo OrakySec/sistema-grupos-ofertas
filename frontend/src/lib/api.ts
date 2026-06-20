@@ -32,7 +32,17 @@ export interface ProcessingEvent {
 export interface Offer {
   id: string
   sourceGroupId: string
-  sourceGroupName: string
+  sourceGroup?: {
+    id: string
+    name: string
+    destinations?: Array<{
+      destinationGroup: {
+        id: string
+        name: string
+        type: string
+      }
+    }>
+  }
   text?: string | null
   mediaType?: 'PHOTO' | 'VIDEO' | 'DOCUMENT' | null
   mediaCaption?: string | null

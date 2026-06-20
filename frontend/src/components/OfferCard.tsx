@@ -35,7 +35,9 @@ export default function OfferCard({
   compact = false,
 }: OfferCardProps) {
   const rawText = offer.text ?? offer.mediaCaption ?? ''
-  const text = compact ? rawText.slice(0, 80) + (rawText.length > 80 ? '…' : '') : rawText
+  const text = compact ? rawText.slice(0, 250) + (rawText.length > 250 ? '…' : '') : rawText
+  const dests = offer.sourceGroup?.destinations?.map(d => d.destinationGroup.name) || []
+  const destsLabel = dests.length > 0 ? dests.join(', ') : 'Todos os ativos'
 
   return (
     <div className="offer-card">
@@ -71,7 +73,7 @@ export default function OfferCard({
                 color: 'var(--text-primary)',
               }}
             >
-              {offer.sourceGroupName}
+              {offer.sourceGroup?.name || 'Grupo Desconhecido'}
             </div>
             <div
               style={{
@@ -80,7 +82,7 @@ export default function OfferCard({
                 marginTop: 1,
               }}
             >
-              {timeAgo(offer.createdAt)}
+              👉 Para: {destsLabel} • {timeAgo(offer.createdAt)}
             </div>
           </div>
         </div>

@@ -233,7 +233,15 @@ export const offersRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
           orderBy: { createdAt: 'desc' },
           skip,
           take: limit,
-          include: { sourceGroup: true },
+          include: { 
+            sourceGroup: {
+              include: {
+                destinations: {
+                  include: { destinationGroup: true }
+                }
+              }
+            }
+          },
         }),
         prisma.offer.count({ where }),
       ]);
@@ -276,7 +284,13 @@ export const offersRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
       const offer = await prisma.offer.findUnique({
         where: { id },
         include: {
-          sourceGroup: true,
+          sourceGroup: {
+            include: {
+              destinations: {
+                include: { destinationGroup: true }
+              }
+            }
+          },
           deliveryLogs: {
             include: { destinationGroup: true },
             orderBy: { sentAt: 'desc' },
