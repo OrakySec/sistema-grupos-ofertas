@@ -157,7 +157,7 @@ export default function History() {
                       <td className="mono" style={{ whiteSpace: 'nowrap' }}>
                         {formatDate(offer.createdAt)}
                       </td>
-                      <td className="primary">{offer.sourceGroupName}</td>
+                      <td className="primary">{offer.sourceGroup?.name || 'Desconhecido'}</td>
                       <td>
                         <span
                           style={{

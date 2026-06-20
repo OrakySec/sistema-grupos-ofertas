@@ -210,7 +210,7 @@ export default function Dashboard() {
                         color: 'var(--text-primary)',
                       }}
                     >
-                      {offer.sourceGroupName}
+                      {offer.sourceGroup?.name || 'Desconhecido'}
                     </span>
                     <span
                       style={{
