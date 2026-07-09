@@ -174,7 +174,7 @@ export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     const { phone } = request.body;
     try {
       const response = await axios.post(`${TELEGRAM_LISTENER_URL}/auth/start`, { phone }, {
-        timeout: 15000,
+        timeout: 60000, // 60s — listing groups can be slow on large instances
       });
       return reply.send({ success: true, data: response.data });
     } catch (err: any) {
@@ -230,7 +230,7 @@ export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     try {
       const whatsappService = new WhatsAppService();
       const groups = await whatsappService.listGroups();
-      return reply.send({ groups });
+      return reply.send(groups);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       fastify.log.error({ err }, 'Failed to fetch WhatsApp groups');

@@ -56,7 +56,7 @@ export class WhatsAppService {
         apikey: apiKey,
         'Content-Type': 'application/json',
       },
-      timeout: 30000,
+      timeout: 60000, // 60s — listing groups can be slow on large instances
     });
     return { client, instance };
   }
