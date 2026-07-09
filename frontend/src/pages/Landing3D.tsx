@@ -3,6 +3,16 @@ import React, { useEffect, useState } from 'react';
 const TELEGRAM_URL = 'https://t.me/ferreira3d';
 const WHATSAPP_URL = 'https://chat.whatsapp.com/C0cPDxI9ViB25Y6NUVUmyL?mode=gi_t';
 
+/** Fire a Meta Pixel custom event safely (works even before fbq is fully loaded). */
+function trackEvent(eventName: string, params?: Record<string, unknown>) {
+  try {
+    const w = window as any;
+    if (typeof w.fbq === 'function') {
+      w.fbq('trackCustom', eventName, params ?? {});
+    }
+  } catch (_) {}
+}
+
 export default function Landing3D() {
   const [spotsLeft, setSpotsLeft] = useState(12);
   const [progress, setProgress] = useState(88);
@@ -179,7 +189,10 @@ export default function Landing3D() {
 
           {/* CTA Button — triggers modal */}
           <button
-            onClick={() => setShowModal(true)}
+            onClick={() => {
+              trackEvent('CliqueGrupo', { source: 'cta_button' });
+              setShowModal(true);
+            }}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -315,6 +328,10 @@ export default function Landing3D() {
                 href={TELEGRAM_URL}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={() => {
+                  trackEvent('CliqueTelegram', { canal: 'telegram' });
+                  trackEvent('CliqueGrupo', { canal: 'telegram' });
+                }}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -365,6 +382,10 @@ export default function Landing3D() {
                 href={WHATSAPP_URL}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={() => {
+                  trackEvent('CliqueWhatsApp', { canal: 'whatsapp' });
+                  trackEvent('CliqueGrupo', { canal: 'whatsapp' });
+                }}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
