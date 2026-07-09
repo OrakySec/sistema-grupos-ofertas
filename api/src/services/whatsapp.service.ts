@@ -87,7 +87,7 @@ export class WhatsAppService {
     const { client, instance } = await this.getClient();
     const response = await client.post(`/message/sendText/${instance}`, {
       number: chatId,
-      textMessage: { text },
+      text,                    // Evolution API v2 — top-level field (not textMessage:{text})
     });
 
     if (response.status < 200 || response.status >= 300) {
@@ -112,12 +112,11 @@ export class WhatsAppService {
     const { client, instance } = await this.getClient();
     const response = await client.post(`/message/sendMedia/${instance}`, {
       number: chatId,
-      mediaMessage: {
-        mediatype: 'image',
-        media: `data:${mimeType};base64,${base64}`,
-        caption: caption ?? '',
-        fileName: path.basename(absolutePath),
-      },
+      // Evolution API v2 top-level fields
+      mediatype: 'image',
+      media: `data:${mimeType};base64,${base64}`,
+      caption: caption ?? '',
+      fileName: path.basename(absolutePath),
     });
 
     if (response.status < 200 || response.status >= 300) {
@@ -142,12 +141,11 @@ export class WhatsAppService {
     const { client, instance } = await this.getClient();
     const response = await client.post(`/message/sendMedia/${instance}`, {
       number: chatId,
-      mediaMessage: {
-        mediatype: 'document',
-        media: `data:${mimeType};base64,${base64}`,
-        caption: caption ?? '',
-        fileName,
-      },
+      // Evolution API v2 top-level fields
+      mediatype: 'document',
+      media: `data:${mimeType};base64,${base64}`,
+      caption: caption ?? '',
+      fileName,
     });
 
     if (response.status < 200 || response.status >= 300) {
