@@ -89,45 +89,8 @@ export default function Landing3D() {
             animation: 'pulse 2s infinite',
           }}
         >
-          🔥 Acesso Vip Temporariamente Aberto
+          🔥 Acesso Vip Gratuito
         </div>
-
-        {/* Title */}
-        <h1
-          style={{
-            fontSize: 'clamp(2.2rem, 5vw, 3.5rem)',
-            fontWeight: 900,
-            lineHeight: 1.1,
-            marginBottom: '1rem',
-            letterSpacing: '-1px',
-          }}
-        >
-          As Melhores Ofertas de <br />
-          <span
-            style={{
-              background: 'linear-gradient(90deg, #ff5e00, #ff9100)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-              textShadow: '0px 2px 10px rgba(255,94,0,0.3)',
-            }}
-          >
-            Impressão 3D
-          </span>{' '}
-          do Brasil
-        </h1>
-
-        <p
-          style={{
-            fontSize: '1.1rem',
-            color: '#a1a1aa',
-            lineHeight: 1.6,
-            marginBottom: '2rem',
-            maxWidth: 600,
-            margin: '0 auto 2.5rem',
-          }}
-        >
-          Receba diariamente ofertas selecionadas de <strong>filamentos, impressoras de resina/FDM e peças de reposição</strong>. Direto no seu celular, antes que os estoques acabem.
-        </p>
 
         {/* Scarcity Box */}
         <div
@@ -227,6 +190,43 @@ export default function Landing3D() {
             Acesso 100% Gratuito. Cancele quando quiser.
           </p>
         </div>
+
+        {/* Title */}
+        <h1
+          style={{
+            fontSize: 'clamp(2.2rem, 5vw, 3.5rem)',
+            fontWeight: 900,
+            lineHeight: 1.1,
+            marginBottom: '1rem',
+            letterSpacing: '-1px',
+          }}
+        >
+          As Melhores Ofertas de <br />
+          <span
+            style={{
+              background: 'linear-gradient(90deg, #ff5e00, #ff9100)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              textShadow: '0px 2px 10px rgba(255,94,0,0.3)',
+            }}
+          >
+            Impressão 3D
+          </span>{' '}
+          do Brasil
+        </h1>
+
+        <p
+          style={{
+            fontSize: '1.1rem',
+            color: '#a1a1aa',
+            lineHeight: 1.6,
+            marginBottom: '2rem',
+            maxWidth: 600,
+            margin: '0 auto 2.5rem',
+          }}
+        >
+          Receba diariamente ofertas selecionadas de <strong>filamentos, impressoras de resina/FDM e peças de reposição</strong>. Direto no seu celular, antes que os estoques acabem.
+        </p>
 
         {/* Features / Social Proof */}
         <div
