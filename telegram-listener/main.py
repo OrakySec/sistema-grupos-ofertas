@@ -591,6 +591,7 @@ async def _apply_settings(settings: dict, http_session: aiohttp.ClientSession, *
         "shopee_affiliate_id":    settings.get("shopee_affiliate_id") or "",
         "aliexpress_tracking_id": settings.get("aliexpress_tracking_id") or "",
         "magalu_store_name":      settings.get("magalu_store_name") or "",
+        "ml_affiliate_id":        settings.get("ml_affiliate_id") or "",
         "link_shortener_enabled": settings.get("link_shortener_enabled", "true"),
         "shortener_provider":     settings.get("shortener_provider", "internal"),
         "internal_api_url":       INTERNAL_API_URL,

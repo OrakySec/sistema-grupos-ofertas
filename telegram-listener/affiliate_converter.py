@@ -10,6 +10,7 @@ Supported platforms
 - Shopee Brasil    (shopee.com.br / shope.ee)
 - AliExpress       (aliexpress.com / s.click.aliexpress.com)
 - Magazine Luiza   (magazineluiza.com.br / magalu.com)
+- Mercado Livre    (mercadolivre.com.br / meli.la / mlb.link)
 
 Returns
 -------
@@ -301,6 +302,24 @@ def build_magalu_url(expanded_url: str, store_name: str) -> tuple[Optional[str],
         return None, f"Erro ao construir URL Magalu: {exc}"
 
 
+def build_mercadolivre_url(expanded_url: str, affiliate_id: str) -> tuple[Optional[str], Optional[str]]:
+    """
+    Adds the ?affiliate=<id> parameter to any Mercado Livre product URL.
+    Works for direct product links and expanded meli.la / mlb.link short links.
+    """
+    try:
+        parsed = urlparse(expanded_url)
+        # Remove any existing affiliate param to avoid duplicates
+        params = parse_qs(parsed.query, keep_blank_values=True)
+        params.pop("affiliate", None)
+        params["affiliate"] = [affiliate_id]
+        new_query = urlencode({k: v[0] for k, v in params.items()}, quote_via=urllib.parse.quote)
+        url = urlunparse(parsed._replace(query=new_query))
+        return url, None
+    except Exception as exc:
+        return None, f"Erro ao construir URL Mercado Livre: {exc}"
+
+
 # ---------------------------------------------------------------------------
 # TinyURL shortener
 # ---------------------------------------------------------------------------
@@ -386,10 +405,11 @@ class AffiliateConverter:
     """
 
     def __init__(self, settings: dict) -> None:
-        self.amazon_tag   = (settings.get("amazon_affiliate_tag") or "").strip()
-        self.shopee_id    = (settings.get("shopee_affiliate_id") or "").strip()
-        self.ali_tracking = (settings.get("aliexpress_tracking_id") or "").strip()
-        self.magalu_store = (settings.get("magalu_store_name") or "").strip()
+        self.amazon_tag      = (settings.get("amazon_affiliate_tag") or "").strip()
+        self.shopee_id       = (settings.get("shopee_affiliate_id") or "").strip()
+        self.ali_tracking    = (settings.get("aliexpress_tracking_id") or "").strip()
+        self.magalu_store    = (settings.get("magalu_store_name") or "").strip()
+        self.ml_affiliate_id = (settings.get("ml_affiliate_id") or "").strip()
         self.shortener_on = settings.get("link_shortener_enabled", "true") != "false"
         self.shortener_provider = settings.get("shortener_provider", "internal")
         self.internal_api_url = settings.get("internal_api_url", "http://api:3001")
@@ -517,5 +537,7 @@ class AffiliateConverter:
                 return None, "Nome da loja Magalu não configurado"
             return build_magalu_url(expanded_url, self.magalu_store)
         if platform == "mercadolivre":
-            return expanded_url, None
+            if not self.ml_affiliate_id:
+                return None, "ID de afiliado do Mercado Livre não configurado (vá em Configurações → Links de Afiliado)"
+            return build_mercadolivre_url(expanded_url, self.ml_affiliate_id)
         return None, f"Plataforma desconhecida: {platform}"

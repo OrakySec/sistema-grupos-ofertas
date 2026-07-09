@@ -34,6 +34,7 @@ function buildSettingsResponse(dbObj: Record<string, string>, authenticated = fa
     shopeeAffiliateId:      dbObj.shopee_affiliate_id ?? '',
     aliexpressTrackingId:   dbObj.aliexpress_tracking_id ?? '',
     magaluStoreName:        dbObj.magalu_store_name ?? '',
+    mlAffiliateId:          dbObj.ml_affiliate_id ?? '',
     linkShortenerEnabled:   dbObj.link_shortener_enabled !== 'false',
     shortenerProvider:      dbObj.shortener_provider ?? 'internal',
     shortenerDomain:        dbObj.shortener_domain ?? 'https://ofertas.ykaromarques.com',
@@ -103,6 +104,7 @@ export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
       if ('shopeeAffiliateId' in updates)    dbUpdates.shopee_affiliate_id    = updates.shopeeAffiliateId ?? '';
       if ('aliexpressTrackingId' in updates) dbUpdates.aliexpress_tracking_id = updates.aliexpressTrackingId ?? '';
       if ('magaluStoreName' in updates)      dbUpdates.magalu_store_name      = updates.magaluStoreName ?? '';
+      if ('mlAffiliateId' in updates)        dbUpdates.ml_affiliate_id        = updates.mlAffiliateId ?? '';
       if ('linkShortenerEnabled' in updates) dbUpdates.link_shortener_enabled = String(updates.linkShortenerEnabled);
       if ('shortenerProvider' in updates)     dbUpdates.shortener_provider = updates.shortenerProvider ?? 'internal';
       if ('shortenerDomain' in updates)       dbUpdates.shortener_domain = updates.shortenerDomain ?? '';

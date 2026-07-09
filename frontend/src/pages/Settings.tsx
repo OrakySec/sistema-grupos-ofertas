@@ -72,6 +72,7 @@ export default function Settings() {
   const refShopeeId      = useRef<HTMLInputElement>(null)
   const refAliTrackId    = useRef<HTMLInputElement>(null)
   const refMagaluStore   = useRef<HTMLInputElement>(null)
+  const refMlAffiliateId = useRef<HTMLInputElement>(null)
   const refShortenerDomain = useRef<HTMLInputElement>(null)
   const [linkShortenerEnabled, setLinkShortenerEnabled] = useState(true)
   const [shortenerProvider, setShortenerProvider] = useState('internal')
@@ -668,6 +669,27 @@ export default function Settings() {
               É o nome que aparece na URL: magazinevoce.com.br/magazine<strong>minhaloja</strong>
             </div>
           </div>
+
+          <div className="form-group">
+            <label className="label">
+              🟡 Mercado Livre — ID de Afiliado
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 8 }}>
+                ex: tm20260512192008
+              </span>
+            </label>
+            <input
+              ref={refMlAffiliateId}
+              defaultValue={settingsData?.mlAffiliateId ?? ''}
+              className="input font-mono"
+              placeholder="tm20260512192008"
+              type="text"
+              autoComplete="off"
+              data-lpignore="true"
+            />
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>
+              Encontrado no seu link social: mercadolivre.com.br/social/<strong>tm...</strong>
+            </div>
+          </div>
         </div>
 
         {/* Encurtador de Links */}
@@ -759,6 +781,7 @@ export default function Settings() {
               shopeeAffiliateId:    refShopeeId.current?.value,
               aliexpressTrackingId: refAliTrackId.current?.value,
               magaluStoreName:      refMagaluStore.current?.value,
+              mlAffiliateId:        refMlAffiliateId.current?.value,
               linkShortenerEnabled,
               shortenerProvider,
               shortenerDomain:      refShortenerDomain.current?.value || settingsData?.shortenerDomain,

@@ -127,6 +127,7 @@ export interface Settings {
   shopeeAffiliateId?: string
   aliexpressTrackingId?: string
   magaluStoreName?: string
+  mlAffiliateId?: string
   linkShortenerEnabled?: boolean
   shortenerProvider?: string
   shortenerDomain?: string
