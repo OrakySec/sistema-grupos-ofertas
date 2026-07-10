@@ -157,6 +157,24 @@ export const offersRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
         });
       }
 
+      // Reject offers containing any link that couldn't be identified/converted
+      // into an affiliate link (unrecognized platform, missing affiliate ID, build error, etc.)
+      const hasUnidentifiedLink = logEvents.some(
+        (ev) => ev.step === 'url' && (ev.status === 'skipped' || ev.status === 'error'),
+      );
+
+      if (hasUnidentifiedLink && !isRejectedMarketplace) {
+        logEvents.push({
+          ts: new Date().toISOString(),
+          step: 'link_filter',
+          status: 'skipped',
+          label: 'Filtro de Link Não Identificado',
+          detail: 'Oferta contém link que não pôde ser convertido em link de afiliado — envio bloqueado',
+        });
+      }
+
+      const shouldReject = isRejectedMarketplace || hasUnidentifiedLink;
+
       // Create offer
       const offer = await prisma.offer.create({
         data: {
@@ -167,13 +185,13 @@ export const offersRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
           mediaLocalPath,
           mediaCaption,
           senderName,
-          status: isRejectedMarketplace ? 'REJECTED' : 'PENDING',
+          status: shouldReject ? 'REJECTED' : 'PENDING',
           originalDate: new Date(originalDate),
           processingLog: logEvents as Prisma.InputJsonValue,
         },
       });
 
-      if (!isRejectedMarketplace) {
+      if (!shouldReject) {
         // Check auto_approve setting
         if (settingsMap['auto_approve'] === 'true') {
           await prisma.offer.update({
