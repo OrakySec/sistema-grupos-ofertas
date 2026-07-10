@@ -74,6 +74,7 @@ export default function Settings() {
   const refMagaluStore   = useRef<HTMLInputElement>(null)
   const refMlAffiliateId = useRef<HTMLInputElement>(null)
   const refShortenerDomain = useRef<HTMLInputElement>(null)
+  const refFooterText = useRef<HTMLTextAreaElement>(null)
   const [linkShortenerEnabled, setLinkShortenerEnabled] = useState(true)
   const [shortenerProvider, setShortenerProvider] = useState('internal')
 
@@ -239,6 +240,40 @@ export default function Settings() {
             <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 3 }}>Aprova e envia ofertas automaticamente sem revisão manual</div>
           </div>
           <Toggle checked={autoApprove} onChange={(v) => { setAutoApprove(v); save({ autoApprove: v }) }} />
+        </div>
+      </div>
+
+      {/* ── Seção: Texto Padrão (Rodapé) ─────────── */}
+      <div className="settings-section">
+        <div className="settings-section-header">
+          <div className="settings-section-title">✍️ Texto Padrão</div>
+          <div className="settings-section-desc">
+            Texto adicionado automaticamente no final de toda mensagem replicada (após a mensagem original)
+          </div>
+        </div>
+        <div className="form-group">
+          <label className="label">Rodapé das mensagens</label>
+          <textarea
+            ref={refFooterText}
+            defaultValue={settingsData?.messageFooterText ?? ''}
+            className="textarea"
+            placeholder={'🔥 Entre no nosso grupo: t.me/seugrupo'}
+            rows={3}
+          />
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>
+            Deixe em branco para não adicionar nenhum texto extra. Fica assim: MENSAGEM (linha em branco) TEXTO PADRÃO
+          </div>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            onClick={() => save({ messageFooterText: refFooterText.current?.value ?? '' })}
+            disabled={saving}
+          >
+            {saving ? <span className="spinner spinner-sm" /> : null}
+            Salvar
+          </button>
         </div>
       </div>
 

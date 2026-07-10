@@ -74,6 +74,15 @@ async function handleSendOffer(job: Job<SendOfferJobData>): Promise<void> {
     `destinations — ${destinationGroups.length} group(s)`,
   );
 
+  const footerSetting = await prisma.setting.findUnique({ where: { key: 'message_footer_text' } });
+  const footerText = footerSetting?.value?.trim();
+  const offerToSend: OfferWithMediaType = footerText
+    ? {
+        ...offer,
+        text: offer.text ? `${offer.text}\n\n${footerText}` : offer.text,
+        mediaCaption: offer.mediaCaption ? `${offer.mediaCaption}\n\n${footerText}` : offer.mediaCaption,
+      }
+    : offer;
 
   if (destinationGroups.length === 0) {
     console.warn(`[Worker] No active destination groups found for offer ${offerId}`);
@@ -93,9 +102,9 @@ async function handleSendOffer(job: Job<SendOfferJobData>): Promise<void> {
 
     try {
       if (dest.type === 'TELEGRAM') {
-        await sendToTelegram(dest.chatId, offer);
+        await sendToTelegram(dest.chatId, offerToSend);
       } else if (dest.type === 'WHATSAPP') {
-        await sendToWhatsApp(dest.chatId, offer);
+        await sendToWhatsApp(dest.chatId, offerToSend);
       }
       successCount++;
       console.log(`[Worker] Sent offer ${offerId} to ${dest.type} group ${dest.name}`);

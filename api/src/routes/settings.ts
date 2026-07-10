@@ -21,6 +21,7 @@ const INTERNAL_TOKEN = 'sistema-grupos-ofertas-internal-token-fallback-key-2026'
 function buildSettingsResponse(dbObj: Record<string, string>, authenticated = false): Record<string, any> {
   return {
     autoApprove:            dbObj.auto_approve === 'true',
+    messageFooterText:      dbObj.message_footer_text ?? '',
     telegramBotToken:       dbObj.telegram_bot_token ? '***' : '',
     telegramApiId:          dbObj.telegram_api_id ? Number(dbObj.telegram_api_id) : undefined,
     telegramApiHash:        dbObj.telegram_api_hash ?? '',
@@ -92,6 +93,7 @@ export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
 
       // Map incoming keys to DB keys
       if ('autoApprove' in updates)        dbUpdates.auto_approve       = String(updates.autoApprove);
+      if ('messageFooterText' in updates)  dbUpdates.message_footer_text = updates.messageFooterText ?? '';
       if ('telegramBotToken' in updates && updates.telegramBotToken !== '***') dbUpdates.telegram_bot_token = updates.telegramBotToken ?? '';
       if ('telegramApiId' in updates)      dbUpdates.telegram_api_id    = updates.telegramApiId ? String(updates.telegramApiId) : '';
       if ('telegramApiHash' in updates)    dbUpdates.telegram_api_hash   = updates.telegramApiHash ?? '';

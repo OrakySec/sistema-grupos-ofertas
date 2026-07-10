@@ -114,6 +114,7 @@ export interface DestinationGroup {
 
 export interface Settings {
   autoApprove: boolean
+  messageFooterText?: string
   telegramBotToken?: string
   telegramApiId?: number
   telegramApiHash?: string
