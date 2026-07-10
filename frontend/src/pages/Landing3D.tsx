@@ -3,13 +3,31 @@ import React, { useEffect, useState } from 'react';
 const TELEGRAM_URL = 'https://t.me/ferreira3d';
 const WHATSAPP_URL = 'https://chat.whatsapp.com/C0cPDxI9ViB25Y6NUVUmyL?mode=gi_t';
 
-/** Fire a Meta Pixel custom event safely (works even before fbq is fully loaded). */
+/** Fire a Meta Pixel custom event and send CAPI request safely. */
 function trackEvent(eventName: string, params?: Record<string, unknown>) {
+  const eventId = Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
+  
+  // 1. Pixel (Browser)
   try {
     const w = window as any;
     if (typeof w.fbq === 'function') {
-      w.fbq('trackCustom', eventName, params ?? {});
+      w.fbq('trackCustom', eventName, params ?? {}, { eventID: eventId });
     }
+  } catch (_) {}
+
+  // 2. CAPI (Server)
+  try {
+    const apiUrl = import.meta.env.VITE_API_URL || '/api';
+    fetch(`${apiUrl}/tracking/meta-event`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        eventName,
+        eventId,
+        sourceUrl: window.location.href,
+        userAgent: navigator.userAgent
+      })
+    }).catch(() => {});
   } catch (_) {}
 }
 
