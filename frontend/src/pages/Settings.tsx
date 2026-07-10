@@ -72,7 +72,8 @@ export default function Settings() {
   const refShopeeId      = useRef<HTMLInputElement>(null)
   const refAliTrackId    = useRef<HTMLInputElement>(null)
   const refMagaluStore   = useRef<HTMLInputElement>(null)
-  const refMlAffiliateId = useRef<HTMLInputElement>(null)
+  const refMlMattWord    = useRef<HTMLInputElement>(null)
+  const refMlMattTool    = useRef<HTMLInputElement>(null)
   const refShortenerDomain = useRef<HTMLInputElement>(null)
   const refFooterText = useRef<HTMLTextAreaElement>(null)
   const [linkShortenerEnabled, setLinkShortenerEnabled] = useState(true)
@@ -707,22 +708,41 @@ export default function Settings() {
 
           <div className="form-group">
             <label className="label">
-              🟡 Mercado Livre — ID de Afiliado
+              🟡 Mercado Livre — matt_word
               <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 8 }}>
-                ex: tm20260512192008
+                ex: ferreira3dstudio
               </span>
             </label>
             <input
-              ref={refMlAffiliateId}
-              defaultValue={settingsData?.mlAffiliateId ?? ''}
+              ref={refMlMattWord}
+              defaultValue={settingsData?.mlMattWord ?? ''}
               className="input font-mono"
-              placeholder="tm20260512192008"
+              placeholder="ferreira3dstudio"
+              type="text"
+              autoComplete="off"
+              data-lpignore="true"
+            />
+          </div>
+
+          <div className="form-group">
+            <label className="label">
+              🟡 Mercado Livre — matt_tool
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 8 }}>
+                ex: 85709914
+              </span>
+            </label>
+            <input
+              ref={refMlMattTool}
+              defaultValue={settingsData?.mlMattTool ?? ''}
+              className="input font-mono"
+              placeholder="85709914"
               type="text"
               autoComplete="off"
               data-lpignore="true"
             />
             <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>
-              Encontrado no seu link social: mercadolivre.com.br/social/<strong>tm...</strong>
+              Gere um link de afiliado pra qualquer produto no Portal do Afiliado (botão "Compartilhar") e copie os
+              valores de <strong>matt_word</strong> e <strong>matt_tool</strong> da URL gerada.
             </div>
           </div>
         </div>
@@ -816,7 +836,8 @@ export default function Settings() {
               shopeeAffiliateId:    refShopeeId.current?.value,
               aliexpressTrackingId: refAliTrackId.current?.value,
               magaluStoreName:      refMagaluStore.current?.value,
-              mlAffiliateId:        refMlAffiliateId.current?.value,
+              mlMattWord:           refMlMattWord.current?.value,
+              mlMattTool:           refMlMattTool.current?.value,
               linkShortenerEnabled,
               shortenerProvider,
               shortenerDomain:      refShortenerDomain.current?.value || settingsData?.shortenerDomain,
