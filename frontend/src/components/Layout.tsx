@@ -41,6 +41,7 @@ export default function Layout() {
     { to: '/queue', icon: '⏳', label: 'Aprovação', badge: pendingCount },
     { to: '/history', icon: '📋', label: 'Histórico' },
     { to: '/groups', icon: '👥', label: 'Grupos' },
+    { to: '/clicks', icon: '🖱️', label: 'Cliques' },
     { to: '/settings', icon: '⚙️', label: 'Configurações' },
     { to: '/logs', icon: '📊', label: 'Logs & Debug' },
   ]

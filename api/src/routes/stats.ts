@@ -55,7 +55,7 @@ export const statsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
         }),
       ]);
 
-    const recentSerialized = recentOffers.map((o) => ({
+    const recentSerialized = recentOffers.map((o: any) => ({
       ...o,
       telegramMessageId: o.telegramMessageId.toString(),
       sourceGroup: o.sourceGroup

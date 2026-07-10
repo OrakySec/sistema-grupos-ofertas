@@ -16,6 +16,7 @@ import History from './pages/History'
 import Groups from './pages/Groups'
 import Settings from './pages/Settings'
 import Logs from './pages/Logs'
+import Clicks from './pages/Clicks'
 import Landing3D from './pages/Landing3D'
 
 // Shows a full-page spinner while auth state loads
@@ -73,6 +74,7 @@ function AppRoutes() {
           <Route path="/queue" element={<Queue />} />
           <Route path="/history" element={<History />} />
           <Route path="/groups" element={<Groups />} />
+          <Route path="/clicks" element={<Clicks />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/logs" element={<Logs />} />
         </Route>

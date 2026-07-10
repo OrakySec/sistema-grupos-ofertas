@@ -7,7 +7,8 @@ import { offersRoutes } from './routes/offers';
 import { settingsRoutes } from './routes/settings';
 import { logsRoutes } from './routes/logs';
 import { statsRoutes } from './routes/stats';
-import { trackingRoutes } from './routes/tracking';
+import { trackingRoutes } from './routes/tracking'
+import { clicksRoutes } from './routes/clicks';
 import prisma from './lib/prisma';
 import { seed } from './seed';
 
@@ -164,6 +165,7 @@ async function buildApp() {
   await server.register(settingsRoutes, { prefix: '/settings' });
   await server.register(logsRoutes, { prefix: '/logs' });
   await server.register(statsRoutes, { prefix: '/stats' });
+  await server.register(clicksRoutes, { prefix: '/stats/clicks' });
   await server.register(trackingRoutes, { prefix: '/tracking' });
 
   return server;

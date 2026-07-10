@@ -227,6 +227,10 @@ class ApiClient {
     return this.request('GET', '/stats')
   }
 
+  async getClicksStats(period: string = 'today'): Promise<{ total: number; chartData: { date: string; clicks: number }[]; topLinks: { originalUrl: string; title?: string; count: number }[] }> {
+    return this.request('GET', `/stats/clicks?period=${period}`)
+  }
+
   // ── Offers ────────────────────────────────────
   async getOffers(params: PaginationParams = {}): Promise<PaginatedResponse<Offer>> {
     const qs = new URLSearchParams()
