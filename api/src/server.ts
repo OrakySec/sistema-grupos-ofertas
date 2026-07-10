@@ -52,11 +52,16 @@ async function buildApp() {
         where: { code },
       });
       if (shortUrl) {
-        // Increment clicks asynchronously
-        prisma.shortUrl.update({
-          where: { code },
-          data: { clicks: { increment: 1 } },
-        }).catch(err => server.log.error({ err }, `Failed to increment clicks for code ${code}`));
+        // Increment global clicks and log the click asynchronously
+        Promise.all([
+          prisma.shortUrl.update({
+            where: { code },
+            data: { clicks: { increment: 1 } },
+          }),
+          prisma.shortUrlClick.create({
+            data: { code },
+          }),
+        ]).catch(err => server.log.error({ err }, `Failed to track click for code ${code}`));
 
         return reply.redirect(302, shortUrl.originalUrl);
       }

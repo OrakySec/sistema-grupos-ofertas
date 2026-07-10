@@ -124,7 +124,7 @@ export default function Dashboard() {
       </div>
 
       {/* Metrics Grid */}
-      <div className="grid-4" style={{ marginBottom: 40 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '20px', marginBottom: 40 }}>
         <MetricCard
           label="Pendentes"
           value={stats?.pending ?? 0}
@@ -151,6 +151,13 @@ export default function Dashboard() {
           value={stats?.failedToday ?? 0}
           icon="❌"
           accentColor="var(--accent-danger)"
+          loading={loadingStats}
+        />
+        <MetricCard
+          label="Cliques (Hoje)"
+          value={stats?.clicksToday ?? 0}
+          icon="🖱️"
+          accentColor="#0088cc"
           loading={loadingStats}
         />
       </div>

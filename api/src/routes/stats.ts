@@ -11,7 +11,7 @@ export const statsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
 
-    const [pending, approvedToday, sentToday, failedToday, totalOffers, recentOffers] =
+    const [pending, approvedToday, sentToday, failedToday, totalOffers, clicksToday, recentOffers] =
       await Promise.all([
         prisma.offer.count({ where: { status: 'PENDING' } }),
 
@@ -38,6 +38,12 @@ export const statsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
 
         prisma.offer.count(),
 
+        prisma.shortUrlClick.count({
+          where: {
+            createdAt: { gte: startOfDay, lt: endOfDay },
+          },
+        }),
+
         prisma.offer.findMany({
           orderBy: { createdAt: 'desc' },
           take: 10,
@@ -63,6 +69,7 @@ export const statsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       sentToday,
       failedToday,
       totalOffers,
+      clicksToday,
       recentOffers: recentSerialized,
     });
   });

@@ -144,6 +144,7 @@ export interface Stats {
   approvedToday: number
   sentToday: number
   failedToday: number
+  clicksToday?: number
 }
 
 export interface WhatsAppGroup {

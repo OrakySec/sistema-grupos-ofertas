@@ -114,4 +114,14 @@ model ShortUrl {
   originalUrl String   @db.Text
   clicks      Int      @default(0)
   createdAt   DateTime @default(now())
+
+  clickLogs   ShortUrlClick[]
+}
+
+model ShortUrlClick {
+  id        String   @id @default(cuid())
+  code      String
+  createdAt DateTime @default(now())
+
+  shortUrl  ShortUrl @relation(fields: [code], references: [code], onDelete: Cascade)
 }
