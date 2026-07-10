@@ -302,20 +302,41 @@ def build_magalu_url(expanded_url: str, store_name: str) -> tuple[Optional[str],
         return None, f"Erro ao construir URL Magalu: {exc}"
 
 
+_ML_SOCIAL_PATH_RE = re.compile(r"^(/social/)([^/]+)(/.*)?$")
+
+
 def build_mercadolivre_url(expanded_url: str, affiliate_id: str) -> tuple[Optional[str], Optional[str]]:
     """
-    Adds the ?affiliate=<id> parameter to any Mercado Livre product URL.
+    Mercado Livre "social" share links (e.g. mercadolivre.com.br/social/<handle>/lists/...
+    or /social/<handle>/p/...) carry the affiliate attribution in the <handle> PATH
+    segment right after /social/ — NOT in a query parameter. If we only add a query
+    param and leave that segment untouched, the commission still goes to whoever's
+    handle is already baked into the shared link.
     Works for direct product links and expanded meli.la / mlb.link short links.
     """
     try:
         parsed = urlparse(expanded_url)
-        # Remove any existing affiliate param to avoid duplicates
+        social_match = _ML_SOCIAL_PATH_RE.match(parsed.path)
+
+        # Remove any existing affiliate-related params to avoid duplicates
         params = parse_qs(parsed.query, keep_blank_values=True)
         for p in ["affiliate", "campId", "affiliate_id", "matt_tool", "matt_word"]:
             params.pop(p, None)
         params["campId"] = [affiliate_id]
+        # matt_word is Mercado Livre's real affiliate query param (confirmed via a
+        # working third-party affiliate-link generator's source). We don't have a
+        # matt_tool value configured, but sending matt_word alone is still closer
+        # to the real mechanism than campId (which isn't documented anywhere for ML).
+        params["matt_word"] = [affiliate_id]
         new_query = urlencode({k: v[0] for k, v in params.items()}, quote_via=urllib.parse.quote)
-        url = urlunparse(parsed._replace(query=new_query))
+
+        if social_match:
+            # Replace the embedded handle (someone else's affiliate account) with ours
+            new_path = f"{social_match.group(1)}{affiliate_id}{social_match.group(3) or ''}"
+            url = urlunparse(parsed._replace(path=new_path, query=new_query))
+        else:
+            url = urlunparse(parsed._replace(query=new_query))
+
         return url, None
     except Exception as exc:
         return None, f"Erro ao construir URL Mercado Livre: {exc}"
