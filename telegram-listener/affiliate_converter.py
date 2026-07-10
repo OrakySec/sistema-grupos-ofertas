@@ -311,8 +311,9 @@ def build_mercadolivre_url(expanded_url: str, affiliate_id: str) -> tuple[Option
         parsed = urlparse(expanded_url)
         # Remove any existing affiliate param to avoid duplicates
         params = parse_qs(parsed.query, keep_blank_values=True)
-        params.pop("affiliate", None)
-        params["affiliate"] = [affiliate_id]
+        for p in ["affiliate", "campId", "affiliate_id", "matt_tool", "matt_word"]:
+            params.pop(p, None)
+        params["campId"] = [affiliate_id]
         new_query = urlencode({k: v[0] for k, v in params.items()}, quote_via=urllib.parse.quote)
         url = urlunparse(parsed._replace(query=new_query))
         return url, None
