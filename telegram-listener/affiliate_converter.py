@@ -305,6 +305,11 @@ def build_magalu_url(expanded_url: str, store_name: str) -> tuple[Optional[str],
 
 _ML_SOCIAL_SHOW_PRODUCT_RE = re.compile(r'"id":"show_product"[^{}]*?"url":"((?:[^"\\]|\\.)*)"')
 
+_ML_TRACKING_QUERY_KEYS = {
+    "matt_word", "matt_tool", "matt_tool_id",
+    "matt_event_ts", "matt_d2id", "matt_tracing_id", "tid",
+}
+
 
 async def resolve_ml_social_product_url(social_url: str, session: aiohttp.ClientSession) -> Optional[str]:
     """
@@ -355,8 +360,15 @@ async def resolve_ml_social_product_url(social_url: str, session: aiohttp.Client
     parsed = urlparse(decoded_url)
     if not _platform(decoded_url):
         return None
-    # Drop query/fragment — they carry the ORIGINAL affiliate's matt_tool_id + session ids
-    return urlunparse(parsed._replace(query="", fragment=""))
+    # Strip only the tracking/session params (the ORIGINAL affiliate's matt_tool_id +
+    # recommendation-engine ids) — keep product-identifying params like pdp_filters
+    # (selects which specific seller/offer wins the "buy box" on catalog listings),
+    # otherwise the page may show a different seller/price than what was promoted.
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    for k in _ML_TRACKING_QUERY_KEYS:
+        params.pop(k, None)
+    new_query = urlencode({k: v[0] for k, v in params.items()}, quote_via=urllib.parse.quote)
+    return urlunparse(parsed._replace(query=new_query, fragment=""))
 
 
 def build_mercadolivre_url(expanded_url: str, matt_word: str, matt_tool: str) -> tuple[Optional[str], Optional[str]]:
