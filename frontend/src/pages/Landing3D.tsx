@@ -348,7 +348,7 @@ export default function Landing3D() {
                 rel="noopener noreferrer"
                 onClick={() => {
                   trackEvent('CliqueTelegram', { canal: 'telegram' });
-                  trackEvent('CliqueGrupo', { canal: 'telegram' });
+                  trackEvent('JoinGroup', { canal: 'telegram' });
                 }}
                 style={{
                   display: 'flex',
@@ -402,7 +402,7 @@ export default function Landing3D() {
                 rel="noopener noreferrer"
                 onClick={() => {
                   trackEvent('CliqueWhatsApp', { canal: 'whatsapp' });
-                  trackEvent('CliqueGrupo', { canal: 'whatsapp' });
+                  trackEvent('JoinGroup', { canal: 'whatsapp' });
                 }}
                 style={{
                   display: 'flex',
