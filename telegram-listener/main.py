@@ -33,6 +33,7 @@ from telethon.tl.types import (
     DocumentAttributeVideo,
 )
 from affiliate_converter import AffiliateConverter
+import ml_browser
 
 # ---------------------------------------------------------------------------
 # Bootstrap
@@ -46,6 +47,7 @@ SESSION_PATH: str = os.getenv("SESSION_PATH", "/app/sessions")
 JWT_SECRET: str = os.getenv("JWT_SECRET", "changeme-jwt-secret")
 INTERNAL_TOKEN: str = "sistema-grupos-ofertas-internal-token-fallback-key-2026"
 HTTP_PORT: int = int(os.getenv("HTTP_PORT", "8080"))
+ML_STORAGE_STATE_PATH: str = str(Path(SESSION_PATH) / "ml_storage_state.json")
 
 # Ensure directories exist
 Path(MEDIA_BASE_PATH).mkdir(parents=True, exist_ok=True)
@@ -366,7 +368,10 @@ async def _make_message_handler(http_session: aiohttp.ClientSession):
                 _original_text    = text
                 _original_caption = media_caption
                 try:
-                    converter = AffiliateConverter(state.affiliate_settings)
+                    converter = AffiliateConverter(
+                        state.affiliate_settings,
+                        ml_session=ml_browser.get_session(ML_STORAGE_STATE_PATH),
+                    )
 
                     async def _convert_all() -> None:
                         nonlocal text, media_caption
@@ -377,7 +382,10 @@ async def _make_message_handler(http_session: aiohttp.ClientSession):
                             media_caption, evts = await converter.convert(media_caption, http_session)
                             processing_events.extend(evts)
 
-                    await asyncio.wait_for(_convert_all(), timeout=20.0)
+                    # Mercado Livre links now go through real browser automation
+                    # (Link Builder tool), which is much slower than the other
+                    # marketplaces' plain string-based conversion — give it more room.
+                    await asyncio.wait_for(_convert_all(), timeout=45.0)
 
                     converted = any(e.get("status") == "ok" for e in processing_events)
                     if converted:
@@ -391,7 +399,7 @@ async def _make_message_handler(http_session: aiohttp.ClientSession):
                     media_caption = _original_caption
                     processing_events.append({
                         "ts": _ts(), "step": "url_convert", "status": "error",
-                        "label": "Conversão de afiliado", "error": "Timeout (>20s) — texto original mantido",
+                        "label": "Conversão de afiliado", "error": "Timeout (>45s) — texto original mantido",
                     })
 
                 except Exception as conv_exc:
@@ -591,8 +599,6 @@ async def _apply_settings(settings: dict, http_session: aiohttp.ClientSession, *
         "shopee_affiliate_id":    settings.get("shopee_affiliate_id") or "",
         "aliexpress_tracking_id": settings.get("aliexpress_tracking_id") or "",
         "magalu_store_name":      settings.get("magalu_store_name") or "",
-        "ml_matt_word":           settings.get("ml_matt_word") or "",
-        "ml_matt_tool":           settings.get("ml_matt_tool") or "",
         "link_shortener_enabled": settings.get("link_shortener_enabled", "true"),
         "shortener_provider":     settings.get("shortener_provider", "internal"),
         "internal_api_url":       INTERNAL_API_URL,
@@ -783,6 +789,43 @@ async def route_reload_settings(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# Mercado Livre affiliate session routes
+# ---------------------------------------------------------------------------
+
+async def route_ml_session_upload(request: web.Request) -> web.Response:
+    """
+    POST /ml-session/upload (multipart form, field name "file")
+    Saves the uploaded Playwright storage_state.json and reloads the
+    browser context so it takes effect immediately (no restart needed).
+    """
+    try:
+        reader = await request.multipart()
+        field = await reader.next()
+        if field is None or field.name != "file":
+            return web.json_response({"error": "Campo 'file' ausente no upload"}, status=400)
+
+        data = await field.read(decode=True)
+        Path(ML_STORAGE_STATE_PATH).write_bytes(data)
+        logger.info(f"[ml_session] New session file saved ({len(data)} bytes)")
+
+        session = ml_browser.get_session(ML_STORAGE_STATE_PATH)
+        await session.reload_session()
+        active = await session.check_session_status(force=True)
+
+        return web.json_response({"ok": True, "active": active})
+    except Exception as exc:
+        logger.error(f"[ml_session] Upload failed: {exc}")
+        return web.json_response({"error": str(exc)}, status=500)
+
+
+async def route_ml_session_status(request: web.Request) -> web.Response:
+    """GET /ml-session/status → { active: bool } — does a live check, not just a file-exists check."""
+    session = ml_browser.get_session(ML_STORAGE_STATE_PATH)
+    active = await session.check_session_status()
+    return web.json_response({"active": active})
+
+
+# ---------------------------------------------------------------------------
 # Application lifecycle
 # ---------------------------------------------------------------------------
 
@@ -799,6 +842,11 @@ async def on_startup(app: web.Application) -> None:
     app["task_reconnect"] = asyncio.create_task(
         reconnect_loop(http_session), name="reconnect_loop"
     )
+
+    try:
+        await ml_browser.get_session(ML_STORAGE_STATE_PATH).start()
+    except Exception as exc:
+        logger.error(f"[ml_session] Failed to start Playwright browser: {exc}")
 
     logger.info("Service started — background tasks running")
 
@@ -820,6 +868,11 @@ async def on_shutdown(app: web.Application) -> None:
         except Exception:
             pass
 
+    try:
+        await ml_browser.get_session(ML_STORAGE_STATE_PATH).stop()
+    except Exception:
+        pass
+
     http_session: aiohttp.ClientSession = app.get("http_session")
     if http_session is not None:
         await http_session.close()
@@ -835,6 +888,8 @@ def build_app() -> web.Application:
     app.router.add_post("/auth/verify", route_auth_verify)
     app.router.add_post("/reload", route_reload)
     app.router.add_post("/reload-settings", route_reload_settings)
+    app.router.add_post("/ml-session/upload", route_ml_session_upload)
+    app.router.add_get("/ml-session/status", route_ml_session_status)
 
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)

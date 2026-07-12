@@ -19,6 +19,7 @@ build/
 *.session
 *.session-journal
 prisma/dev.db
+ml_storage_state.json
 
 # Logs
 *.log

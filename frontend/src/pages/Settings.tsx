@@ -72,8 +72,9 @@ export default function Settings() {
   const refShopeeId      = useRef<HTMLInputElement>(null)
   const refAliTrackId    = useRef<HTMLInputElement>(null)
   const refMagaluStore   = useRef<HTMLInputElement>(null)
-  const refMlMattWord    = useRef<HTMLInputElement>(null)
-  const refMlMattTool    = useRef<HTMLInputElement>(null)
+  const refMlSessionFile = useRef<HTMLInputElement>(null)
+  const [mlSessionActive, setMlSessionActive] = useState(false)
+  const [uploadingMlSession, setUploadingMlSession] = useState(false)
   const refShortenerDomain = useRef<HTMLInputElement>(null)
   const refFooterText = useRef<HTMLTextAreaElement>(null)
   const [linkShortenerEnabled, setLinkShortenerEnabled] = useState(true)
@@ -99,6 +100,7 @@ export default function Settings() {
       setMarketplaceAliExpressEnabled(s.marketplaceAliExpressEnabled ?? true)
       setMarketplaceMagaluEnabled(s.marketplaceMagaluEnabled ?? true)
       setMarketplaceMercadoLivreEnabled(s.marketplaceMercadoLivreEnabled ?? true)
+      setMlSessionActive(s.mlSessionActive ?? false)
       if (s.telegramAuthenticated) setAuthStep('done')
     } catch {
       // silent
@@ -165,6 +167,27 @@ export default function Settings() {
       addToast(err instanceof Error ? err.message : 'Erro ao testar conexão com a Evolution API', 'error')
     }
     setTimeout(() => setTestWa('idle'), 5000)
+  }
+
+  const handleUploadMlSession = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // allow re-selecting the same file later
+    if (!file) return
+
+    setUploadingMlSession(true)
+    try {
+      const res = await api.uploadMlSession(file)
+      setMlSessionActive(res.active)
+      if (res.active) {
+        addToast('Sessão do Mercado Livre ativada com sucesso!', 'success')
+      } else {
+        addToast('Arquivo enviado, mas a sessão não está logada — gere uma nova com o script.', 'error')
+      }
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : 'Erro ao enviar sessão do Mercado Livre', 'error')
+    } finally {
+      setUploadingMlSession(false)
+    }
   }
 
   const handleStartAuth = async () => {
@@ -707,42 +730,39 @@ export default function Settings() {
           </div>
 
           <div className="form-group">
-            <label className="label">
-              🟡 Mercado Livre — matt_word
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 8 }}>
-                ex: ferreira3dstudio
-              </span>
-            </label>
+            <label className="label">🟡 Mercado Livre — Sessão</label>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '10px 14px', background: 'var(--bg-elevated)',
+              borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)',
+              marginBottom: 10,
+            }}>
+              {mlSessionActive ? (
+                <><span className="status-dot online" /> <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--accent-success)' }}>Sessão ativa</span></>
+              ) : (
+                <><span className="status-dot offline" /> <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--accent-danger)' }}>Sessão expirada ou não configurada</span></>
+              )}
+            </div>
             <input
-              ref={refMlMattWord}
-              defaultValue={settingsData?.mlMattWord ?? ''}
-              className="input font-mono"
-              placeholder="ferreira3dstudio"
-              type="text"
-              autoComplete="off"
-              data-lpignore="true"
+              ref={refMlSessionFile}
+              type="file"
+              accept="application/json"
+              style={{ display: 'none' }}
+              onChange={handleUploadMlSession}
             />
-          </div>
-
-          <div className="form-group">
-            <label className="label">
-              🟡 Mercado Livre — matt_tool
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 8 }}>
-                ex: 85709914
-              </span>
-            </label>
-            <input
-              ref={refMlMattTool}
-              defaultValue={settingsData?.mlMattTool ?? ''}
-              className="input font-mono"
-              placeholder="85709914"
-              type="text"
-              autoComplete="off"
-              data-lpignore="true"
-            />
-            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>
-              Gere um link de afiliado pra qualquer produto no Portal do Afiliado (botão "Compartilhar") e copie os
-              valores de <strong>matt_word</strong> e <strong>matt_tool</strong> da URL gerada.
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => refMlSessionFile.current?.click()}
+              disabled={uploadingMlSession}
+            >
+              {uploadingMlSession ? <span className="spinner spinner-sm" /> : null}
+              📤 Enviar arquivo de sessão (ml_storage_state.json)
+            </button>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 6 }}>
+              Mercado Livre não tem API de afiliados — a atribuição só funciona gerando o link pela ferramenta
+              oficial deles, dentro de um navegador logado na sua conta. Rode <code>scripts/gerar_sessao_ml.py</code>{' '}
+              localmente (nunca no servidor) pra logar e gerar esse arquivo — sua senha nunca passa por aqui.
             </div>
           </div>
         </div>
@@ -836,8 +856,6 @@ export default function Settings() {
               shopeeAffiliateId:    refShopeeId.current?.value,
               aliexpressTrackingId: refAliTrackId.current?.value,
               magaluStoreName:      refMagaluStore.current?.value,
-              mlMattWord:           refMlMattWord.current?.value,
-              mlMattTool:           refMlMattTool.current?.value,
               linkShortenerEnabled,
               shortenerProvider,
               shortenerDomain:      refShortenerDomain.current?.value || settingsData?.shortenerDomain,

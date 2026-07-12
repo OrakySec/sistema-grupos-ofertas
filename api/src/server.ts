@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
+import multipart from '@fastify/multipart';
 import { authRoutes } from './routes/auth';
 import { groupsRoutes } from './routes/groups';
 import { offersRoutes } from './routes/offers';
@@ -39,6 +40,11 @@ async function buildApp() {
   await server.register(jwt, {
     secret: JWT_SECRET,
     sign: { expiresIn: '7d' },
+  });
+
+  // Multipart (file uploads — e.g. Mercado Livre session upload)
+  await server.register(multipart, {
+    limits: { fileSize: 5 * 1024 * 1024 },
   });
 
   // Health check (no auth required)
@@ -153,8 +159,6 @@ async function buildApp() {
       shopee_affiliate_id:    dbObj.shopee_affiliate_id ?? '',
       aliexpress_tracking_id: dbObj.aliexpress_tracking_id ?? '',
       magalu_store_name:      dbObj.magalu_store_name ?? '',
-      ml_matt_word:           dbObj.ml_matt_word ?? '',
-      ml_matt_tool:           dbObj.ml_matt_tool ?? '',
       link_shortener_enabled: dbObj.link_shortener_enabled ?? 'true',
       shortener_provider:     dbObj.shortener_provider ?? 'internal',
     });

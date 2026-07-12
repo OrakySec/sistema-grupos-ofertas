@@ -371,31 +371,12 @@ async def resolve_ml_social_product_url(social_url: str, session: aiohttp.Client
     return urlunparse(parsed._replace(query=new_query, fragment=""))
 
 
-def build_mercadolivre_url(expanded_url: str, matt_word: str, matt_tool: str) -> tuple[Optional[str], Optional[str]]:
-    """
-    Tags a clean Mercado Livre product URL with matt_word + matt_tool — confirmed real
-    affiliate tracking params by generating an actual link via ML's own "Compartilhar"
-    tool and inspecting the result (mercadolivre.com.br/social/<id>?matt_word=<user>&
-    matt_tool=<numeric_id>&ref=<opaque_token>). We don't have a way to produce that
-    opaque `ref` token ourselves (no public API for it), so this only works on URLs
-    that already point at a specific product — see resolve_ml_social_product_url()
-    for turning a /social/ profile link into one of those first.
-    """
-    try:
-        parsed = urlparse(expanded_url)
-
-        # Remove any existing affiliate-related params to avoid duplicates
-        params = parse_qs(parsed.query, keep_blank_values=True)
-        for p in ["affiliate", "campId", "affiliate_id", "matt_tool", "matt_word", "matt_tool_id"]:
-            params.pop(p, None)
-        params["matt_word"] = [matt_word]
-        params["matt_tool"] = [matt_tool]
-        new_query = urlencode({k: v[0] for k, v in params.items()}, quote_via=urllib.parse.quote)
-
-        url = urlunparse(parsed._replace(query=new_query))
-        return url, None
-    except Exception as exc:
-        return None, f"Erro ao construir URL Mercado Livre: {exc}"
+# NOTE: Mercado Livre affiliate links are no longer built by tagging query
+# params (matt_word/matt_tool) onto the URL ourselves — comparing our own
+# click tracking against Mercado Livre's own affiliate metrics dashboard
+# confirmed that mechanism registers ZERO clicks/commission on their side.
+# The only confirmed-working mechanism is their official Link Builder tool,
+# automated via a real logged-in browser session — see ml_browser.py.
 
 
 # ---------------------------------------------------------------------------
@@ -482,13 +463,12 @@ class AffiliateConverter:
     convert() returns (modified_text, events_list).
     """
 
-    def __init__(self, settings: dict) -> None:
+    def __init__(self, settings: dict, ml_session=None) -> None:
         self.amazon_tag      = (settings.get("amazon_affiliate_tag") or "").strip()
         self.shopee_id       = (settings.get("shopee_affiliate_id") or "").strip()
         self.ali_tracking    = (settings.get("aliexpress_tracking_id") or "").strip()
         self.magalu_store    = (settings.get("magalu_store_name") or "").strip()
-        self.ml_matt_word    = (settings.get("ml_matt_word") or "").strip()
-        self.ml_matt_tool    = (settings.get("ml_matt_tool") or "").strip()
+        self.ml_session = ml_session  # ml_browser.MLBrowserSession, generates real ML affiliate links
         self.shortener_on = settings.get("link_shortener_enabled", "true") != "false"
         self.shortener_provider = settings.get("shortener_provider", "internal")
         self.internal_api_url = settings.get("internal_api_url", "http://api:3001")
@@ -591,7 +571,13 @@ class AffiliateConverter:
                     return None, event
 
             # Step 3 — build affiliate URL
-            affiliate_url, build_error = self._build_affiliate(platform, expanded)
+            if platform == "mercadolivre":
+                if self.ml_session is None:
+                    affiliate_url, build_error = None, "Automação do Mercado Livre não inicializada"
+                else:
+                    affiliate_url, build_error = await self.ml_session.generate_affiliate_link(expanded)
+            else:
+                affiliate_url, build_error = self._build_affiliate(platform, expanded)
             if affiliate_url is None:
                 event["status"] = "error"
                 event["error"] = build_error or "Não foi possível gerar link de afiliado"
@@ -645,8 +631,4 @@ class AffiliateConverter:
             if not self.magalu_store:
                 return None, "Nome da loja Magalu não configurado"
             return build_magalu_url(expanded_url, self.magalu_store)
-        if platform == "mercadolivre":
-            if not self.ml_matt_word or not self.ml_matt_tool:
-                return None, "matt_word/matt_tool do Mercado Livre não configurados (vá em Configurações → Links de Afiliado)"
-            return build_mercadolivre_url(expanded_url, self.ml_matt_word, self.ml_matt_tool)
         return None, f"Plataforma desconhecida: {platform}"

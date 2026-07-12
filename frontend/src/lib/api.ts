@@ -128,8 +128,7 @@ export interface Settings {
   shopeeAffiliateId?: string
   aliexpressTrackingId?: string
   magaluStoreName?: string
-  mlMattWord?: string
-  mlMattTool?: string
+  mlSessionActive?: boolean
   linkShortenerEnabled?: boolean
   shortenerProvider?: string
   shortenerDomain?: string
@@ -338,6 +337,22 @@ class ApiClient {
 
   async verifyTelegramAuth(code: string): Promise<{ success: boolean; message: string }> {
     return this.request('POST', '/settings/telegram-auth/verify', { code })
+  }
+
+  async uploadMlSession(file: File): Promise<{ success: boolean; active: boolean; message?: string }> {
+    const formData = new FormData()
+    formData.append('file', file)
+    const headers = this.getHeaders()
+    const res = await fetch(`${this.baseUrl}/settings/ml-session`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      throw new Error(data?.message || `Erro ${res.status}: ${res.statusText}`)
+    }
+    return data
   }
 
   // ── WhatsApp ──────────────────────────────────
