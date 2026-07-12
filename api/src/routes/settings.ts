@@ -40,6 +40,7 @@ function buildSettingsResponse(
     shopeeAffiliateId:      dbObj.shopee_affiliate_id ?? '',
     aliexpressTrackingId:   dbObj.aliexpress_tracking_id ?? '',
     magaluStoreName:        dbObj.magalu_store_name ?? '',
+    mlOwnListUrl:           dbObj.ml_own_list_url ?? '',
     mlSessionActive:        mlSessionActive,
     linkShortenerEnabled:   dbObj.link_shortener_enabled !== 'false',
     shortenerProvider:      dbObj.shortener_provider ?? 'internal',
@@ -124,6 +125,7 @@ export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
       if ('shopeeAffiliateId' in updates)    dbUpdates.shopee_affiliate_id    = updates.shopeeAffiliateId ?? '';
       if ('aliexpressTrackingId' in updates) dbUpdates.aliexpress_tracking_id = updates.aliexpressTrackingId ?? '';
       if ('magaluStoreName' in updates)      dbUpdates.magalu_store_name      = updates.magaluStoreName ?? '';
+      if ('mlOwnListUrl' in updates)         dbUpdates.ml_own_list_url        = updates.mlOwnListUrl ?? '';
       if ('linkShortenerEnabled' in updates) dbUpdates.link_shortener_enabled = String(updates.linkShortenerEnabled);
       if ('shortenerProvider' in updates)     dbUpdates.shortener_provider = updates.shortenerProvider ?? 'internal';
       if ('shortenerDomain' in updates)       dbUpdates.shortener_domain = updates.shortenerDomain ?? '';

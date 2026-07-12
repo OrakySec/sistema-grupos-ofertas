@@ -469,6 +469,7 @@ class AffiliateConverter:
         self.ali_tracking    = (settings.get("aliexpress_tracking_id") or "").strip()
         self.magalu_store    = (settings.get("magalu_store_name") or "").strip()
         self.ml_session = ml_session  # ml_browser.MLBrowserSession, generates real ML affiliate links
+        self.ml_own_list_url = (settings.get("ml_own_list_url") or "").strip()
         self.shortener_on = settings.get("link_shortener_enabled", "true") != "false"
         self.shortener_provider = settings.get("shortener_provider", "internal")
         self.internal_api_url = settings.get("internal_api_url", "http://api:3001")
@@ -556,11 +557,18 @@ class AffiliateConverter:
             # mercadolivre.com.br/social/<handle>?...&ref=...) don't point at a usable
             # product URL directly — try to resolve the featured product's real permalink
             # from the page's embedded data first.
+            ml_direct_affiliate: Optional[str] = None
             if platform == "mercadolivre" and "/social/" in urlparse(expanded).path:
                 resolved = await resolve_ml_social_product_url(expanded, session)
                 if resolved:
                     logger.info(f"[affiliate] Resolved ML social link to product: {resolved[:80]}")
                     expanded = resolved
+                elif "/lists/" in urlparse(expanded).path and self.ml_own_list_url:
+                    # Someone else's list — there's no way to attribute a specific product
+                    # to us, so swap it for the user's own configured list link instead of
+                    # blocking the offer entirely.
+                    ml_direct_affiliate = self.ml_own_list_url
+                    logger.info(f"[affiliate] ML list link swapped for own list: {ml_direct_affiliate[:80]}")
                 else:
                     event["status"] = "error"
                     event["error"] = (
@@ -571,7 +579,9 @@ class AffiliateConverter:
                     return None, event
 
             # Step 3 — build affiliate URL
-            if platform == "mercadolivre":
+            if ml_direct_affiliate is not None:
+                affiliate_url, build_error = ml_direct_affiliate, None
+            elif platform == "mercadolivre":
                 if self.ml_session is None:
                     affiliate_url, build_error = None, "Automação do Mercado Livre não inicializada"
                 else:

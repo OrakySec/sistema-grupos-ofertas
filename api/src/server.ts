@@ -159,6 +159,7 @@ async function buildApp() {
       shopee_affiliate_id:    dbObj.shopee_affiliate_id ?? '',
       aliexpress_tracking_id: dbObj.aliexpress_tracking_id ?? '',
       magalu_store_name:      dbObj.magalu_store_name ?? '',
+      ml_own_list_url:        dbObj.ml_own_list_url ?? '',
       link_shortener_enabled: dbObj.link_shortener_enabled ?? 'true',
       shortener_provider:     dbObj.shortener_provider ?? 'internal',
     });

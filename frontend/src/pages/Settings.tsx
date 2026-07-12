@@ -73,6 +73,7 @@ export default function Settings() {
   const refAliTrackId    = useRef<HTMLInputElement>(null)
   const refMagaluStore   = useRef<HTMLInputElement>(null)
   const refMlSessionFile = useRef<HTMLInputElement>(null)
+  const refMlOwnListUrl  = useRef<HTMLInputElement>(null)
   const [mlSessionActive, setMlSessionActive] = useState(false)
   const [uploadingMlSession, setUploadingMlSession] = useState(false)
   const refShortenerDomain = useRef<HTMLInputElement>(null)
@@ -765,6 +766,24 @@ export default function Settings() {
               localmente (nunca no servidor) pra logar e gerar esse arquivo — sua senha nunca passa por aqui.
             </div>
           </div>
+
+          <div className="form-group">
+            <label className="label">🟡 Mercado Livre — Sua lista (fallback)</label>
+            <input
+              ref={refMlOwnListUrl}
+              defaultValue={settingsData?.mlOwnListUrl ?? ''}
+              className="input font-mono"
+              placeholder="https://www.mercadolivre.com.br/social/seuusuario/lists/..."
+              type="text"
+              autoComplete="off"
+              data-lpignore="true"
+            />
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>
+              Quando uma mensagem tiver um link de <strong>lista</strong> de outra pessoa (não dá pra saber qual
+              produto específico atribuir), o sistema troca pelo link dessa sua lista em vez de bloquear o envio.
+              Deixe em branco pra continuar bloqueando esse tipo de link.
+            </div>
+          </div>
         </div>
 
         {/* Encurtador de Links */}
@@ -856,6 +875,7 @@ export default function Settings() {
               shopeeAffiliateId:    refShopeeId.current?.value,
               aliexpressTrackingId: refAliTrackId.current?.value,
               magaluStoreName:      refMagaluStore.current?.value,
+              mlOwnListUrl:         refMlOwnListUrl.current?.value,
               linkShortenerEnabled,
               shortenerProvider,
               shortenerDomain:      refShortenerDomain.current?.value || settingsData?.shortenerDomain,
