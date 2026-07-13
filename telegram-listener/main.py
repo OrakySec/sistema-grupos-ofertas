@@ -34,6 +34,7 @@ from telethon.tl.types import (
 )
 from affiliate_converter import AffiliateConverter
 import ml_browser
+import mockup_composer
 
 # ---------------------------------------------------------------------------
 # Bootstrap
@@ -419,6 +420,48 @@ async def _make_message_handler(http_session: aiohttp.ClientSession):
                     "label":  "Conversão de afiliado",
                     "detail": "Configurações de afiliado não carregadas do servidor",
                 })
+
+            # ── STEP 5.5: Offer image (always regenerated from the product page) ──
+            # Never trust whatever photo/caption came with the original message —
+            # find the recognized marketplace link and fetch the product's own
+            # image (og:image) to paste into our branded mockup instead.
+            product_url_for_mockup: Optional[str] = None
+            for ev in processing_events:
+                if ev.get("step") == "url" and ev.get("platform"):
+                    product_url_for_mockup = ev.get("expanded") or ev.get("original")
+                    break
+
+            if product_url_for_mockup:
+                message_text = text or media_caption
+                image_bytes, mockup_error = await mockup_composer.generate_offer_image(
+                    product_url_for_mockup, http_session
+                )
+                if image_bytes:
+                    mockup_dir = Path(MEDIA_BASE_PATH) / str(chat_id)
+                    mockup_dir.mkdir(parents=True, exist_ok=True)
+                    mockup_filename = f"{message.id}_mockup.jpg"
+                    (mockup_dir / mockup_filename).write_bytes(image_bytes)
+
+                    media_type = "PHOTO"
+                    media_local_path = f"{chat_id}/{mockup_filename}"
+                    media_caption = message_text
+                    text = None
+                    processing_events.append({
+                        "ts": _ts(), "step": "mockup", "status": "ok",
+                        "label": "Imagem do produto", "detail": "Foto do produto montada no mockup",
+                    })
+                else:
+                    # Per spec: on failure, send WITHOUT any photo — never fall
+                    # back to whatever media came with the original message.
+                    media_type = "NONE"
+                    media_local_path = None
+                    media_caption = None
+                    text = message_text
+                    processing_events.append({
+                        "ts": _ts(), "step": "mockup", "status": "error",
+                        "label": "Imagem do produto",
+                        "error": mockup_error or "Falha desconhecida — oferta enviada sem foto",
+                    })
 
             # ── STEP 6: Send to API ───────────────────────────────────────────────
             original_date: str = (
@@ -849,6 +892,11 @@ async def on_startup(app: web.Application) -> None:
     except Exception as exc:
         logger.error(f"[ml_session] Failed to start Playwright browser: {exc}")
 
+    try:
+        await mockup_composer.get_image_browser().start()
+    except Exception as exc:
+        logger.error(f"[mockup] Failed to start product-image browser: {exc}")
+
     logger.info("Service started — background tasks running")
 
 
@@ -871,6 +919,11 @@ async def on_shutdown(app: web.Application) -> None:
 
     try:
         await ml_browser.get_session(ML_STORAGE_STATE_PATH).stop()
+    except Exception:
+        pass
+
+    try:
+        await mockup_composer.get_image_browser().stop()
     except Exception:
         pass
 
