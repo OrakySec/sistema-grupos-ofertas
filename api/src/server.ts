@@ -20,6 +20,10 @@ const NODE_ENV = process.env.NODE_ENV ?? 'development';
 const CORS_ORIGIN = process.env.CORS_ORIGIN ?? '*';
 
 const server = Fastify({
+  // Behind Traefik in production — without this, request.ip resolves to the
+  // proxy's internal container IP instead of the real visitor's IP (which
+  // silently breaks Meta CAPI client_ip_address matching).
+  trustProxy: true,
   logger: {
     level: NODE_ENV === 'production' ? 'info' : 'debug',
     transport:

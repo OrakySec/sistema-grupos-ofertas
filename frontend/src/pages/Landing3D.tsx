@@ -3,10 +3,29 @@ import React, { useEffect, useState } from 'react';
 const TELEGRAM_URL = 'https://t.me/ferreira3d';
 const WHATSAPP_URL = 'https://chat.whatsapp.com/C0cPDxI9ViB25Y6NUVUmyL?mode=gi_t';
 
+/** Reads a cookie value by name, or null if not present. */
+function getCookie(name: string): string | null {
+  const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+/**
+ * Meta's _fbc cookie is only set once fbevents.js has processed an incoming
+ * fbclid — on the very first pageview from an ad click it may not exist yet,
+ * so fall back to building it from the fbclid query param directly.
+ */
+function getFbc(): string | null {
+  const existing = getCookie('_fbc');
+  if (existing) return existing;
+  const fbclid = new URLSearchParams(window.location.search).get('fbclid');
+  if (!fbclid) return null;
+  return `fb.1.${Date.now()}.${fbclid}`;
+}
+
 /** Fire a Meta Pixel custom event and send CAPI request safely. */
 function trackEvent(eventName: string, params?: Record<string, unknown>) {
   const eventId = Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
-  
+
   // 1. Pixel (Browser)
   try {
     const w = window as any;
@@ -25,7 +44,9 @@ function trackEvent(eventName: string, params?: Record<string, unknown>) {
         eventName,
         eventId,
         sourceUrl: window.location.href,
-        userAgent: navigator.userAgent
+        userAgent: navigator.userAgent,
+        fbc: getFbc(),
+        fbp: getCookie('_fbp'),
       })
     }).catch(() => {});
   } catch (_) {}

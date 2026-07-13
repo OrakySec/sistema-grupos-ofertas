@@ -7,13 +7,20 @@ const META_CAPI_TOKEN = 'EAAUFNPFwJ70BR7r3XKT3Hcqh5WUC7JKFW4hxEsZCqaVY9eZAJq5MZB
 export const trackingRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   // Public endpoint for Meta CAPI events
   fastify.post('/meta-event', async (request, reply) => {
-    const { eventName, eventId, sourceUrl, userAgent, clientIp } = request.body as any;
-    
+    const { eventName, eventId, sourceUrl, userAgent, clientIp, fbc, fbp } = request.body as any;
+
     if (!eventName) {
       return reply.code(400).send({ error: 'eventName is required' });
     }
 
     try {
+      const userData: Record<string, string> = {
+        client_ip_address: clientIp || request.ip,
+        client_user_agent: userAgent || (request.headers['user-agent'] as string),
+      };
+      if (fbc) userData.fbc = fbc;
+      if (fbp) userData.fbp = fbp;
+
       const payload = {
         data: [
           {
@@ -22,10 +29,7 @@ export const trackingRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
             event_id: eventId,
             event_source_url: sourceUrl,
             action_source: 'website',
-            user_data: {
-              client_ip_address: clientIp || request.ip,
-              client_user_agent: userAgent || request.headers['user-agent'],
-            },
+            user_data: userData,
           }
         ]
       };
