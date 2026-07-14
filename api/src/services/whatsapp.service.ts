@@ -120,7 +120,12 @@ export class WhatsAppService {
         number: chatId,
         // Evolution API v2 top-level fields
         mediatype: 'image',
-        media: `data:${mimeType};base64,${base64}`,
+        mimetype: mimeType,
+        // Raw base64 — NOT a data URI. Evolution API does
+        // `Buffer.from(media, 'base64')` directly; a "data:image/jpeg;base64,"
+        // prefix gets decoded as part of the payload, corrupting the image
+        // and making their sharp() re-encode step fail with a 400.
+        media: base64,
         caption: caption ?? '',
         fileName: path.basename(absolutePath),
       });
@@ -154,7 +159,8 @@ export class WhatsAppService {
         number: chatId,
         // Evolution API v2 top-level fields
         mediatype: 'document',
-        media: `data:${mimeType};base64,${base64}`,
+        mimetype: mimeType,
+        media: base64, // raw base64, not a data URI — see sendImage() for why
         caption: caption ?? '',
         fileName,
       });
