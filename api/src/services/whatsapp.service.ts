@@ -85,13 +85,18 @@ export class WhatsAppService {
 
   async sendText(chatId: string, text: string): Promise<void> {
     const { client, instance } = await this.getClient();
-    const response = await client.post(`/message/sendText/${instance}`, {
-      number: chatId,
-      text,                    // Evolution API v2 — top-level field (not textMessage:{text})
-    });
+    try {
+      const response = await client.post(`/message/sendText/${instance}`, {
+        number: chatId,
+        text,                    // Evolution API v2 — top-level field (not textMessage:{text})
+      });
 
-    if (response.status < 200 || response.status >= 300) {
-      throw new Error(`Evolution API sendText failed with status ${response.status}`);
+      if (response.status < 200 || response.status >= 300) {
+        throw new Error(`Evolution API sendText failed with status ${response.status}`);
+      }
+    } catch (err: any) {
+      const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+      throw new Error(`Evolution API sendText failed (${err.response?.status ?? '?'}): ${detail}`);
     }
   }
 
@@ -110,17 +115,22 @@ export class WhatsAppService {
     const mimeType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : `image/${ext}`;
 
     const { client, instance } = await this.getClient();
-    const response = await client.post(`/message/sendMedia/${instance}`, {
-      number: chatId,
-      // Evolution API v2 top-level fields
-      mediatype: 'image',
-      media: `data:${mimeType};base64,${base64}`,
-      caption: caption ?? '',
-      fileName: path.basename(absolutePath),
-    });
+    try {
+      const response = await client.post(`/message/sendMedia/${instance}`, {
+        number: chatId,
+        // Evolution API v2 top-level fields
+        mediatype: 'image',
+        media: `data:${mimeType};base64,${base64}`,
+        caption: caption ?? '',
+        fileName: path.basename(absolutePath),
+      });
 
-    if (response.status < 200 || response.status >= 300) {
-      throw new Error(`Evolution API sendImage failed with status ${response.status}`);
+      if (response.status < 200 || response.status >= 300) {
+        throw new Error(`Evolution API sendImage failed with status ${response.status}`);
+      }
+    } catch (err: any) {
+      const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+      throw new Error(`Evolution API sendImage failed (${err.response?.status ?? '?'}): ${detail}`);
     }
   }
 
@@ -139,17 +149,22 @@ export class WhatsAppService {
     const mimeType = `application/${ext === 'pdf' ? 'pdf' : 'octet-stream'}`;
 
     const { client, instance } = await this.getClient();
-    const response = await client.post(`/message/sendMedia/${instance}`, {
-      number: chatId,
-      // Evolution API v2 top-level fields
-      mediatype: 'document',
-      media: `data:${mimeType};base64,${base64}`,
-      caption: caption ?? '',
-      fileName,
-    });
+    try {
+      const response = await client.post(`/message/sendMedia/${instance}`, {
+        number: chatId,
+        // Evolution API v2 top-level fields
+        mediatype: 'document',
+        media: `data:${mimeType};base64,${base64}`,
+        caption: caption ?? '',
+        fileName,
+      });
 
-    if (response.status < 200 || response.status >= 300) {
-      throw new Error(`Evolution API sendDocument failed with status ${response.status}`);
+      if (response.status < 200 || response.status >= 300) {
+        throw new Error(`Evolution API sendDocument failed with status ${response.status}`);
+      }
+    } catch (err: any) {
+      const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+      throw new Error(`Evolution API sendDocument failed (${err.response?.status ?? '?'}): ${detail}`);
     }
   }
 }
