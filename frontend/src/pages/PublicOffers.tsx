@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 
 const BASE_URL = (import.meta.env.VITE_API_URL as string) || '/api'
 
@@ -12,6 +12,7 @@ interface PublicOffer {
   sentAt: string
   platform: string | null
   affiliateUrl: string | null
+  niche: { slug: string | null; name: string } | null
 }
 
 interface PublicOffersResponse {
@@ -28,6 +29,7 @@ function formatDate(dateStr: string): string {
 }
 
 export default function PublicOffers() {
+  const { slug } = useParams<{ slug?: string }>()
   const [offers, setOffers] = useState<PublicOffer[]>([])
   const [page, setPage] = useState(1)
   const [pages, setPages] = useState(1)
@@ -38,7 +40,9 @@ export default function PublicOffers() {
     let cancelled = false
     setLoading(true)
     setError(false)
-    fetch(`${BASE_URL}/public/offers?page=${page}&limit=20`)
+    const qs = new URLSearchParams({ page: String(page), limit: '20' })
+    if (slug) qs.set('slug', slug)
+    fetch(`${BASE_URL}/public/offers?${qs.toString()}`)
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         return res.json() as Promise<PublicOffersResponse>
@@ -57,13 +61,15 @@ export default function PublicOffers() {
     return () => {
       cancelled = true
     }
-  }, [page])
+  }, [page, slug])
+
+  const nicheName = offers[0]?.niche?.name
 
   return (
     <div style={styles.page}>
       <header style={styles.header}>
         <div style={styles.headerInner}>
-          <h1 style={styles.logo}>🔥 Ofertas</h1>
+          <h1 style={styles.logo}>🔥 {nicheName || 'Ofertas'}</h1>
           <p style={styles.tagline}>Promoções e cupons selecionados diariamente</p>
         </div>
       </header>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import api, {
   type SourceGroup,
   type DestinationGroup,
@@ -8,6 +8,8 @@ import Modal from '../components/Modal'
 import Toggle from '../components/Toggle'
 import { Skeleton } from '../components/LoadingSkeleton'
 import { useToast } from '../lib/toast'
+
+const BASE_URL = (import.meta.env.VITE_API_URL as string) || '/api'
 
 /* ─── Link Destinations Modal ────────────── */
 interface LinkDestinationsModalProps {
@@ -111,8 +113,8 @@ function LinkDestinationsModal({
           >
             Selecione quais grupos destino receberão as ofertas deste grupo fonte.
             {selected.size === 0 && (
-              <span style={{ color: 'var(--color-warning, #f59e0b)', fontWeight: 500 }}>
-                {' '}Nenhum selecionado = envia para todos (comportamento padrão).
+              <span style={{ color: 'var(--color-error, #ef4444)', fontWeight: 600 }}>
+                {' '}⚠️ Nenhum destino vinculado — as ofertas deste grupo NÃO serão enviadas até você vincular ao menos um.
               </span>
             )}
           </p>
@@ -186,6 +188,411 @@ function LinkDestinationsModal({
           </div>
         </div>
       )}
+    </Modal>
+  )
+}
+
+/* ─── Mockup box editor ───────────────────── */
+// Fractions of image width/height (0..1) for the editor's own drag math;
+// PixelRect (below) is the same shape, but in the image's natural pixel
+// space — what actually gets sent to the API / used by mockup_composer.py.
+interface Rect {
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+
+const DEFAULT_FRAC_BOX: Rect = { left: 0.15, top: 0.15, right: 0.85, bottom: 0.85 }
+
+interface MockupBoxEditorProps {
+  imageUrl: string
+  initialBox: Rect | null // natural pixel coordinates
+  initialCornerRadius: number
+  readOnly?: boolean
+  onChange?: (box: Rect, cornerRadius: number) => void
+}
+
+function MockupBoxEditor({
+  imageUrl,
+  initialBox,
+  initialCornerRadius,
+  readOnly = false,
+  onChange,
+}: MockupBoxEditorProps) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [natural, setNatural] = useState<{ w: number; h: number } | null>(null)
+  const [displayWidth, setDisplayWidth] = useState(360)
+  const [fracBox, setFracBox] = useState<Rect>(DEFAULT_FRAC_BOX)
+  const [cornerRadius, setCornerRadius] = useState(initialCornerRadius)
+  const [dragging, setDragging] = useState<'tl' | 'br' | null>(null)
+
+  const handleImgLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const w = e.currentTarget.naturalWidth
+    const h = e.currentTarget.naturalHeight
+    setNatural({ w, h })
+    setFracBox(
+      initialBox
+        ? {
+            left: initialBox.left / w,
+            top: initialBox.top / h,
+            right: initialBox.right / w,
+            bottom: initialBox.bottom / h,
+          }
+        : DEFAULT_FRAC_BOX
+    )
+  }
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const obs = new ResizeObserver((entries) => {
+      for (const entry of entries) setDisplayWidth(entry.contentRect.width)
+    })
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [])
+
+  useEffect(() => {
+    if (!natural || !onChange) return
+    onChange(
+      {
+        left: fracBox.left * natural.w,
+        top: fracBox.top * natural.h,
+        right: fracBox.right * natural.w,
+        bottom: fracBox.bottom * natural.h,
+      },
+      cornerRadius
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fracBox, cornerRadius, natural])
+
+  useEffect(() => {
+    if (!dragging) return
+    const handleMove = (e: PointerEvent) => {
+      const el = containerRef.current
+      if (!el) return
+      const rect = el.getBoundingClientRect()
+      const fx = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width))
+      const fy = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height))
+      setFracBox((prev) =>
+        dragging === 'tl'
+          ? { ...prev, left: Math.min(fx, prev.right - 0.05), top: Math.min(fy, prev.bottom - 0.05) }
+          : { ...prev, right: Math.max(fx, prev.left + 0.05), bottom: Math.max(fy, prev.top + 0.05) }
+      )
+    }
+    const handleUp = () => setDragging(null)
+    window.addEventListener('pointermove', handleMove)
+    window.addEventListener('pointerup', handleUp)
+    return () => {
+      window.removeEventListener('pointermove', handleMove)
+      window.removeEventListener('pointerup', handleUp)
+    }
+  }, [dragging])
+
+  const scale = natural ? displayWidth / natural.w : 1
+  const handleSize = 18
+
+  return (
+    <div>
+      <div
+        ref={containerRef}
+        style={{
+          position: 'relative',
+          width: '100%',
+          maxWidth: 360,
+          userSelect: 'none',
+          touchAction: 'none',
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 8,
+          overflow: 'hidden',
+          background: '#111',
+        }}
+      >
+        <img
+          src={imageUrl}
+          alt="Template do mockup"
+          onLoad={handleImgLoad}
+          style={{ display: 'block', width: '100%' }}
+          draggable={false}
+        />
+        {natural && (
+          <div
+            style={{
+              position: 'absolute',
+              left: `${fracBox.left * 100}%`,
+              top: `${fracBox.top * 100}%`,
+              width: `${(fracBox.right - fracBox.left) * 100}%`,
+              height: `${(fracBox.bottom - fracBox.top) * 100}%`,
+              border: '2px dashed #ff5e00',
+              background: 'rgba(255,94,0,0.15)',
+              borderRadius: cornerRadius * scale,
+              pointerEvents: 'none',
+            }}
+          />
+        )}
+        {natural &&
+          !readOnly &&
+          (['tl', 'br'] as const).map((corner) => (
+            <div
+              key={corner}
+              onPointerDown={(e) => {
+                e.preventDefault()
+                setDragging(corner)
+              }}
+              style={{
+                position: 'absolute',
+                left: `calc(${(corner === 'tl' ? fracBox.left : fracBox.right) * 100}% - ${handleSize / 2}px)`,
+                top: `calc(${(corner === 'tl' ? fracBox.top : fracBox.bottom) * 100}% - ${handleSize / 2}px)`,
+                width: handleSize,
+                height: handleSize,
+                borderRadius: '50%',
+                background: '#ff5e00',
+                border: '2px solid #fff',
+                cursor: 'nwse-resize',
+                boxShadow: '0 2px 6px rgba(0,0,0,0.4)',
+              }}
+            />
+          ))}
+      </div>
+      {!readOnly && (
+        <div style={{ marginTop: 10 }}>
+          <label className="label" style={{ fontSize: '0.8rem' }}>
+            Raio do canto: {cornerRadius}px
+          </label>
+          <input
+            type="range"
+            min={0}
+            max={200}
+            value={cornerRadius}
+            onChange={(e) => setCornerRadius(Number(e.target.value))}
+            style={{ width: '100%' }}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ─── Niche config modal ──────────────────── */
+interface NicheConfigModalProps {
+  isOpen: boolean
+  sourceGroup: SourceGroup | null
+  onClose: () => void
+  onSaved: () => void
+}
+
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+function NicheConfigModal({ isOpen, sourceGroup, onClose, onSaved }: NicheConfigModalProps) {
+  const [slug, setSlug] = useState('')
+  const [footerText, setFooterText] = useState('')
+  const [mlOwnListUrl, setMlOwnListUrl] = useState('')
+  const [templateFile, setTemplateFile] = useState<File | null>(null)
+  const [templatePreviewUrl, setTemplatePreviewUrl] = useState<string | null>(null)
+  const [pendingBox, setPendingBox] = useState<Rect | null>(null)
+  const [pendingRadius, setPendingRadius] = useState(50)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!isOpen || !sourceGroup) return
+    setSlug(sourceGroup.slug || slugify(sourceGroup.name))
+    setFooterText(sourceGroup.footerText || '')
+    setMlOwnListUrl(sourceGroup.mlOwnListUrl || '')
+    setTemplateFile(null)
+    setPendingBox(null)
+    setPendingRadius(sourceGroup.mockupCornerRadius ?? 50)
+    setTemplatePreviewUrl(
+      sourceGroup.mockupTemplatePath ? `${BASE_URL}/media/${sourceGroup.mockupTemplatePath}` : null
+    )
+    setError('')
+  }, [isOpen, sourceGroup])
+
+  const existingBox: Rect | null =
+    sourceGroup?.mockupBoxLeft != null &&
+    sourceGroup?.mockupBoxTop != null &&
+    sourceGroup?.mockupBoxRight != null &&
+    sourceGroup?.mockupBoxBottom != null
+      ? {
+          left: sourceGroup.mockupBoxLeft,
+          top: sourceGroup.mockupBoxTop,
+          right: sourceGroup.mockupBoxRight,
+          bottom: sourceGroup.mockupBoxBottom,
+        }
+      : null
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setTemplateFile(file)
+    setTemplatePreviewUrl(URL.createObjectURL(file))
+    setPendingBox(null)
+    setPendingRadius(50)
+  }
+
+  const handleRemoveTemplate = async () => {
+    if (!sourceGroup) return
+    setSaving(true)
+    setError('')
+    try {
+      await api.updateSourceGroup(sourceGroup.id, { clearMockupTemplate: true })
+      setTemplateFile(null)
+      setTemplatePreviewUrl(null)
+      onSaved()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao remover template')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleSave = async () => {
+    if (!sourceGroup) return
+    setSaving(true)
+    setError('')
+    try {
+      await api.updateSourceGroup(sourceGroup.id, {
+        slug: slug.trim() || null,
+        footerText: footerText.trim() || null,
+        mlOwnListUrl: mlOwnListUrl.trim() || null,
+      })
+
+      if (templateFile && pendingBox) {
+        await api.uploadMockupTemplate(sourceGroup.id, templateFile, pendingBox, pendingRadius)
+      }
+
+      onSaved()
+      onClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao salvar configuração do nicho')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={`Configurar nicho — ${sourceGroup?.name ?? ''}`}
+      width={480}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose}>
+            Cancelar
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={handleSave}
+            disabled={saving || (!!templateFile && !pendingBox)}
+          >
+            {saving ? <span className="spinner spinner-sm" /> : null}
+            Salvar
+          </button>
+        </>
+      }
+    >
+      {error && (
+        <div className="alert alert-error" style={{ marginBottom: 16 }}>
+          {error}
+        </div>
+      )}
+
+      <div className="form-group">
+        <label className="label" htmlFor="niche-slug">
+          Slug (URL pública)
+        </label>
+        <input
+          id="niche-slug"
+          className="input font-mono"
+          placeholder="impressao-3d"
+          value={slug}
+          onChange={(e) => setSlug(slugify(e.target.value))}
+        />
+        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 4 }}>
+          Página pública: ofertas.ykaromarques.com/ofertas/n/{slug || '...'}
+        </p>
+      </div>
+
+      <div className="form-group">
+        <label className="label" htmlFor="niche-footer">
+          Texto de rodapé (deixe em branco para usar o padrão global)
+        </label>
+        <textarea
+          id="niche-footer"
+          className="input"
+          rows={3}
+          placeholder="Ex: 📲 Entre no nosso grupo: t.me/..."
+          value={footerText}
+          onChange={(e) => setFooterText(e.target.value)}
+        />
+      </div>
+
+      <div className="form-group">
+        <label className="label" htmlFor="niche-ml-url">
+          Link da lista própria do Mercado Livre (fallback)
+        </label>
+        <input
+          id="niche-ml-url"
+          className="input"
+          placeholder="Deixe em branco para usar o padrão global"
+          value={mlOwnListUrl}
+          onChange={(e) => setMlOwnListUrl(e.target.value)}
+        />
+      </div>
+
+      <div className="form-group">
+        <label className="label">Template do mockup</label>
+
+        {!templatePreviewUrl && (
+          <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 8 }}>
+            Nenhum template customizado — usando o padrão do sistema.
+          </p>
+        )}
+
+        {templatePreviewUrl && (
+          <MockupBoxEditor
+            key={templatePreviewUrl}
+            imageUrl={templatePreviewUrl}
+            initialBox={templateFile ? null : existingBox}
+            initialCornerRadius={templateFile ? 50 : sourceGroup?.mockupCornerRadius ?? 50}
+            readOnly={!templateFile}
+            onChange={templateFile ? (box, radius) => { setPendingBox(box); setPendingRadius(radius) } : undefined}
+          />
+        )}
+
+        {templatePreviewUrl && !templateFile && (
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 8 }}>
+            Retângulo salvo atualmente (somente leitura) — escolha uma nova imagem pra ajustar.
+          </p>
+        )}
+
+        <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+          <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer' }}>
+            {templatePreviewUrl ? '🔄 Trocar imagem' : '📤 Enviar imagem'}
+            <input type="file" accept="image/*" onChange={handleFileChange} style={{ display: 'none' }} />
+          </label>
+          {sourceGroup?.mockupTemplatePath && !templateFile && (
+            <button className="btn btn-ghost btn-sm" onClick={handleRemoveTemplate} disabled={saving}>
+              🗑 Remover (usar padrão)
+            </button>
+          )}
+        </div>
+
+        {templateFile && !pendingBox && (
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 8 }}>
+            Carregando imagem…
+          </p>
+        )}
+      </div>
     </Modal>
   )
 }
@@ -537,6 +944,8 @@ export default function Groups() {
   const [togglingId, setTogglingId] = useState<string | null>(null)
   // Link destinations modal
   const [linkTarget, setLinkTarget] = useState<SourceGroup | null>(null)
+  // Niche config modal (mockup/footer/ML link)
+  const [nicheTarget, setNicheTarget] = useState<SourceGroup | null>(null)
   // Track linked destination counts per source group
   const [linkedCounts, setLinkedCounts] = useState<Record<string, number>>({})
 
@@ -641,6 +1050,12 @@ export default function Groups() {
         onClose={() => setLinkTarget(null)}
         onSaved={() => { fetchAll(); }}
       />
+      <NicheConfigModal
+        isOpen={nicheTarget !== null}
+        sourceGroup={nicheTarget}
+        onClose={() => setNicheTarget(null)}
+        onSaved={() => { fetchAll(); addToast('Configuração de nicho salva!', 'success'); }}
+      />
 
       {/* Header */}
       <div className="page-header">
@@ -733,8 +1148,8 @@ export default function Groups() {
                             {linkedCounts[g.id]}
                           </span>
                         ) : (
-                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                            Todos
+                          <span style={{ fontSize: '0.75rem', color: 'var(--color-error, #ef4444)', fontWeight: 600 }}>
+                            ⚠️ Nenhum
                           </span>
                         )}
                       </button>
@@ -747,14 +1162,23 @@ export default function Groups() {
                       />
                     </td>
                     <td>
-                      <button
-                        className="icon-btn danger"
-                        onClick={() => deleteSource(g.id)}
-                        disabled={deletingId === g.id}
-                        title="Remover"
-                      >
-                        {deletingId === g.id ? <span className="spinner spinner-sm" /> : '🗑'}
-                      </button>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          className="icon-btn"
+                          onClick={() => setNicheTarget(g)}
+                          title="Configurar nicho (mockup, rodapé, link ML)"
+                        >
+                          ⚙️
+                        </button>
+                        <button
+                          className="icon-btn danger"
+                          onClick={() => deleteSource(g.id)}
+                          disabled={deletingId === g.id}
+                          title="Remover"
+                        >
+                          {deletingId === g.id ? <span className="spinner spinner-sm" /> : '🗑'}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

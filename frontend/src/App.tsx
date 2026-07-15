@@ -18,6 +18,7 @@ import Settings from './pages/Settings'
 import Logs from './pages/Logs'
 import Clicks from './pages/Clicks'
 import Landing3D from './pages/Landing3D'
+import PublicNicheIndex from './pages/PublicNicheIndex'
 import PublicOffers from './pages/PublicOffers'
 import PublicOfferDetail from './pages/PublicOfferDetail'
 
@@ -70,7 +71,8 @@ function AppRoutes() {
       <Route path="/3d" element={<Landing3D />} />
 
       {/* Public offers site (no auth — Amazon Associates requires a public, crawlable page) */}
-      <Route path="/ofertas" element={<PublicOffers />} />
+      <Route path="/ofertas" element={<PublicNicheIndex />} />
+      <Route path="/ofertas/n/:slug" element={<PublicOffers />} />
       <Route path="/ofertas/:id" element={<PublicOfferDetail />} />
 
       {/* Protected routes with sidebar layout */}

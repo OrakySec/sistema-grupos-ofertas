@@ -101,6 +101,16 @@ export interface SourceGroup {
   telegramId: string
   isActive: boolean
   createdAt: string
+  // Per-niche overrides — null means "use the global default"
+  slug?: string | null
+  footerText?: string | null
+  mlOwnListUrl?: string | null
+  mockupTemplatePath?: string | null
+  mockupBoxLeft?: number | null
+  mockupBoxTop?: number | null
+  mockupBoxRight?: number | null
+  mockupBoxBottom?: number | null
+  mockupCornerRadius?: number | null
 }
 
 export interface DestinationGroup {
@@ -274,13 +284,49 @@ class ApiClient {
 
   async updateSourceGroup(
     id: string,
-    data: Partial<{ name: string; telegramId: string; username: string; isActive: boolean }>
+    data: Partial<{
+      name: string
+      telegramId: string
+      username: string
+      isActive: boolean
+      slug: string | null
+      footerText: string | null
+      mlOwnListUrl: string | null
+      clearMockupTemplate: boolean
+    }>
   ): Promise<SourceGroup> {
     return this.request('PATCH', `/groups/source/${id}`, data)
   }
 
   async deleteSourceGroup(id: string): Promise<{ success: boolean }> {
     return this.request('DELETE', `/groups/source/${id}`)
+  }
+
+  async uploadMockupTemplate(
+    sourceGroupId: string,
+    file: File,
+    box: { left: number; top: number; right: number; bottom: number },
+    cornerRadius: number
+  ): Promise<SourceGroup> {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('boxLeft', String(Math.round(box.left)))
+    formData.append('boxTop', String(Math.round(box.top)))
+    formData.append('boxRight', String(Math.round(box.right)))
+    formData.append('boxBottom', String(Math.round(box.bottom)))
+    formData.append('cornerRadius', String(Math.round(cornerRadius)))
+
+    const headers = this.getHeaders()
+    const res = await fetch(`${this.baseUrl}/groups/source/${sourceGroupId}/mockup-template`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      throw new Error(data?.error || `Erro ${res.status}: ${res.statusText}`)
+    }
+    return data
   }
 
   async getSourceGroupDestinations(sourceGroupId: string): Promise<DestinationGroup[]> {

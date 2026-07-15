@@ -86,6 +86,10 @@ class AppState:
         # Mapping from Telegram group chat-id (int) → UUID used by the API
         self.source_groups: dict[int, str] = {}  # {telegram_id: uuid}
 
+        # Per-niche overrides, keyed by SourceGroup UUID (not chat-id) — see
+        # _extract_niche_config. Refreshed on the same poll cycle as source_groups.
+        self.source_group_configs: dict[str, dict] = {}
+
         self.client: Optional[TelegramClient] = None
         self.authenticated: bool = False
         self.connected: bool = False
@@ -205,11 +209,42 @@ async def fetch_settings(session: aiohttp.ClientSession) -> Optional[dict]:
     return None
 
 
-async def fetch_source_groups(session: aiohttp.ClientSession) -> dict[int, str]:
+def _extract_niche_config(g: dict) -> dict:
+    """
+    Build the per-source-group override dict from a /groups/source row.
+    ml_own_list_url is used whenever present. The mockup override is only
+    applied when the template path AND all 4 box coordinates AND the corner
+    radius are present — routes/groups.ts writes those 5 fields atomically,
+    so a partially-configured template should never happen, but we still
+    guard against it here rather than risk composing onto a None box.
+    """
+    config: dict = {}
+
+    ml_own_list_url = g.get("mlOwnListUrl")
+    if ml_own_list_url:
+        config["ml_own_list_url"] = ml_own_list_url
+
+    template_path = g.get("mockupTemplatePath")
+    box_fields = (
+        g.get("mockupBoxLeft"), g.get("mockupBoxTop"),
+        g.get("mockupBoxRight"), g.get("mockupBoxBottom"),
+    )
+    corner_radius = g.get("mockupCornerRadius")
+    if template_path and corner_radius is not None and all(v is not None for v in box_fields):
+        config["mockup"] = {
+            "template_path": template_path,
+            "box": box_fields,
+            "corner_radius": corner_radius,
+        }
+
+    return config
+
+
+async def fetch_source_groups(session: aiohttp.ClientSession) -> tuple[dict[int, str], dict[str, dict]]:
     """
     GET /groups/source from the internal API.
-    Returns a dict mapping Telegram chat-id (int) → UUID string.
-    We map multiple forms (base, negative, -100 prefix) so Telethon
+    Returns (chat-id-variant → UUID mapping, UUID → niche config dict).
+    We map multiple chat-id forms (base, negative, -100 prefix) so Telethon
     and the handler match reliably regardless of how the user typed it.
     """
     url = f"{INTERNAL_API_URL}/groups/source"
@@ -218,6 +253,7 @@ async def fetch_source_groups(session: aiohttp.ClientSession) -> dict[int, str]:
             if resp.status == 200:
                 groups = await resp.json()
                 mapping: dict[int, str] = {}
+                configs: dict[str, dict] = {}
                 for g in groups:
                     tg_id = g.get("telegramId") or g.get("telegram_id")
                     uuid = g.get("id") or g.get("uuid")
@@ -236,12 +272,14 @@ async def fetch_source_groups(session: aiohttp.ClientSession) -> dict[int, str]:
                         mapping[-base_id] = str(uuid)
                         mapping[int(f"-100{base_id}")] = str(uuid)
 
+                        configs[str(uuid)] = _extract_niche_config(g)
+
                 logger.info(f"Source groups loaded (expanded to variants): {list(mapping.keys())}")
-                return mapping
+                return mapping, configs
             logger.warning(f"GET /groups/source returned HTTP {resp.status}")
     except Exception as exc:
         logger.warning(f"Failed to fetch source groups: {exc}")
-    return {}
+    return {}, {}
 
 
 
@@ -291,6 +329,11 @@ async def _make_message_handler(http_session: aiohttp.ClientSession):
         if uuid is None:
             logger.debug(f"Message from unmonitored chat {chat_id} — ignoring")
             return
+
+        # Per-niche overrides for this source group (ml_own_list_url / mockup
+        # template) — empty dict when the group has no custom config, which
+        # falls back to the exact behavior that existed before niches.
+        group_config = state.source_group_configs.get(uuid, {})
 
         logger.info(
             f"New message in chat {chat_id} (uuid={uuid}), "
@@ -369,8 +412,19 @@ async def _make_message_handler(http_session: aiohttp.ClientSession):
                 _original_text    = text
                 _original_caption = media_caption
                 try:
+                    # This source group's own ML list link (if configured) takes
+                    # priority over the global fallback — everything else in
+                    # affiliate_settings stays shared across niches (affiliate
+                    # tags are account-level, not niche-level).
+                    message_affiliate_settings = state.affiliate_settings
+                    if group_config.get("ml_own_list_url"):
+                        message_affiliate_settings = {
+                            **state.affiliate_settings,
+                            "ml_own_list_url": group_config["ml_own_list_url"],
+                        }
+
                     converter = AffiliateConverter(
-                        state.affiliate_settings,
+                        message_affiliate_settings,
                         ml_session=ml_browser.get_session(ML_STORAGE_STATE_PATH),
                     )
 
@@ -434,7 +488,8 @@ async def _make_message_handler(http_session: aiohttp.ClientSession):
             if product_url_for_mockup:
                 message_text = text or media_caption
                 image_bytes, mockup_error = await mockup_composer.generate_offer_image(
-                    product_url_for_mockup, http_session
+                    product_url_for_mockup, http_session,
+                    template_override=group_config.get("mockup"),
                 )
                 if image_bytes:
                     mockup_dir = Path(MEDIA_BASE_PATH) / str(chat_id)
@@ -651,10 +706,11 @@ async def _apply_settings(settings: dict, http_session: aiohttp.ClientSession, *
     logger.debug(f"Affiliate settings refreshed: { {k: ('✓' if v else '–') for k, v in state.affiliate_settings.items()} }")
     # ─────────────────────────────────────────────────────────────────────
 
-    # Fetch source groups regardless
-    new_groups = await fetch_source_groups(http_session)
+    # Fetch source groups (+ their per-niche config overrides) regardless
+    new_groups, new_group_configs = await fetch_source_groups(http_session)
     groups_changed = new_groups != state.source_groups
     state.source_groups = new_groups
+    state.source_group_configs = new_group_configs
 
     if initial or credentials_changed:
         if state.api_id and state.api_hash and state.phone:
@@ -791,8 +847,9 @@ async def route_reload(request: web.Request) -> web.Response:
     Forces an immediate reload of source groups and refreshes handlers.
     """
     http_session: aiohttp.ClientSession = request.app["http_session"]
-    new_groups = await fetch_source_groups(http_session)
+    new_groups, new_group_configs = await fetch_source_groups(http_session)
     state.source_groups = new_groups
+    state.source_group_configs = new_group_configs
     logger.info(f"Reloaded groups via /reload: {list(new_groups.keys())}")
 
     if state.client is not None and state.authenticated:

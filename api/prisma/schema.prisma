@@ -43,6 +43,20 @@ model SourceGroup {
   isActive   Boolean  @default(true)
   createdAt  DateTime @default(now())
 
+  // Per-niche overrides — null falls back to the global Setting of the same
+  // purpose. The 5 mockup* fields are treated as an all-or-nothing group by
+  // the API (see routes/groups.ts): either every one is set (custom template)
+  // or every one is null (use the bundled default template + coordinates).
+  slug               String?  @unique
+  footerText         String?  @db.Text
+  mlOwnListUrl       String?
+  mockupTemplatePath String?
+  mockupBoxLeft      Int?
+  mockupBoxTop       Int?
+  mockupBoxRight     Int?
+  mockupBoxBottom    Int?
+  mockupCornerRadius Int?
+
   offers       Offer[]
   destinations SourceGroupDestination[]
 }

@@ -12,6 +12,7 @@ interface PublicOfferDetailData {
   sentAt: string
   platform: string | null
   affiliateUrl: string | null
+  niche: { slug: string | null; name: string } | null
 }
 
 function formatDate(dateStr: string): string {
@@ -57,18 +58,20 @@ export default function PublicOfferDetail() {
     }
   }, [id])
 
+  const backTo = offer?.niche?.slug ? `/ofertas/n/${offer.niche.slug}` : '/ofertas'
+
   return (
     <div style={styles.page}>
       <header style={styles.header}>
         <div style={styles.headerInner}>
-          <Link to="/ofertas" style={styles.logoLink}>
-            🔥 Ofertas
+          <Link to={backTo} style={styles.logoLink}>
+            🔥 {offer?.niche?.name || 'Ofertas'}
           </Link>
         </div>
       </header>
 
       <main style={styles.main}>
-        <Link to="/ofertas" style={styles.backLink}>
+        <Link to={backTo} style={styles.backLink}>
           ← Todas as ofertas
         </Link>
 

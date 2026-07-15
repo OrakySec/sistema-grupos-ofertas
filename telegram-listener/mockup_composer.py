@@ -10,6 +10,7 @@ scraping logic), then pastes it into a branded template.
 """
 
 import asyncio
+import os
 import re
 from io import BytesIO
 from pathlib import Path
@@ -20,6 +21,8 @@ import aiohttp
 from loguru import logger
 from PIL import Image, ImageDraw
 from playwright.async_api import async_playwright, Browser, BrowserContext, Playwright
+
+MEDIA_BASE_PATH = Path(os.getenv("MEDIA_BASE_PATH", "/app/media"))
 
 MOCKUP_PATH = Path(__file__).resolve().parent / "assets" / "mockup_template.jpg"
 
@@ -145,16 +148,23 @@ def _rounded_rect_mask(size: tuple[int, int], radius: int) -> Image.Image:
     return mask
 
 
-def _compose(product_image_bytes: bytes) -> bytes:
+def _compose(
+    product_image_bytes: bytes,
+    template_path: Path = MOCKUP_PATH,
+    box: tuple[int, int, int, int] = PLACEHOLDER_BOX,
+    corner_radius: int = PLACEHOLDER_CORNER_RADIUS,
+) -> bytes:
     """
-    Fills PLACEHOLDER_BOX edge-to-edge with the product photo (cropping any
-    overflow, never leaving background showing through) and rounds the pasted
-    photo's corners to match the template's own rounded-corner frame style.
+    Fills *box* edge-to-edge with the product photo (cropping any overflow,
+    never leaving background showing through) and rounds the pasted photo's
+    corners to match the template's own rounded-corner frame style. Defaults
+    to the bundled template/coordinates — a niche with a custom template
+    passes its own template_path/box/corner_radius (see generate_offer_image).
     """
-    template = Image.open(MOCKUP_PATH).convert("RGB")
+    template = Image.open(template_path).convert("RGB")
     product = Image.open(BytesIO(product_image_bytes)).convert("RGB")
 
-    left, top, right, bottom = PLACEHOLDER_BOX
+    left, top, right, bottom = box
     box_w, box_h = right - left, bottom - top
 
     # Cover (crop overflow) — fills the box completely so the rounded-corner
@@ -168,7 +178,7 @@ def _compose(product_image_bytes: bytes) -> bytes:
     crop_y = (new_h - box_h) // 2
     product_cropped = product_resized.crop((crop_x, crop_y, crop_x + box_w, crop_y + box_h))
 
-    mask = _rounded_rect_mask((box_w, box_h), PLACEHOLDER_CORNER_RADIUS)
+    mask = _rounded_rect_mask((box_w, box_h), corner_radius)
     template.paste(product_cropped, (left, top), mask=mask)
 
     buf = BytesIO()
@@ -265,9 +275,19 @@ def get_image_browser() -> ProductImageBrowser:
 
 
 async def generate_offer_image(
-    product_url: str, session: aiohttp.ClientSession
+    product_url: str,
+    session: aiohttp.ClientSession,
+    template_override: Optional[dict] = None,
 ) -> tuple[Optional[bytes], Optional[str]]:
-    """Returns (composed_jpeg_bytes, error_message) — bytes is None on any failure."""
+    """
+    Returns (composed_jpeg_bytes, error_message) — bytes is None on any failure.
+
+    template_override, when provided, is the per-niche dict built by
+    main.py's _extract_niche_config: {"template_path": <relative to
+    MEDIA_BASE_PATH>, "box": (left, top, right, bottom), "corner_radius": int}.
+    None (the default) uses the bundled template + PLACEHOLDER_BOX, i.e. the
+    exact behavior from before niches existed.
+    """
     image_url = await _fetch_product_image_url(product_url, session)
 
     if not image_url:
@@ -282,7 +302,15 @@ async def generate_offer_image(
         return None, "Não foi possível baixar a imagem do produto"
 
     try:
-        composed = _compose(image_bytes)
+        if template_override:
+            composed = _compose(
+                image_bytes,
+                template_path=MEDIA_BASE_PATH / template_override["template_path"],
+                box=tuple(template_override["box"]),
+                corner_radius=template_override["corner_radius"],
+            )
+        else:
+            composed = _compose(image_bytes)
     except Exception as exc:
         logger.warning(f"[mockup] Compose failed for {product_url[:80]}: {exc}")
         return None, f"Falha ao montar a imagem: {exc}"

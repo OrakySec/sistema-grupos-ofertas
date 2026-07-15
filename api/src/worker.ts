@@ -57,22 +57,18 @@ async function handleSendOffer(job: Job<SendOfferJobData>): Promise<void> {
     return;
   }
 
-  // Fetch destinations linked to this source group.
-  // If no links are configured, fall back to all active destinations (legacy behaviour).
+  // Fetch destinations linked to this source group. No fallback to "all active
+  // destinations" — with multiple niches sharing the system, a source group
+  // without explicit links must NOT leak into every other niche's channels.
+  // See the destinationGroups.length === 0 check below for the failure path.
   const links = await prisma.sourceGroupDestination.findMany({
     where: { sourceGroupId: offer.sourceGroupId },
     include: { destinationGroup: true },
   });
 
-  const destinationGroups =
-    links.length > 0
-      ? links.map((l) => l.destinationGroup).filter((d) => d.isActive)
-      : await prisma.destinationGroup.findMany({ where: { isActive: true } });
+  const destinationGroups = links.map((l) => l.destinationGroup).filter((d) => d.isActive);
 
-  console.log(
-    `[Worker] Offer ${offerId}: using ${links.length > 0 ? 'linked' : 'all-active (legacy)'} ` +
-    `destinations — ${destinationGroups.length} group(s)`,
-  );
+  console.log(`[Worker] Offer ${offerId}: ${destinationGroups.length} linked active destination(s)`);
 
   const domainSetting = await prisma.setting.findUnique({ where: { key: 'shortener_domain' } });
   const publicBaseUrl = (domainSetting?.value || 'https://ofertas.ykaromarques.com').replace(/\/$/, '');
@@ -80,7 +76,7 @@ async function handleSendOffer(job: Job<SendOfferJobData>): Promise<void> {
 
   const amazonLink = findAmazonLinkInText(offer.processingLog);
   const footerSetting = await prisma.setting.findUnique({ where: { key: 'message_footer_text' } });
-  const footerText = footerSetting?.value?.trim();
+  const footerText = offer.sourceGroup.footerText?.trim() || footerSetting?.value?.trim();
   const offerWithPublicLink: OfferWithMediaType = {
     ...offer,
     text: replaceAmazonLinkWithPublicPage(offer.text, amazonLink, publicOfferUrl),
@@ -97,10 +93,24 @@ async function handleSendOffer(job: Job<SendOfferJobData>): Promise<void> {
     : offerWithPublicLink;
 
   if (destinationGroups.length === 0) {
-    console.warn(`[Worker] No active destination groups found for offer ${offerId}`);
+    console.warn(`[Worker] Offer ${offerId}: source group has no linked active destinations — failing instead of broadcasting`);
+    const existingLog = Array.isArray(offer.processingLog) ? offer.processingLog : [];
     await prisma.offer.update({
       where: { id: offerId },
-      data: { status: 'FAILED', sentAt: new Date() },
+      data: {
+        status: 'FAILED',
+        sentAt: new Date(),
+        processingLog: [
+          ...existingLog,
+          {
+            ts: new Date().toISOString(),
+            step: 'send',
+            status: 'error',
+            label: 'Envio',
+            error: 'Nenhum destino vinculado a este grupo fonte — configure em Grupos → Vincular destinos',
+          },
+        ],
+      },
     });
     return;
   }

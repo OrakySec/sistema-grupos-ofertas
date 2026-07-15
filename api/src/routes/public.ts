@@ -29,6 +29,7 @@ function serializePublicOffer(offer: {
   sentAt: Date | null;
   createdAt: Date;
   processingLog: unknown;
+  sourceGroup?: { slug: string | null; name: string } | null;
 }) {
   const { url, platform } = extractAffiliateLink(offer.processingLog);
   return {
@@ -40,6 +41,9 @@ function serializePublicOffer(offer: {
     sentAt: offer.sentAt ?? offer.createdAt,
     platform,
     affiliateUrl: url,
+    niche: offer.sourceGroup
+      ? { slug: offer.sourceGroup.slug, name: offer.sourceGroup.name }
+      : null,
   };
 }
 
@@ -52,7 +56,26 @@ function serializePublicOffer(offer: {
  * groups, but not stored as its own column).
  */
 export const publicRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
-  fastify.get<{ Querystring: { page?: number; limit?: number } }>(
+  // GET /public/niches — one entry per SourceGroup that has a public slug
+  // configured and at least one SENT offer. Used by the frontend to decide
+  // whether /ofertas can redirect straight into the single niche's feed, or
+  // needs to show a chooser when more than one niche is live.
+  fastify.get('/niches', async (_request, reply) => {
+    const groups = await prisma.sourceGroup.findMany({
+      where: { slug: { not: null }, offers: { some: { status: 'SENT' } } },
+      select: {
+        slug: true,
+        name: true,
+        _count: { select: { offers: { where: { status: 'SENT' } } } },
+      },
+    });
+
+    return reply.send(
+      groups.map((g) => ({ slug: g.slug, name: g.name, offerCount: g._count.offers })),
+    );
+  });
+
+  fastify.get<{ Querystring: { page?: number; limit?: number; slug?: string } }>(
     '/offers',
     {
       schema: {
@@ -61,6 +84,7 @@ export const publicRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
           properties: {
             page: { type: 'integer', minimum: 1, default: 1 },
             limit: { type: 'integer', minimum: 1, maximum: 50, default: 20 },
+            slug: { type: 'string' },
           },
         },
       },
@@ -69,15 +93,20 @@ export const publicRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
       const page = request.query.page ?? 1;
       const limit = request.query.limit ?? 20;
       const skip = (page - 1) * limit;
+      const where = {
+        status: 'SENT' as const,
+        ...(request.query.slug ? { sourceGroup: { slug: request.query.slug } } : {}),
+      };
 
       const [offers, total] = await Promise.all([
         prisma.offer.findMany({
-          where: { status: 'SENT' },
+          where,
+          include: { sourceGroup: { select: { slug: true, name: true } } },
           orderBy: { sentAt: 'desc' },
           skip,
           take: limit,
         }),
-        prisma.offer.count({ where: { status: 'SENT' } }),
+        prisma.offer.count({ where }),
       ]);
 
       return reply.send({
@@ -100,7 +129,10 @@ export const publicRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
     },
     async (request, reply) => {
       const { id } = request.params;
-      const offer = await prisma.offer.findUnique({ where: { id } });
+      const offer = await prisma.offer.findUnique({
+        where: { id },
+        include: { sourceGroup: { select: { slug: true, name: true } } },
+      });
 
       if (!offer || offer.status !== 'SENT') {
         return reply.code(404).send({ error: 'Oferta não encontrada' });
