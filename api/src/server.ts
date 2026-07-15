@@ -2,6 +2,8 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
 import multipart from '@fastify/multipart';
+import fastifyStatic from '@fastify/static';
+import path from 'path';
 import { authRoutes } from './routes/auth';
 import { groupsRoutes } from './routes/groups';
 import { offersRoutes } from './routes/offers';
@@ -10,6 +12,7 @@ import { logsRoutes } from './routes/logs';
 import { statsRoutes } from './routes/stats';
 import { trackingRoutes } from './routes/tracking'
 import { clicksRoutes } from './routes/clicks';
+import { publicRoutes } from './routes/public';
 import prisma from './lib/prisma';
 import { seed } from './seed';
 
@@ -18,6 +21,7 @@ const JWT_SECRET = process.env.JWT_SECRET ?? 'changeme-jwt-secret';
 const INTERNAL_TOKEN = 'sistema-grupos-ofertas-internal-token-fallback-key-2026';
 const NODE_ENV = process.env.NODE_ENV ?? 'development';
 const CORS_ORIGIN = process.env.CORS_ORIGIN ?? '*';
+const MEDIA_BASE_PATH = process.env.MEDIA_BASE_PATH ?? '/app/media';
 
 const server = Fastify({
   // Behind Traefik in production — without this, request.ip resolves to the
@@ -49,6 +53,15 @@ async function buildApp() {
   // Multipart (file uploads — e.g. Mercado Livre session upload)
   await server.register(multipart, {
     limits: { fileSize: 5 * 1024 * 1024 },
+  });
+
+  // Serve offer media (photos) read-only, publicly — used by the authenticated
+  // panel (OfferCard) and by the public offers pages, neither of which should
+  // need a JWT just to load an image.
+  await server.register(fastifyStatic, {
+    root: path.resolve(MEDIA_BASE_PATH),
+    prefix: '/media/',
+    decorateReply: false,
   });
 
   // Health check (no auth required)
@@ -178,6 +191,7 @@ async function buildApp() {
   await server.register(statsRoutes, { prefix: '/stats' });
   await server.register(clicksRoutes, { prefix: '/stats/clicks' });
   await server.register(trackingRoutes, { prefix: '/tracking' });
+  await server.register(publicRoutes, { prefix: '/public' });
 
   return server;
 }

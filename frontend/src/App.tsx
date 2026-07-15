@@ -18,6 +18,8 @@ import Settings from './pages/Settings'
 import Logs from './pages/Logs'
 import Clicks from './pages/Clicks'
 import Landing3D from './pages/Landing3D'
+import PublicOffers from './pages/PublicOffers'
+import PublicOfferDetail from './pages/PublicOfferDetail'
 
 // Shows a full-page spinner while auth state loads
 function AuthLoading() {
@@ -66,6 +68,10 @@ function AppRoutes() {
 
       {/* Landing pages */}
       <Route path="/3d" element={<Landing3D />} />
+
+      {/* Public offers site (no auth — Amazon Associates requires a public, crawlable page) */}
+      <Route path="/ofertas" element={<PublicOffers />} />
+      <Route path="/ofertas/:id" element={<PublicOfferDetail />} />
 
       {/* Protected routes with sidebar layout */}
       <Route element={<ProtectedRoute />}>

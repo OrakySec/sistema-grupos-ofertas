@@ -267,6 +267,7 @@ export const offersRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
       const serialized = offers.map((o) => ({
         ...o,
         telegramMessageId: o.telegramMessageId.toString(),
+        mediaPath: o.mediaLocalPath, // frontend (OfferCard) reads mediaPath
         sourceGroup: o.sourceGroup
           ? { ...o.sourceGroup, telegramId: o.sourceGroup.telegramId.toString() }
           : null,
@@ -323,6 +324,7 @@ export const offersRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
       return reply.send({
         ...offer,
         telegramMessageId: offer.telegramMessageId.toString(),
+        mediaPath: offer.mediaLocalPath, // frontend (OfferCard) reads mediaPath
         sourceGroup: offer.sourceGroup
           ? { ...offer.sourceGroup, telegramId: offer.sourceGroup.telegramId.toString() }
           : null,

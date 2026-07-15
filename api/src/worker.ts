@@ -74,15 +74,27 @@ async function handleSendOffer(job: Job<SendOfferJobData>): Promise<void> {
     `destinations — ${destinationGroups.length} group(s)`,
   );
 
+  const domainSetting = await prisma.setting.findUnique({ where: { key: 'shortener_domain' } });
+  const publicBaseUrl = (domainSetting?.value || 'https://ofertas.ykaromarques.com').replace(/\/$/, '');
+  const publicOfferUrl = `${publicBaseUrl}/ofertas/${offerId}`;
+
+  const amazonLink = findAmazonLinkInText(offer.processingLog);
   const footerSetting = await prisma.setting.findUnique({ where: { key: 'message_footer_text' } });
   const footerText = footerSetting?.value?.trim();
+  const offerWithPublicLink: OfferWithMediaType = {
+    ...offer,
+    text: replaceAmazonLinkWithPublicPage(offer.text, amazonLink, publicOfferUrl),
+    mediaCaption: replaceAmazonLinkWithPublicPage(offer.mediaCaption, amazonLink, publicOfferUrl),
+  };
   const offerToSend: OfferWithMediaType = footerText
     ? {
-        ...offer,
-        text: offer.text ? `${offer.text}\n\n${footerText}` : offer.text,
-        mediaCaption: offer.mediaCaption ? `${offer.mediaCaption}\n\n${footerText}` : offer.mediaCaption,
+        ...offerWithPublicLink,
+        text: offerWithPublicLink.text ? `${offerWithPublicLink.text}\n\n${footerText}` : offerWithPublicLink.text,
+        mediaCaption: offerWithPublicLink.mediaCaption
+          ? `${offerWithPublicLink.mediaCaption}\n\n${footerText}`
+          : offerWithPublicLink.mediaCaption,
       }
-    : offer;
+    : offerWithPublicLink;
 
   if (destinationGroups.length === 0) {
     console.warn(`[Worker] No active destination groups found for offer ${offerId}`);
@@ -136,6 +148,39 @@ async function handleSendOffer(job: Job<SendOfferJobData>): Promise<void> {
   console.log(
     `[Worker] Offer ${offerId} done: ${successCount} success, ${failCount} failed → status: ${finalStatus}`,
   );
+}
+
+// Amazon Associates requires tagged links to only appear on a public,
+// crawlable page (not inside closed Telegram/WhatsApp groups) — so instead of
+// sending the affiliate link directly, point at our own public offer page,
+// which itself links out to the real tagged URL. Other marketplaces are
+// unaffected.
+//
+// The literal string embedded in offer.text/mediaCaption isn't always the raw
+// amazon.com.br link — when link_shortener_enabled is on (the default), the
+// telegram-listener (affiliate_converter.py) replaces it with a shortened
+// ofertas.ykaromarques.com/s/xxxxxx URL before the offer is ever saved. The
+// only reliable way to know the exact substring to replace is the "final"
+// field of the matching URL event in processingLog (see
+// affiliate_converter.py's _process_url — "final" is exactly what got
+// substituted into the text).
+function findAmazonLinkInText(processingLog: unknown): string | null {
+  if (!Array.isArray(processingLog)) return null;
+  const urlEvent = (processingLog as Array<Record<string, unknown>>).find(
+    (e) => e.step === 'url' && e.status === 'ok' && e.platform === 'Amazon',
+  );
+  if (!urlEvent) return null;
+  const link = (urlEvent.final ?? urlEvent.affiliate) as string | undefined;
+  return link ?? null;
+}
+
+function replaceAmazonLinkWithPublicPage(
+  text: string | null,
+  amazonLink: string | null,
+  publicOfferUrl: string,
+): string | null {
+  if (!text || !amazonLink) return text;
+  return text.split(amazonLink).join(publicOfferUrl);
 }
 
 type OfferWithMediaType = {
