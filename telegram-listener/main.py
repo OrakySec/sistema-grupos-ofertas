@@ -212,24 +212,32 @@ async def fetch_settings(session: aiohttp.ClientSession) -> Optional[dict]:
 def _extract_niche_config(g: dict) -> dict:
     """
     Build the per-source-group override dict from a /groups/source row.
+    Several source groups (Telegram channels) can share one Niche, so the
+    override fields live nested under g["niche"] (None when the source group
+    isn't assigned to any niche) rather than directly on the source group.
+
     ml_own_list_url is used whenever present. The mockup override is only
     applied when the template path AND all 4 box coordinates AND the corner
-    radius are present — routes/groups.ts writes those 5 fields atomically,
+    radius are present — routes/niches.ts writes those 5 fields atomically,
     so a partially-configured template should never happen, but we still
     guard against it here rather than risk composing onto a None box.
     """
+    niche = g.get("niche")
+    if not niche:
+        return {}
+
     config: dict = {}
 
-    ml_own_list_url = g.get("mlOwnListUrl")
+    ml_own_list_url = niche.get("mlOwnListUrl")
     if ml_own_list_url:
         config["ml_own_list_url"] = ml_own_list_url
 
-    template_path = g.get("mockupTemplatePath")
+    template_path = niche.get("mockupTemplatePath")
     box_fields = (
-        g.get("mockupBoxLeft"), g.get("mockupBoxTop"),
-        g.get("mockupBoxRight"), g.get("mockupBoxBottom"),
+        niche.get("mockupBoxLeft"), niche.get("mockupBoxTop"),
+        niche.get("mockupBoxRight"), niche.get("mockupBoxBottom"),
     )
-    corner_radius = g.get("mockupCornerRadius")
+    corner_radius = niche.get("mockupCornerRadius")
     if template_path and corner_radius is not None and all(v is not None for v in box_fields):
         config["mockup"] = {
             "template_path": template_path,

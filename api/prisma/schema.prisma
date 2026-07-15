@@ -43,11 +43,25 @@ model SourceGroup {
   isActive   Boolean  @default(true)
   createdAt  DateTime @default(now())
 
-  // Per-niche overrides — null falls back to the global Setting of the same
-  // purpose. The 5 mockup* fields are treated as an all-or-nothing group by
-  // the API (see routes/groups.ts): either every one is set (custom template)
-  // or every one is null (use the bundled default template + coordinates).
-  slug               String?  @unique
+  // Multiple SourceGroups can share one Niche (e.g. two Telegram channels
+  // feeding the same public catalog/mockup/footer). Destination routing stays
+  // per-SourceGroup regardless — see SourceGroupDestination below.
+  nicheId String?
+  niche   Niche?   @relation(fields: [nicheId], references: [id], onDelete: SetNull)
+
+  offers       Offer[]
+  destinations SourceGroupDestination[]
+}
+
+model Niche {
+  id   String  @id @default(cuid())
+  name String
+  slug String? @unique // null = not yet exposed on the public offers site
+
+  // null falls back to the global Setting of the same purpose. The 5 mockup*
+  // fields are treated as an all-or-nothing group by the API (see
+  // routes/niches.ts): either every one is set (custom template) or every one
+  // is null (use the bundled default template + coordinates).
   footerText         String?  @db.Text
   mlOwnListUrl       String?
   mockupTemplatePath String?
@@ -56,9 +70,9 @@ model SourceGroup {
   mockupBoxRight     Int?
   mockupBoxBottom    Int?
   mockupCornerRadius Int?
+  createdAt          DateTime @default(now())
 
-  offers       Offer[]
-  destinations SourceGroupDestination[]
+  sourceGroups SourceGroup[]
 }
 
 model DestinationGroup {

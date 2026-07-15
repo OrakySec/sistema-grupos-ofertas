@@ -3,6 +3,7 @@ import api, {
   type SourceGroup,
   type DestinationGroup,
   type WhatsAppGroup,
+  type Niche,
 } from '../lib/api'
 import Modal from '../components/Modal'
 import Toggle from '../components/Toggle'
@@ -374,10 +375,9 @@ function MockupBoxEditor({
   )
 }
 
-/* ─── Niche config modal ──────────────────── */
-interface NicheConfigModalProps {
+/* ─── Niche create modal ───────────────────── */
+interface NicheModalProps {
   isOpen: boolean
-  sourceGroup: SourceGroup | null
   onClose: () => void
   onSaved: () => void
 }
@@ -391,7 +391,110 @@ function slugify(s: string): string {
     .replace(/^-+|-+$/g, '')
 }
 
-function NicheConfigModal({ isOpen, sourceGroup, onClose, onSaved }: NicheConfigModalProps) {
+function NicheModal({ isOpen, onClose, onSaved }: NicheModalProps) {
+  const [name, setName] = useState('')
+  const [slug, setSlug] = useState('')
+  const [slugTouched, setSlugTouched] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!isOpen) {
+      setName('')
+      setSlug('')
+      setSlugTouched(false)
+      setError('')
+    }
+  }, [isOpen])
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!name) {
+      setError('Nome é obrigatório.')
+      return
+    }
+    setLoading(true)
+    setError('')
+    try {
+      await api.createNiche({ name, slug: slug.trim() || null })
+      onSaved()
+      onClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao salvar.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Adicionar Nicho"
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose}>
+            Cancelar
+          </button>
+          <button className="btn btn-primary" onClick={handleSubmit} disabled={loading}>
+            {loading ? <span className="spinner spinner-sm" /> : null}
+            Salvar
+          </button>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit}>
+        {error && (
+          <div className="alert alert-error" style={{ marginBottom: 16 }}>
+            {error}
+          </div>
+        )}
+        <div className="form-group">
+          <label className="label" htmlFor="niche-name">
+            Nome
+          </label>
+          <input
+            id="niche-name"
+            className="input"
+            placeholder="Impressão 3D"
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value)
+              if (!slugTouched) setSlug(slugify(e.target.value))
+            }}
+            required
+          />
+        </div>
+        <div className="form-group">
+          <label className="label" htmlFor="niche-slug-create">
+            Slug (URL pública)
+          </label>
+          <input
+            id="niche-slug-create"
+            className="input font-mono"
+            placeholder="impressao-3d"
+            value={slug}
+            onChange={(e) => {
+              setSlugTouched(true)
+              setSlug(slugify(e.target.value))
+            }}
+          />
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+/* ─── Niche config modal ──────────────────── */
+interface NicheConfigModalProps {
+  isOpen: boolean
+  niche: Niche | null
+  onClose: () => void
+  onSaved: () => void
+}
+
+function NicheConfigModal({ isOpen, niche, onClose, onSaved }: NicheConfigModalProps) {
+  const [name, setName] = useState('')
   const [slug, setSlug] = useState('')
   const [footerText, setFooterText] = useState('')
   const [mlOwnListUrl, setMlOwnListUrl] = useState('')
@@ -403,29 +506,30 @@ function NicheConfigModal({ isOpen, sourceGroup, onClose, onSaved }: NicheConfig
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (!isOpen || !sourceGroup) return
-    setSlug(sourceGroup.slug || slugify(sourceGroup.name))
-    setFooterText(sourceGroup.footerText || '')
-    setMlOwnListUrl(sourceGroup.mlOwnListUrl || '')
+    if (!isOpen || !niche) return
+    setName(niche.name)
+    setSlug(niche.slug || slugify(niche.name))
+    setFooterText(niche.footerText || '')
+    setMlOwnListUrl(niche.mlOwnListUrl || '')
     setTemplateFile(null)
     setPendingBox(null)
-    setPendingRadius(sourceGroup.mockupCornerRadius ?? 50)
+    setPendingRadius(niche.mockupCornerRadius ?? 50)
     setTemplatePreviewUrl(
-      sourceGroup.mockupTemplatePath ? `${BASE_URL}/media/${sourceGroup.mockupTemplatePath}` : null
+      niche.mockupTemplatePath ? `${BASE_URL}/media/${niche.mockupTemplatePath}` : null
     )
     setError('')
-  }, [isOpen, sourceGroup])
+  }, [isOpen, niche])
 
   const existingBox: Rect | null =
-    sourceGroup?.mockupBoxLeft != null &&
-    sourceGroup?.mockupBoxTop != null &&
-    sourceGroup?.mockupBoxRight != null &&
-    sourceGroup?.mockupBoxBottom != null
+    niche?.mockupBoxLeft != null &&
+    niche?.mockupBoxTop != null &&
+    niche?.mockupBoxRight != null &&
+    niche?.mockupBoxBottom != null
       ? {
-          left: sourceGroup.mockupBoxLeft,
-          top: sourceGroup.mockupBoxTop,
-          right: sourceGroup.mockupBoxRight,
-          bottom: sourceGroup.mockupBoxBottom,
+          left: niche.mockupBoxLeft,
+          top: niche.mockupBoxTop,
+          right: niche.mockupBoxRight,
+          bottom: niche.mockupBoxBottom,
         }
       : null
 
@@ -439,11 +543,11 @@ function NicheConfigModal({ isOpen, sourceGroup, onClose, onSaved }: NicheConfig
   }
 
   const handleRemoveTemplate = async () => {
-    if (!sourceGroup) return
+    if (!niche) return
     setSaving(true)
     setError('')
     try {
-      await api.updateSourceGroup(sourceGroup.id, { clearMockupTemplate: true })
+      await api.updateNiche(niche.id, { clearMockupTemplate: true })
       setTemplateFile(null)
       setTemplatePreviewUrl(null)
       onSaved()
@@ -455,18 +559,19 @@ function NicheConfigModal({ isOpen, sourceGroup, onClose, onSaved }: NicheConfig
   }
 
   const handleSave = async () => {
-    if (!sourceGroup) return
+    if (!niche) return
     setSaving(true)
     setError('')
     try {
-      await api.updateSourceGroup(sourceGroup.id, {
+      await api.updateNiche(niche.id, {
+        name: name.trim() || niche.name,
         slug: slug.trim() || null,
         footerText: footerText.trim() || null,
         mlOwnListUrl: mlOwnListUrl.trim() || null,
       })
 
       if (templateFile && pendingBox) {
-        await api.uploadMockupTemplate(sourceGroup.id, templateFile, pendingBox, pendingRadius)
+        await api.uploadNicheMockupTemplate(niche.id, templateFile, pendingBox, pendingRadius)
       }
 
       onSaved()
@@ -482,7 +587,7 @@ function NicheConfigModal({ isOpen, sourceGroup, onClose, onSaved }: NicheConfig
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={`Configurar nicho — ${sourceGroup?.name ?? ''}`}
+      title={`Configurar nicho — ${niche?.name ?? ''}`}
       width={480}
       footer={
         <>
@@ -505,6 +610,18 @@ function NicheConfigModal({ isOpen, sourceGroup, onClose, onSaved }: NicheConfig
           {error}
         </div>
       )}
+
+      <div className="form-group">
+        <label className="label" htmlFor="niche-name-edit">
+          Nome
+        </label>
+        <input
+          id="niche-name-edit"
+          className="input"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+      </div>
 
       <div className="form-group">
         <label className="label" htmlFor="niche-slug">
@@ -563,7 +680,7 @@ function NicheConfigModal({ isOpen, sourceGroup, onClose, onSaved }: NicheConfig
             key={templatePreviewUrl}
             imageUrl={templatePreviewUrl}
             initialBox={templateFile ? null : existingBox}
-            initialCornerRadius={templateFile ? 50 : sourceGroup?.mockupCornerRadius ?? 50}
+            initialCornerRadius={templateFile ? 50 : niche?.mockupCornerRadius ?? 50}
             readOnly={!templateFile}
             onChange={templateFile ? (box, radius) => { setPendingBox(box); setPendingRadius(radius) } : undefined}
           />
@@ -580,7 +697,7 @@ function NicheConfigModal({ isOpen, sourceGroup, onClose, onSaved }: NicheConfig
             {templatePreviewUrl ? '🔄 Trocar imagem' : '📤 Enviar imagem'}
             <input type="file" accept="image/*" onChange={handleFileChange} style={{ display: 'none' }} />
           </label>
-          {sourceGroup?.mockupTemplatePath && !templateFile && (
+          {niche?.mockupTemplatePath && !templateFile && (
             <button className="btn btn-ghost btn-sm" onClick={handleRemoveTemplate} disabled={saving}>
               🗑 Remover (usar padrão)
             </button>
@@ -936,27 +1053,34 @@ export default function Groups() {
   const { addToast } = useToast()
   const [sourceGroups, setSourceGroups] = useState<SourceGroup[]>([])
   const [destGroups, setDestGroups] = useState<DestinationGroup[]>([])
+  const [niches, setNiches] = useState<Niche[]>([])
   const [loadingSrc, setLoadingSrc] = useState(true)
   const [loadingDest, setLoadingDest] = useState(true)
+  const [loadingNiches, setLoadingNiches] = useState(true)
   const [showAddSrc, setShowAddSrc] = useState(false)
   const [showAddDest, setShowAddDest] = useState(false)
+  const [showAddNiche, setShowAddNiche] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [togglingId, setTogglingId] = useState<string | null>(null)
+  const [assigningId, setAssigningId] = useState<string | null>(null)
   // Link destinations modal
   const [linkTarget, setLinkTarget] = useState<SourceGroup | null>(null)
   // Niche config modal (mockup/footer/ML link)
-  const [nicheTarget, setNicheTarget] = useState<SourceGroup | null>(null)
+  const [nicheTarget, setNicheTarget] = useState<Niche | null>(null)
   // Track linked destination counts per source group
   const [linkedCounts, setLinkedCounts] = useState<Record<string, number>>({})
 
   const fetchAll = useCallback(async () => {
     try {
-      const [src, dest] = await Promise.all([
+      const [src, dest, nch] = await Promise.all([
         api.getSourceGroups(),
         api.getDestinationGroups(),
+        api.getNiches(),
       ])
       setSourceGroups(src)
       setDestGroups(dest)
+      setNiches(nch)
+      setLoadingNiches(false)
       // Fetch linked counts for each source group
       const counts = await Promise.all(
         src.map((s) =>
@@ -1031,6 +1155,33 @@ export default function Groups() {
     }
   }
 
+  const deleteNiche = async (id: string) => {
+    if (!confirm('Remover este nicho? Os grupos fonte vinculados voltam a usar os padrões globais.')) return
+    setDeletingId(id)
+    try {
+      await api.deleteNiche(id)
+      setNiches((prev) => prev.filter((n) => n.id !== id))
+      addToast('Nicho removido com sucesso.', 'success')
+      fetchAll()
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : 'Erro', 'error')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  const assignNiche = async (g: SourceGroup, nicheId: string) => {
+    setAssigningId(g.id)
+    try {
+      const updated = await api.updateSourceGroup(g.id, { nicheId: nicheId || null })
+      setSourceGroups((prev) => prev.map((s) => (s.id === g.id ? updated : s)))
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : 'Erro ao atribuir nicho', 'error')
+    } finally {
+      setAssigningId(null)
+    }
+  }
+
   return (
     <div style={{ animation: 'fadeIn 0.3s ease' }}>
       <SourceGroupModal
@@ -1050,9 +1201,14 @@ export default function Groups() {
         onClose={() => setLinkTarget(null)}
         onSaved={() => { fetchAll(); }}
       />
+      <NicheModal
+        isOpen={showAddNiche}
+        onClose={() => setShowAddNiche(false)}
+        onSaved={() => { fetchAll(); addToast('Nicho adicionado com sucesso!', 'success'); }}
+      />
       <NicheConfigModal
         isOpen={nicheTarget !== null}
-        sourceGroup={nicheTarget}
+        niche={nicheTarget}
         onClose={() => setNicheTarget(null)}
         onSaved={() => { fetchAll(); addToast('Configuração de nicho salva!', 'success'); }}
       />
@@ -1061,6 +1217,88 @@ export default function Groups() {
       <div className="page-header">
         <h1 className="page-title">Grupos</h1>
         <p className="page-subtitle">Gerencie grupos de origem e destino das ofertas</p>
+      </div>
+
+      {/* ── Niches ─────────────────────────── */}
+      <div className="card" style={{ marginBottom: 32 }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: 20,
+          }}
+        >
+          <h2 className="section-title" style={{ marginBottom: 0 }}>
+            🏷️ Nichos
+          </h2>
+          <button className="btn btn-primary btn-sm" onClick={() => setShowAddNiche(true)}>
+            + Adicionar
+          </button>
+        </div>
+
+        {loadingNiches ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {Array.from({ length: 2 }).map((_, i) => (
+              <Skeleton key={i} height={40} />
+            ))}
+          </div>
+        ) : niches.length === 0 ? (
+          <div className="empty-state" style={{ padding: '32px 0' }}>
+            <span className="empty-state-icon">🏷️</span>
+            <span className="empty-state-title">Nenhum nicho criado</span>
+            <span className="empty-state-desc">
+              Crie um nicho pra agrupar mockup, rodapé e página pública compartilhados entre grupos fonte.
+            </span>
+          </div>
+        ) : (
+          <div className="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Nome</th>
+                  <th>Slug</th>
+                  <th>Grupos fonte</th>
+                  <th>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {niches.map((n) => (
+                  <tr key={n.id}>
+                    <td className="primary">{n.name}</td>
+                    <td>
+                      {n.slug ? (
+                        <span className="mono">{n.slug}</span>
+                      ) : (
+                        <span style={{ color: 'var(--text-muted)' }}>— (não público)</span>
+                      )}
+                    </td>
+                    <td>{n.sourceGroupCount ?? 0}</td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          className="icon-btn"
+                          onClick={() => setNicheTarget(n)}
+                          title="Configurar nicho (mockup, rodapé, link ML)"
+                        >
+                          ⚙️
+                        </button>
+                        <button
+                          className="icon-btn danger"
+                          onClick={() => deleteNiche(n.id)}
+                          disabled={deletingId === n.id}
+                          title="Remover"
+                        >
+                          {deletingId === n.id ? <span className="spinner spinner-sm" /> : '🗑'}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* ── Source Groups ─────────────────── */}
@@ -1106,6 +1344,7 @@ export default function Groups() {
                   <th>Nome</th>
                   <th>Username</th>
                   <th>Telegram ID</th>
+                  <th>Nicho</th>
                   <th>Destinos vinculados</th>
                   <th>Status</th>
                   <th>Ações</th>
@@ -1124,6 +1363,22 @@ export default function Groups() {
                     </td>
                     <td>
                       <span className="mono">{g.telegramId}</span>
+                    </td>
+                    <td>
+                      <select
+                        className="input"
+                        style={{ padding: '4px 8px', fontSize: '0.82rem', minWidth: 140 }}
+                        value={g.nicheId ?? ''}
+                        onChange={(e) => assignNiche(g, e.target.value)}
+                        disabled={assigningId === g.id}
+                      >
+                        <option value="">Nenhum</option>
+                        {niches.map((n) => (
+                          <option key={n.id} value={n.id}>
+                            {n.name}
+                          </option>
+                        ))}
+                      </select>
                     </td>
                     <td>
                       <button
@@ -1162,23 +1417,14 @@ export default function Groups() {
                       />
                     </td>
                     <td>
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        <button
-                          className="icon-btn"
-                          onClick={() => setNicheTarget(g)}
-                          title="Configurar nicho (mockup, rodapé, link ML)"
-                        >
-                          ⚙️
-                        </button>
-                        <button
-                          className="icon-btn danger"
-                          onClick={() => deleteSource(g.id)}
-                          disabled={deletingId === g.id}
-                          title="Remover"
-                        >
-                          {deletingId === g.id ? <span className="spinner spinner-sm" /> : '🗑'}
-                        </button>
-                      </div>
+                      <button
+                        className="icon-btn danger"
+                        onClick={() => deleteSource(g.id)}
+                        disabled={deletingId === g.id}
+                        title="Remover"
+                      >
+                        {deletingId === g.id ? <span className="spinner spinner-sm" /> : '🗑'}
+                      </button>
                     </td>
                   </tr>
                 ))}

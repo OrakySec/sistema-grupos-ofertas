@@ -1,11 +1,6 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
-import fs from 'fs';
-import path from 'path';
 import { requireAuth } from '../middleware/auth';
 import prisma from '../lib/prisma';
-
-const MEDIA_BASE_PATH = process.env.MEDIA_BASE_PATH || '/app/media';
-const SLUG_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 interface CreateSourceGroupBody {
   telegramId: string; // sent as string, parsed to BigInt
@@ -17,10 +12,7 @@ interface UpdateSourceGroupBody {
   name?: string;
   username?: string;
   isActive?: boolean;
-  slug?: string | null;
-  footerText?: string | null;
-  mlOwnListUrl?: string | null;
-  clearMockupTemplate?: boolean;
+  nicheId?: string | null;
 }
 
 interface CreateDestinationGroupBody {
@@ -49,9 +41,13 @@ export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
   // ──────────────────────────────────────────────
 
   // GET /groups/source
+  // include: { niche: true } — both the panel (niche assignment dropdown) and
+  // the telegram-listener (per-message mockup/footer/ML-link overrides) read
+  // the nested niche off this same response, no separate call needed.
   fastify.get('/source', async (_request, reply) => {
     const groups = await prisma.sourceGroup.findMany({
       orderBy: { createdAt: 'desc' },
+      include: { niche: true },
     });
     // Serialize BigInt
     const serialized = groups.map((g) => ({
@@ -118,125 +114,32 @@ export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
             name: { type: 'string', minLength: 1 },
             username: { type: 'string' },
             isActive: { type: 'boolean' },
-            slug: { type: ['string', 'null'] },
-            footerText: { type: ['string', 'null'] },
-            mlOwnListUrl: { type: ['string', 'null'] },
-            clearMockupTemplate: { type: 'boolean' },
+            nicheId: { type: ['string', 'null'] },
           },
         },
       },
     },
     async (request, reply) => {
       const { id } = request.params;
-      const { clearMockupTemplate, ...data } = request.body;
+      const data = request.body;
 
       const existing = await prisma.sourceGroup.findUnique({ where: { id } });
       if (!existing) {
         return reply.code(404).send({ error: 'Source group not found' });
       }
 
-      if (typeof data.slug === 'string') {
-        const slug = data.slug.trim().toLowerCase();
-        if (!SLUG_RE.test(slug)) {
-          return reply.code(400).send({
-            error: 'Slug inválido — use apenas letras minúsculas, números e hífens (ex: impressao-3d)',
-          });
-        }
-        const slugConflict = await prisma.sourceGroup.findUnique({ where: { slug } });
-        if (slugConflict && slugConflict.id !== id) {
-          return reply.code(409).send({ error: 'Já existe um grupo com esse slug' });
-        }
-        data.slug = slug;
-      }
-
-      if (clearMockupTemplate) {
-        Object.assign(data, {
-          mockupTemplatePath: null,
-          mockupBoxLeft: null,
-          mockupBoxTop: null,
-          mockupBoxRight: null,
-          mockupBoxBottom: null,
-          mockupCornerRadius: null,
-        });
-      }
-
-      const updated = await prisma.sourceGroup.update({ where: { id }, data });
-      return reply.send({ ...updated, telegramId: updated.telegramId.toString() });
-    },
-  );
-
-  // POST /groups/source/:id/mockup-template — upload a custom mockup template
-  // image for this source group, together with the placeholder rectangle
-  // (coordinates chosen visually in the frontend). All 5 mockup fields are
-  // written atomically — either a fully custom template or none at all, so
-  // the telegram-listener never sees a half-configured template.
-  fastify.post<{ Params: { id: string } }>(
-    '/source/:id/mockup-template',
-    {
-      schema: {
-        params: {
-          type: 'object',
-          required: ['id'],
-          properties: { id: { type: 'string' } },
-        },
-      },
-    },
-    async (request, reply) => {
-      const { id } = request.params;
-
-      const existing = await prisma.sourceGroup.findUnique({ where: { id } });
-      if (!existing) {
-        return reply.code(404).send({ error: 'Source group not found' });
-      }
-
-      let fileBuffer: Buffer | null = null;
-      let fileExt = 'jpg';
-      const fields: Record<string, string> = {};
-
-      for await (const part of request.parts()) {
-        if (part.type === 'file') {
-          fileBuffer = await part.toBuffer();
-          const ext = path.extname(part.filename || '').replace('.', '').toLowerCase();
-          if (ext) fileExt = ext;
-        } else if (part.type === 'field' && typeof part.value === 'string') {
-          fields[part.fieldname] = part.value;
+      if (typeof data.nicheId === 'string') {
+        const niche = await prisma.niche.findUnique({ where: { id: data.nicheId } });
+        if (!niche) {
+          return reply.code(404).send({ error: 'Nicho não encontrado' });
         }
       }
-
-      if (!fileBuffer) {
-        return reply.code(400).send({ error: 'Nenhuma imagem enviada' });
-      }
-
-      const boxLeft = Number(fields.boxLeft);
-      const boxTop = Number(fields.boxTop);
-      const boxRight = Number(fields.boxRight);
-      const boxBottom = Number(fields.boxBottom);
-      const cornerRadius = Number(fields.cornerRadius);
-
-      if ([boxLeft, boxTop, boxRight, boxBottom, cornerRadius].some((n) => !Number.isFinite(n))) {
-        return reply.code(400).send({ error: 'Coordenadas do template ausentes ou inválidas' });
-      }
-      if (boxRight <= boxLeft || boxBottom <= boxTop) {
-        return reply.code(400).send({ error: 'Retângulo do template inválido' });
-      }
-
-      const templatesDir = path.join(MEDIA_BASE_PATH, 'templates');
-      fs.mkdirSync(templatesDir, { recursive: true });
-      const relativePath = `templates/${id}.${fileExt}`;
-      fs.writeFileSync(path.join(MEDIA_BASE_PATH, relativePath), fileBuffer);
 
       const updated = await prisma.sourceGroup.update({
         where: { id },
-        data: {
-          mockupTemplatePath: relativePath,
-          mockupBoxLeft: Math.round(boxLeft),
-          mockupBoxTop: Math.round(boxTop),
-          mockupBoxRight: Math.round(boxRight),
-          mockupBoxBottom: Math.round(boxBottom),
-          mockupCornerRadius: Math.round(cornerRadius),
-        },
+        data,
+        include: { niche: true },
       });
-
       return reply.send({ ...updated, telegramId: updated.telegramId.toString() });
     },
   );

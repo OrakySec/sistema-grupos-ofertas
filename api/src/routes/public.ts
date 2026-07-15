@@ -29,7 +29,7 @@ function serializePublicOffer(offer: {
   sentAt: Date | null;
   createdAt: Date;
   processingLog: unknown;
-  sourceGroup?: { slug: string | null; name: string } | null;
+  sourceGroup?: { niche: { slug: string | null; name: string } | null } | null;
 }) {
   const { url, platform } = extractAffiliateLink(offer.processingLog);
   return {
@@ -41,8 +41,8 @@ function serializePublicOffer(offer: {
     sentAt: offer.sentAt ?? offer.createdAt,
     platform,
     affiliateUrl: url,
-    niche: offer.sourceGroup
-      ? { slug: offer.sourceGroup.slug, name: offer.sourceGroup.name }
+    niche: offer.sourceGroup?.niche
+      ? { slug: offer.sourceGroup.niche.slug, name: offer.sourceGroup.niche.name }
       : null,
   };
 }
@@ -56,23 +56,28 @@ function serializePublicOffer(offer: {
  * groups, but not stored as its own column).
  */
 export const publicRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
-  // GET /public/niches — one entry per SourceGroup that has a public slug
-  // configured and at least one SENT offer. Used by the frontend to decide
-  // whether /ofertas can redirect straight into the single niche's feed, or
-  // needs to show a chooser when more than one niche is live.
+  // GET /public/niches — one entry per Niche that has a public slug configured
+  // and at least one SENT offer among its (possibly several) source groups.
+  // Used by the frontend to decide whether /ofertas can redirect straight
+  // into the single niche's feed, or needs to show a chooser when more than
+  // one niche is live.
   fastify.get('/niches', async (_request, reply) => {
-    const groups = await prisma.sourceGroup.findMany({
-      where: { slug: { not: null }, offers: { some: { status: 'SENT' } } },
-      select: {
-        slug: true,
-        name: true,
-        _count: { select: { offers: { where: { status: 'SENT' } } } },
-      },
+    const niches = await prisma.niche.findMany({
+      where: { slug: { not: null } },
+      select: { slug: true, name: true, id: true },
     });
 
-    return reply.send(
-      groups.map((g) => ({ slug: g.slug, name: g.name, offerCount: g._count.offers })),
+    const withCounts = await Promise.all(
+      niches.map(async (n) => ({
+        slug: n.slug,
+        name: n.name,
+        offerCount: await prisma.offer.count({
+          where: { status: 'SENT', sourceGroup: { nicheId: n.id } },
+        }),
+      })),
     );
+
+    return reply.send(withCounts.filter((n) => n.offerCount > 0));
   });
 
   fastify.get<{ Querystring: { page?: number; limit?: number; slug?: string } }>(
@@ -95,13 +100,13 @@ export const publicRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
       const skip = (page - 1) * limit;
       const where = {
         status: 'SENT' as const,
-        ...(request.query.slug ? { sourceGroup: { slug: request.query.slug } } : {}),
+        ...(request.query.slug ? { sourceGroup: { niche: { slug: request.query.slug } } } : {}),
       };
 
       const [offers, total] = await Promise.all([
         prisma.offer.findMany({
           where,
-          include: { sourceGroup: { select: { slug: true, name: true } } },
+          include: { sourceGroup: { include: { niche: true } } },
           orderBy: { sentAt: 'desc' },
           skip,
           take: limit,
@@ -131,7 +136,7 @@ export const publicRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
       const { id } = request.params;
       const offer = await prisma.offer.findUnique({
         where: { id },
-        include: { sourceGroup: { select: { slug: true, name: true } } },
+        include: { sourceGroup: { include: { niche: true } } },
       });
 
       if (!offer || offer.status !== 'SENT') {

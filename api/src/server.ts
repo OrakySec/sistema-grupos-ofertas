@@ -6,6 +6,7 @@ import fastifyStatic from '@fastify/static';
 import path from 'path';
 import { authRoutes } from './routes/auth';
 import { groupsRoutes } from './routes/groups';
+import { nichesRoutes } from './routes/niches';
 import { offersRoutes } from './routes/offers';
 import { settingsRoutes } from './routes/settings';
 import { logsRoutes } from './routes/logs';
@@ -185,6 +186,7 @@ async function buildApp() {
   // Register route plugins
   await server.register(authRoutes, { prefix: '/auth' });
   await server.register(groupsRoutes, { prefix: '/groups' });
+  await server.register(nichesRoutes, { prefix: '/niches' });
   await server.register(offersRoutes, { prefix: '/offers' });
   await server.register(settingsRoutes, { prefix: '/settings' });
   await server.register(logsRoutes, { prefix: '/logs' });

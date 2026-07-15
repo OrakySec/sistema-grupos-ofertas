@@ -45,7 +45,7 @@ async function handleSendOffer(job: Job<SendOfferJobData>): Promise<void> {
 
   const offer = await prisma.offer.findUnique({
     where: { id: offerId },
-    include: { sourceGroup: true },
+    include: { sourceGroup: { include: { niche: true } } },
   });
 
   if (!offer) {
@@ -76,7 +76,7 @@ async function handleSendOffer(job: Job<SendOfferJobData>): Promise<void> {
 
   const amazonLink = findAmazonLinkInText(offer.processingLog);
   const footerSetting = await prisma.setting.findUnique({ where: { key: 'message_footer_text' } });
-  const footerText = offer.sourceGroup.footerText?.trim() || footerSetting?.value?.trim();
+  const footerText = offer.sourceGroup.niche?.footerText?.trim() || footerSetting?.value?.trim();
   const offerWithPublicLink: OfferWithMediaType = {
     ...offer,
     text: replaceAmazonLinkWithPublicPage(offer.text, amazonLink, publicOfferUrl),

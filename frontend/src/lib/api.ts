@@ -94,14 +94,9 @@ export interface PaginatedResponse<T> {
   totalPages: number
 }
 
-export interface SourceGroup {
+export interface Niche {
   id: string
   name: string
-  username?: string | null
-  telegramId: string
-  isActive: boolean
-  createdAt: string
-  // Per-niche overrides — null means "use the global default"
   slug?: string | null
   footerText?: string | null
   mlOwnListUrl?: string | null
@@ -111,6 +106,19 @@ export interface SourceGroup {
   mockupBoxRight?: number | null
   mockupBoxBottom?: number | null
   mockupCornerRadius?: number | null
+  sourceGroupCount?: number
+}
+
+export interface SourceGroup {
+  id: string
+  name: string
+  username?: string | null
+  telegramId: string
+  isActive: boolean
+  createdAt: string
+  // Several source groups can share one niche (mockup/footer/ML link/public page)
+  nicheId?: string | null
+  niche?: Niche | null
 }
 
 export interface DestinationGroup {
@@ -289,10 +297,7 @@ class ApiClient {
       telegramId: string
       username: string
       isActive: boolean
-      slug: string | null
-      footerText: string | null
-      mlOwnListUrl: string | null
-      clearMockupTemplate: boolean
+      nicheId: string | null
     }>
   ): Promise<SourceGroup> {
     return this.request('PATCH', `/groups/source/${id}`, data)
@@ -302,12 +307,38 @@ class ApiClient {
     return this.request('DELETE', `/groups/source/${id}`)
   }
 
-  async uploadMockupTemplate(
-    sourceGroupId: string,
+  // ── Niches ────────────────────────────────────
+  async getNiches(): Promise<Niche[]> {
+    return this.request('GET', '/niches')
+  }
+
+  async createNiche(data: { name: string; slug?: string | null }): Promise<Niche> {
+    return this.request('POST', '/niches', data)
+  }
+
+  async updateNiche(
+    id: string,
+    data: Partial<{
+      name: string
+      slug: string | null
+      footerText: string | null
+      mlOwnListUrl: string | null
+      clearMockupTemplate: boolean
+    }>
+  ): Promise<Niche> {
+    return this.request('PATCH', `/niches/${id}`, data)
+  }
+
+  async deleteNiche(id: string): Promise<{ success: boolean }> {
+    return this.request('DELETE', `/niches/${id}`)
+  }
+
+  async uploadNicheMockupTemplate(
+    nicheId: string,
     file: File,
     box: { left: number; top: number; right: number; bottom: number },
     cornerRadius: number
-  ): Promise<SourceGroup> {
+  ): Promise<Niche> {
     const formData = new FormData()
     formData.append('file', file)
     formData.append('boxLeft', String(Math.round(box.left)))
@@ -317,7 +348,7 @@ class ApiClient {
     formData.append('cornerRadius', String(Math.round(cornerRadius)))
 
     const headers = this.getHeaders()
-    const res = await fetch(`${this.baseUrl}/groups/source/${sourceGroupId}/mockup-template`, {
+    const res = await fetch(`${this.baseUrl}/niches/${nicheId}/mockup-template`, {
       method: 'POST',
       headers,
       body: formData,
