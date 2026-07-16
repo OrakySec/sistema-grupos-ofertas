@@ -280,13 +280,20 @@ async def generate_offer_image(
     template_override: Optional[dict] = None,
 ) -> tuple[Optional[bytes], Optional[str]]:
     """
-    Returns (composed_jpeg_bytes, error_message) — bytes is None on any failure.
+    Returns (image_jpeg_bytes, error_message) — bytes is None on any failure.
 
     template_override, when provided, is the per-niche dict built by
     main.py's _extract_niche_config: {"template_path": <relative to
     MEDIA_BASE_PATH>, "box": (left, top, right, bottom), "corner_radius": int}.
-    None (the default) uses the bundled template + PLACEHOLDER_BOX, i.e. the
-    exact behavior from before niches existed.
+
+    None (a source group with no niche assigned, or a niche with no custom
+    template configured) returns the raw product photo as fetched — it does
+    NOT fall back to the bundled mockup_template.jpg. That bundled file is
+    one specific store's branded frame (Ferreira 3D); silently applying it to
+    every unconfigured niche would mislabel unrelated offers (e.g. a PS5
+    group with no niche picking up the 3D-printing store's frame). A niche
+    that wants that exact look uploads mockup_template.jpg as its own
+    template via the Niches UI instead.
     """
     image_url = await _fetch_product_image_url(product_url, session)
 
@@ -301,16 +308,16 @@ async def generate_offer_image(
     if not image_bytes:
         return None, "Não foi possível baixar a imagem do produto"
 
+    if not template_override:
+        return image_bytes, None
+
     try:
-        if template_override:
-            composed = _compose(
-                image_bytes,
-                template_path=MEDIA_BASE_PATH / template_override["template_path"],
-                box=tuple(template_override["box"]),
-                corner_radius=template_override["corner_radius"],
-            )
-        else:
-            composed = _compose(image_bytes)
+        composed = _compose(
+            image_bytes,
+            template_path=MEDIA_BASE_PATH / template_override["template_path"],
+            box=tuple(template_override["box"]),
+            corner_radius=template_override["corner_radius"],
+        )
     except Exception as exc:
         logger.warning(f"[mockup] Compose failed for {product_url[:80]}: {exc}")
         return None, f"Falha ao montar a imagem: {exc}"

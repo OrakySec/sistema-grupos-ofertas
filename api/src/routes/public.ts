@@ -5,19 +5,48 @@ interface ProcessingEvent {
   step?: string;
   platform?: string;
   affiliate?: string;
+  shortened?: string | null;
+  final?: string | null;
   status?: string;
 }
 
-/** Pulls the clean, tagged affiliate link (pre-shortening) out of an offer's processingLog. */
-function extractAffiliateLink(processingLog: unknown): { url: string | null; platform: string | null } {
-  if (!Array.isArray(processingLog)) return { url: null, platform: null };
+/**
+ * Pulls the clean, tagged affiliate link (pre-shortening) out of an offer's
+ * processingLog, plus the literal string that's actually embedded in
+ * text/mediaCaption (may be shortened — see worker.ts's findAmazonLinkInText
+ * for the same "final" field usage), so the caller can strip that redundant
+ * inline link from the body copy — the public page already has a dedicated
+ * "buy" button for it.
+ */
+function extractAffiliateLink(
+  processingLog: unknown,
+): { url: string | null; platform: string | null; embeddedLink: string | null } {
+  if (!Array.isArray(processingLog)) return { url: null, platform: null, embeddedLink: null };
   const urlEvent = (processingLog as ProcessingEvent[]).find(
     (e) => e.step === 'url' && e.status === 'ok' && e.affiliate,
   );
   return {
     url: urlEvent?.affiliate ?? null,
     platform: urlEvent?.platform ?? null,
+    embeddedLink: urlEvent?.final ?? urlEvent?.affiliate ?? null,
   };
+}
+
+/**
+ * Removes the redundant inline link from displayed body copy — drops the
+ * whole line it's on (not just the URL substring), since the line is usually
+ * just a "🔗 <link>" label with nothing else worth keeping once the link is
+ * gone — and collapses any leftover blank lines.
+ */
+function stripEmbeddedLink(text: string | null, link: string | null): string | null {
+  if (!text || !link) return text;
+  const stripped = text
+    .split('\n')
+    .filter((line) => !line.includes(link))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return stripped || null;
 }
 
 function serializePublicOffer(offer: {
@@ -31,11 +60,11 @@ function serializePublicOffer(offer: {
   processingLog: unknown;
   sourceGroup?: { niche: { slug: string | null; name: string } | null } | null;
 }) {
-  const { url, platform } = extractAffiliateLink(offer.processingLog);
+  const { url, platform, embeddedLink } = extractAffiliateLink(offer.processingLog);
   return {
     id: offer.id,
-    text: offer.text,
-    mediaCaption: offer.mediaCaption,
+    text: stripEmbeddedLink(offer.text, embeddedLink),
+    mediaCaption: stripEmbeddedLink(offer.mediaCaption, embeddedLink),
     mediaType: offer.mediaType,
     mediaPath: offer.mediaLocalPath,
     sentAt: offer.sentAt ?? offer.createdAt,
