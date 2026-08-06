@@ -159,8 +159,14 @@ export const offersRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
 
       // Reject offers containing any link that couldn't be identified/converted
       // into an affiliate link (unrecognized platform, missing affiliate ID, build error, etc.)
+      // Also covers the whole-conversion failure path (step 'url_convert' error):
+      // on a timeout/exception the listener restores the ORIGINAL text — with the
+      // source group's own affiliate link intact — and never regenerates the photo,
+      // so letting it through would forward someone else's link and watermark.
       const hasUnidentifiedLink = logEvents.some(
-        (ev) => ev.step === 'url' && (ev.status === 'skipped' || ev.status === 'error'),
+        (ev) =>
+          (ev.step === 'url' && (ev.status === 'skipped' || ev.status === 'error')) ||
+          (ev.step === 'url_convert' && ev.status === 'error'),
       );
 
       if (hasUnidentifiedLink && !isRejectedMarketplace) {

@@ -447,8 +447,11 @@ async def _make_message_handler(http_session: aiohttp.ClientSession):
 
                     # Mercado Livre links now go through real browser automation
                     # (Link Builder tool), which is much slower than the other
-                    # marketplaces' plain string-based conversion — give it more room.
-                    await asyncio.wait_for(_convert_all(), timeout=45.0)
+                    # marketplaces' plain string-based conversion — give it more
+                    # room. 45s proved too tight in production (one ML link can
+                    # take 30-60s; a timed-out conversion means the offer gets
+                    # blocked by the API's unidentified-link filter and is lost).
+                    await asyncio.wait_for(_convert_all(), timeout=90.0)
 
                     converted = any(e.get("status") == "ok" for e in processing_events)
                     if converted:
@@ -462,7 +465,7 @@ async def _make_message_handler(http_session: aiohttp.ClientSession):
                     media_caption = _original_caption
                     processing_events.append({
                         "ts": _ts(), "step": "url_convert", "status": "error",
-                        "label": "Conversão de afiliado", "error": "Timeout (>45s) — texto original mantido",
+                        "label": "Conversão de afiliado", "error": "Timeout (>90s) — texto original mantido",
                     })
 
                 except Exception as conv_exc:
