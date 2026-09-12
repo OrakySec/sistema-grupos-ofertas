@@ -1,7 +1,18 @@
 import React, { useEffect, useState } from 'react';
 
 const TELEGRAM_URL = 'https://t.me/ferreira3d';
-const WHATSAPP_URL = 'https://chat.whatsapp.com/C0cPDxI9ViB25Y6NUVUmyL?mode=gi_t';
+
+declare global {
+  interface Window {
+    __ENV__?: { WHATSAPP_URL_3D?: string };
+  }
+}
+
+// Configurável via variável de ambiente WHATSAPP_URL_3D (injetada em runtime
+// pelo container — ver docker-entrypoint-env.sh), com fallback fixo.
+const WHATSAPP_URL =
+  window.__ENV__?.WHATSAPP_URL_3D ||
+  'https://chat.whatsapp.com/C0cPDxI9ViB25Y6NUVUmyL?mode=gi_t';
 
 /** Reads a cookie value by name, or null if not present. */
 function getCookie(name: string): string | null {
