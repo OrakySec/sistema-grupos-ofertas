@@ -12,6 +12,8 @@ services:
     restart: unless-stopped
     depends_on:
       - api
+    environment:
+      WHATSAPP_URL_3D: ${WHATSAPP_URL_3D:-https://chat.whatsapp.com/C0cPDxI9ViB25Y6NUVUmyL?mode=gi_t}
     ports:
       - "3000:80"
     networks:
