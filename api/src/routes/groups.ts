@@ -19,11 +19,13 @@ interface CreateDestinationGroupBody {
   name: string;
   type: 'TELEGRAM' | 'WHATSAPP';
   chatId: string;
+  inviteLink?: string; // WhatsApp only — optional, enables the link-monitor job for this group
 }
 
 interface UpdateDestinationGroupBody {
   name?: string;
   isActive?: boolean;
+  inviteLink?: string | null;
 }
 
 export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
@@ -270,14 +272,15 @@ export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
             name: { type: 'string', minLength: 1 },
             type: { type: 'string', enum: ['TELEGRAM', 'WHATSAPP'] },
             chatId: { type: 'string', minLength: 1 },
+            inviteLink: { type: 'string' },
           },
         },
       },
     },
     async (request, reply) => {
-      const { name, type, chatId } = request.body;
+      const { name, type, chatId, inviteLink } = request.body;
       const group = await prisma.destinationGroup.create({
-        data: { name, type, chatId },
+        data: { name, type, chatId, inviteLink: inviteLink?.trim() || null },
       });
       return reply.code(201).send(group);
     },
@@ -298,17 +301,24 @@ export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
           properties: {
             name: { type: 'string', minLength: 1 },
             isActive: { type: 'boolean' },
+            inviteLink: { type: ['string', 'null'] },
           },
         },
       },
     },
     async (request, reply) => {
       const { id } = request.params;
-      const data = request.body;
+      const { inviteLink, ...rest } = request.body;
 
       const existing = await prisma.destinationGroup.findUnique({ where: { id } });
       if (!existing) {
         return reply.code(404).send({ error: 'Destination group not found' });
+      }
+
+      const data: UpdateDestinationGroupBody = { ...rest };
+      if ('inviteLink' in request.body) {
+        const trimmed = inviteLink?.trim();
+        data.inviteLink = trimmed || null;
       }
 
       const updated = await prisma.destinationGroup.update({ where: { id }, data });

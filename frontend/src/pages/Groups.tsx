@@ -837,6 +837,7 @@ function DestGroupModal({ isOpen, onClose, onSaved }: DestGroupModalProps) {
   const [name, setName] = useState('')
   const [type, setType] = useState<'TELEGRAM' | 'WHATSAPP'>('TELEGRAM')
   const [chatId, setChatId] = useState('')
+  const [inviteLink, setInviteLink] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [waGroups, setWaGroups] = useState<WhatsAppGroup[]>([])
@@ -848,6 +849,7 @@ function DestGroupModal({ isOpen, onClose, onSaved }: DestGroupModalProps) {
       setName('')
       setType('TELEGRAM')
       setChatId('')
+      setInviteLink('')
       setError('')
       setWaGroups([])
       setWaSearch('')
@@ -884,7 +886,12 @@ function DestGroupModal({ isOpen, onClose, onSaved }: DestGroupModalProps) {
     setLoading(true)
     setError('')
     try {
-      await api.createDestinationGroup({ name, type, chatId })
+      await api.createDestinationGroup({
+        name,
+        type,
+        chatId,
+        inviteLink: type === 'WHATSAPP' ? inviteLink.trim() || undefined : undefined,
+      })
       onSaved()
       onClose()
     } catch (err) {
@@ -1043,6 +1050,24 @@ function DestGroupModal({ isOpen, onClose, onSaved }: DestGroupModalProps) {
             required
           />
         </div>
+
+        {type === 'WHATSAPP' && (
+          <div className="form-group">
+            <label className="label" htmlFor="dg-invite-link">
+              Link de convite
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 8 }}>
+                opcional — se preenchido, o sistema monitora e avisa quando expirar
+              </span>
+            </label>
+            <input
+              id="dg-invite-link"
+              className="input font-mono"
+              placeholder="https://chat.whatsapp.com/XXXXXXXXXXXXXXXXXXXXXX"
+              value={inviteLink}
+              onChange={(e) => setInviteLink(e.target.value)}
+            />
+          </div>
+        )}
       </form>
     </Modal>
   )
@@ -1062,6 +1087,9 @@ export default function Groups() {
   const [showAddNiche, setShowAddNiche] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [togglingId, setTogglingId] = useState<string | null>(null)
+  const [editingLinkId, setEditingLinkId] = useState<string | null>(null)
+  const [linkDraft, setLinkDraft] = useState('')
+  const [savingLinkId, setSavingLinkId] = useState<string | null>(null)
   const [assigningId, setAssigningId] = useState<string | null>(null)
   // Link destinations modal
   const [linkTarget, setLinkTarget] = useState<SourceGroup | null>(null)
@@ -1138,6 +1166,30 @@ export default function Groups() {
       addToast(err instanceof Error ? err.message : 'Erro', 'error')
     } finally {
       setDeletingId(null)
+    }
+  }
+
+  const startEditLink = (g: DestinationGroup) => {
+    setEditingLinkId(g.id)
+    setLinkDraft(g.inviteLink ?? '')
+  }
+
+  const cancelEditLink = () => {
+    setEditingLinkId(null)
+    setLinkDraft('')
+  }
+
+  const saveLink = async (g: DestinationGroup) => {
+    setSavingLinkId(g.id)
+    try {
+      const updated = await api.updateDestinationGroup(g.id, { inviteLink: linkDraft.trim() || null })
+      setDestGroups((prev) => prev.map((d) => (d.id === g.id ? updated : d)))
+      setEditingLinkId(null)
+      addToast('Link atualizado.', 'success')
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : 'Erro ao salvar link', 'error')
+    } finally {
+      setSavingLinkId(null)
     }
   }
 
@@ -1477,6 +1529,7 @@ export default function Groups() {
                   <th>Nome</th>
                   <th>Tipo</th>
                   <th>Chat ID</th>
+                  <th>Link de convite</th>
                   <th>Status</th>
                   <th>Ações</th>
                 </tr>
@@ -1496,6 +1549,50 @@ export default function Groups() {
                     </td>
                     <td>
                       <span className="mono">{g.chatId}</span>
+                    </td>
+                    <td>
+                      {g.type !== 'WHATSAPP' ? (
+                        <span style={{ color: 'var(--text-muted)' }}>—</span>
+                      ) : editingLinkId === g.id ? (
+                        <div style={{ display: 'flex', gap: 6, minWidth: 240 }}>
+                          <input
+                            className="input font-mono"
+                            style={{ fontSize: '0.78rem', padding: '4px 8px' }}
+                            placeholder="https://chat.whatsapp.com/..."
+                            value={linkDraft}
+                            onChange={(e) => setLinkDraft(e.target.value)}
+                            autoFocus
+                          />
+                          <button
+                            className="icon-btn"
+                            onClick={() => saveLink(g)}
+                            disabled={savingLinkId === g.id}
+                            title="Salvar link"
+                          >
+                            {savingLinkId === g.id ? <span className="spinner spinner-sm" /> : '✅'}
+                          </button>
+                          <button className="icon-btn" onClick={cancelEditLink} title="Cancelar">
+                            ✖️
+                          </button>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          {g.inviteLink ? (
+                            g.linkStatus === 'VALID' ? (
+                              <span style={{ color: 'var(--accent-success)', fontSize: '0.78rem', fontWeight: 600 }}>✅ válido</span>
+                            ) : g.linkStatus === 'INVALID' ? (
+                              <span style={{ color: 'var(--accent-danger)', fontSize: '0.78rem', fontWeight: 600 }}>❌ expirado</span>
+                            ) : (
+                              <span style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>⏳ aguardando checagem</span>
+                            )
+                          ) : (
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>sem link</span>
+                          )}
+                          <button className="icon-btn" onClick={() => startEditLink(g)} title="Editar link de convite">
+                            ✏️
+                          </button>
+                        </div>
+                      )}
                     </td>
                     <td>
                       <Toggle

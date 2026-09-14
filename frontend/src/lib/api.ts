@@ -78,7 +78,7 @@ export interface ProcessingOffer {
 export interface DeliveryLog {
   id: string
   offerId: string
-  offer?: { text?: string; mediaType: string }
+  offer?: { text?: string; mediaType: string; sourceGroup?: { id: string; name: string } }
   destinationGroupId: string
   destinationGroup?: { name: string; type: 'TELEGRAM' | 'WHATSAPP' }
   status: 'SUCCESS' | 'FAILED'
@@ -128,6 +128,10 @@ export interface DestinationGroup {
   chatId: string
   isActive: boolean
   createdAt: string
+  // WhatsApp invite-link monitor (WHATSAPP groups only)
+  inviteLink?: string | null
+  linkStatus?: 'VALID' | 'INVALID' | 'UNKNOWN' | null
+  linkLastCheckedAt?: string | null
 }
 
 export interface Settings {
@@ -157,6 +161,10 @@ export interface Settings {
   marketplaceAliExpressEnabled?: boolean
   marketplaceMagaluEnabled?: boolean
   marketplaceMercadoLivreEnabled?: boolean
+  // Invite link monitor (global on/off + who gets alerted; the links
+  // themselves live per-group on DestinationGroup.inviteLink)
+  linkMonitorEnabled?: boolean
+  linkMonitorAlertNumber?: string
 }
 
 export interface Stats {
@@ -377,13 +385,14 @@ class ApiClient {
     name: string
     type: 'TELEGRAM' | 'WHATSAPP'
     chatId: string
+    inviteLink?: string
   }): Promise<DestinationGroup> {
     return this.request('POST', '/groups/destination', data)
   }
 
   async updateDestinationGroup(
     id: string,
-    data: Partial<{ name: string; chatId: string; isActive: boolean }>
+    data: Partial<{ name: string; chatId: string; isActive: boolean; inviteLink: string | null }>
   ): Promise<DestinationGroup> {
     return this.request('PATCH', `/groups/destination/${id}`, data)
   }
@@ -407,6 +416,10 @@ class ApiClient {
 
   async testWhatsApp(): Promise<{ success: boolean; message: string }> {
     return this.request('POST', '/settings/test-whatsapp')
+  }
+
+  async testLinkMonitor(url?: string): Promise<{ success: boolean; valid?: boolean; message: string }> {
+    return this.request('POST', '/settings/test-link-monitor', url ? { url } : undefined)
   }
 
   async startTelegramAuth(phone: string): Promise<{ success: boolean; message: string }> {
@@ -439,12 +452,17 @@ class ApiClient {
   }
 
   // ── Logs ──────────────────────────────────────
-  async getDeliveryLogs(limit = 100): Promise<DeliveryLog[]> {
-    return this.request('GET', `/logs?limit=${limit}`)
+  async getDeliveryLogs(limit = 100, sourceGroupId?: string): Promise<DeliveryLog[]> {
+    const params = new URLSearchParams({ limit: String(limit) })
+    if (sourceGroupId) params.set('sourceGroupId', sourceGroupId)
+    return this.request('GET', `/logs?${params.toString()}`)
   }
 
-  async getProcessingLogs(): Promise<ProcessingOffer[]> {
-    return this.request('GET', '/logs/processing')
+  async getProcessingLogs(sourceGroupId?: string): Promise<ProcessingOffer[]> {
+    const params = new URLSearchParams()
+    if (sourceGroupId) params.set('sourceGroupId', sourceGroupId)
+    const qs = params.toString()
+    return this.request('GET', `/logs/processing${qs ? `?${qs}` : ''}`)
   }
 }
 

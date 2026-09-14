@@ -83,6 +83,14 @@ model DestinationGroup {
   isActive  Boolean         @default(true)
   createdAt DateTime        @default(now())
 
+  // Optional public invite link (WhatsApp groups only) — when set, the
+  // worker's link-monitor job periodically checks it's still valid and
+  // alerts the admin (via WhatsApp/Evolution API) when it expires/revokes.
+  inviteLink         String?
+  linkStatus         String?   @default("UNKNOWN") // VALID | INVALID | UNKNOWN
+  linkLastCheckedAt  DateTime?
+  linkLastNotifiedAt DateTime?
+
   deliveryLogs  DeliveryLog[]
   sourceGroups  SourceGroupDestination[]
 }

@@ -70,9 +70,12 @@ export const logsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
     });
   });
 
-  // GET /logs — last 100 delivery logs
-  fastify.get('/', async (_request, reply) => {
+  // GET /logs — last 100 delivery logs, optionally filtered by source group
+  fastify.get<{ Querystring: { sourceGroupId?: string } }>('/', async (request, reply) => {
+    const { sourceGroupId } = request.query;
+
     const logs = await prisma.deliveryLog.findMany({
+      where: sourceGroupId ? { offer: { sourceGroupId } } : {},
       orderBy: { sentAt: 'desc' },
       take: 100,
       include: {
@@ -83,6 +86,9 @@ export const logsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
             mediaType: true,
             status: true,
             telegramMessageId: true,
+            sourceGroup: {
+              select: { id: true, name: true },
+            },
           },
         },
         destinationGroup: {
@@ -109,8 +115,9 @@ export const logsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
     return reply.send(serialized);
   });
 
-  // GET /logs/processing — last 200 messages with processing trace (for debug panel)
-  fastify.get('/processing', async (request, reply) => {
+  // GET /logs/processing — last 200 messages with processing trace (for debug panel),
+  // optionally filtered by source group
+  fastify.get<{ Querystring: { sourceGroupId?: string } }>('/processing', async (request, reply) => {
     // Auto-cleanup: delete offers older than 7 days that are already SENT or FAILED
     const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     await prisma.offer.deleteMany({
@@ -120,7 +127,10 @@ export const logsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
       },
     }).catch(() => {/* non-critical */});
 
+    const { sourceGroupId } = request.query;
+
     const offers = await prisma.offer.findMany({
+      where: sourceGroupId ? { sourceGroupId } : {},
       orderBy: { createdAt: 'desc' },
       take: 200,
       select: {
