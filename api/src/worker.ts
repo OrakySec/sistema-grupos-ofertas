@@ -1,7 +1,7 @@
 import { Worker, Job } from 'bullmq';
 import redis from './lib/redis';
 import prisma from './lib/prisma';
-import { addSendOfferJob } from './lib/queue';
+import { addSendOfferJob, scheduleLinkMonitor } from './lib/queue';
 import { TelegramService } from './services/telegram.service';
 import { WhatsAppService } from './services/whatsapp.service';
 
@@ -242,6 +242,107 @@ async function sendToWhatsApp(chatId: string, offer: OfferWithMediaType): Promis
   }
 }
 
+// Re-notify at most this often while a given group's link stays broken, so
+// the admin gets one alert per outage instead of one every 15 minutes forever.
+const LINK_MONITOR_RENOTIFY_MS = 12 * 60 * 60 * 1000; // 12 hours
+
+/**
+ * Checks every active WHATSAPP destination group that has an inviteLink
+ * configured, and alerts the admin (via WhatsApp) about each one that just
+ * became invalid or has stayed invalid past the renotify window.
+ */
+async function handleCheckInviteLink(): Promise<void> {
+  const settingsRows = await prisma.setting.findMany({
+    where: { key: { in: ['link_monitor_enabled', 'link_monitor_alert_number'] } },
+  });
+  const settingsMap: Record<string, string> = {};
+  for (const r of settingsRows) settingsMap[r.key] = r.value;
+
+  if (settingsMap.link_monitor_enabled !== 'true') return;
+
+  const alertNumber = settingsMap.link_monitor_alert_number?.trim();
+  if (!alertNumber) {
+    console.warn('[Worker] Link monitor is enabled but no alert number is configured — skipping check');
+    return;
+  }
+
+  const groups = await prisma.destinationGroup.findMany({
+    where: { type: 'WHATSAPP', isActive: true, inviteLink: { not: null } },
+  });
+
+  const groupsToCheck = groups.filter((g) => g.inviteLink?.trim());
+  if (groupsToCheck.length === 0) return;
+
+  console.log(`[Worker] Link monitor: checking ${groupsToCheck.length} WhatsApp group invite link(s)`);
+
+  for (const group of groupsToCheck) {
+    await checkGroupInviteLink(group, alertNumber);
+  }
+}
+
+async function checkGroupInviteLink(
+  group: { id: string; name: string; inviteLink: string | null; linkStatus: string | null; linkLastNotifiedAt: Date | null },
+  alertNumber: string,
+): Promise<void> {
+  const url = group.inviteLink!.trim();
+
+  let result: { valid: boolean; groupName?: string };
+  try {
+    result = await whatsappService.checkInviteLink(url);
+  } catch (err) {
+    // Inconclusive (Evolution API/instance unreachable, etc.) — log and bail
+    // without touching the stored status, so a transient outage never gets
+    // reported to the admin as "the link expired".
+    console.error(
+      `[Worker] Link monitor: check for "${group.name}" was inconclusive, skipping this cycle:`,
+      err instanceof Error ? err.message : err,
+    );
+    return;
+  }
+
+  const now = new Date();
+  const previousStatus = group.linkStatus;
+  const newStatus = result.valid ? 'VALID' : 'INVALID';
+
+  await prisma.destinationGroup.update({
+    where: { id: group.id },
+    data: { linkStatus: newStatus, linkLastCheckedAt: now },
+  });
+
+  if (newStatus === 'VALID') {
+    console.log(`[Worker] Link monitor: "${group.name}" invite link is valid${result.groupName ? ` (${result.groupName})` : ''}`);
+    return;
+  }
+
+  const lastNotifiedAt = group.linkLastNotifiedAt;
+  const shouldNotify =
+    previousStatus !== 'INVALID' || // just went down — always notify on transition
+    !lastNotifiedAt ||
+    now.getTime() - lastNotifiedAt.getTime() > LINK_MONITOR_RENOTIFY_MS;
+
+  if (!shouldNotify) {
+    console.warn(`[Worker] Link monitor: "${group.name}" still invalid, already notified recently — skipping alert`);
+    return;
+  }
+
+  console.warn(`[Worker] Link monitor: "${group.name}" invite link is INVALID — alerting ${alertNumber}`);
+  try {
+    await whatsappService.sendText(
+      alertNumber,
+      `⚠️ *Alerta: link de convite expirou*\n\nO grupo "${group.name}" tem um link de convite que parou de funcionar:\n${url}\n\nGere um novo link no grupo do WhatsApp e atualize-o em Grupos → Destino.`,
+    );
+    await prisma.destinationGroup.update({
+      where: { id: group.id },
+      data: { linkLastNotifiedAt: now },
+    });
+  } catch (err) {
+    console.error(
+      `[Worker] Failed to send link-monitor alert for "${group.name}" via WhatsApp:`,
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
 const worker = new Worker<NewOfferJobData | SendOfferJobData>(
   'offers',
   async (job) => {
@@ -277,11 +378,41 @@ worker.on('error', (err) => {
   console.error('[Worker] Worker error:', err);
 });
 
+const linkMonitorWorker = new Worker(
+  'link-monitor',
+  async (job) => {
+    console.log(`[Worker] Processing job ${job.id} (${job.name}) on queue: link-monitor`);
+    if (job.name === 'check-invite-link') {
+      await handleCheckInviteLink();
+    } else {
+      console.warn(`[Worker] Unknown link-monitor job type: ${job.name}`);
+    }
+  },
+  { connection: redis, concurrency: 1 },
+);
+
+linkMonitorWorker.on('completed', (job) => {
+  console.log(`[Worker] Job ${job.id} (${job.name}) completed successfully`);
+});
+
+linkMonitorWorker.on('failed', (job, err) => {
+  console.error(`[Worker] Job ${job?.id} (${job?.name}) failed:`, err.message);
+});
+
+linkMonitorWorker.on('error', (err) => {
+  console.error('[Worker] link-monitor worker error:', err);
+});
+
+scheduleLinkMonitor().catch((err) => {
+  console.error('[Worker] Failed to schedule link-monitor repeatable job:', err);
+});
+
 // Graceful shutdown
 const shutdown = async (signal: string) => {
   console.log(`[Worker] Received ${signal}, shutting down gracefully...`);
   try {
     await worker.close();
+    await linkMonitorWorker.close();
     await redis.quit();
     await prisma.$disconnect();
     console.log('[Worker] Shutdown complete');
@@ -295,4 +426,4 @@ const shutdown = async (signal: string) => {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-console.log('[Worker] Started and listening for jobs on queue: offers');
+console.log('[Worker] Started and listening for jobs on queues: offers, link-monitor');

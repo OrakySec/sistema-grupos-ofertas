@@ -81,6 +81,12 @@ export default function Settings() {
   const [linkShortenerEnabled, setLinkShortenerEnabled] = useState(true)
   const [shortenerProvider, setShortenerProvider] = useState('internal')
 
+  // Invite link monitor
+  const refLinkMonitorUrl = useRef<HTMLInputElement>(null)
+  const refLinkMonitorAlertNumber = useRef<HTMLInputElement>(null)
+  const [linkMonitorEnabled, setLinkMonitorEnabled] = useState(false)
+  const [linkMonitorCheck, setLinkMonitorCheck] = useState<{ status: TestStatus; message?: string }>({ status: 'idle' })
+
   // Marketplaces states
   const [marketplaceAmazonEnabled, setMarketplaceAmazonEnabled] = useState(true)
   const [marketplaceShopeeEnabled, setMarketplaceShopeeEnabled] = useState(true)
@@ -102,6 +108,7 @@ export default function Settings() {
       setMarketplaceMagaluEnabled(s.marketplaceMagaluEnabled ?? true)
       setMarketplaceMercadoLivreEnabled(s.marketplaceMercadoLivreEnabled ?? true)
       setMlSessionActive(s.mlSessionActive ?? false)
+      setLinkMonitorEnabled(s.linkMonitorEnabled ?? false)
       if (s.telegramAuthenticated) setAuthStep('done')
     } catch {
       // silent
@@ -126,6 +133,7 @@ export default function Settings() {
       if (updated.marketplaceAliExpressEnabled !== undefined) setMarketplaceAliExpressEnabled(updated.marketplaceAliExpressEnabled)
       if (updated.marketplaceMagaluEnabled !== undefined) setMarketplaceMagaluEnabled(updated.marketplaceMagaluEnabled)
       if (updated.marketplaceMercadoLivreEnabled !== undefined) setMarketplaceMercadoLivreEnabled(updated.marketplaceMercadoLivreEnabled)
+      if (updated.linkMonitorEnabled !== undefined) setLinkMonitorEnabled(updated.linkMonitorEnabled)
       addToast('Configurações salvas com sucesso!', 'success')
     } catch (err) {
       addToast(err instanceof Error ? err.message : 'Erro ao salvar configurações', 'error')
@@ -168,6 +176,29 @@ export default function Settings() {
       addToast(err instanceof Error ? err.message : 'Erro ao testar conexão com a Evolution API', 'error')
     }
     setTimeout(() => setTestWa('idle'), 5000)
+  }
+
+  const handleTestLinkMonitor = async () => {
+    const url = refLinkMonitorUrl.current?.value?.trim()
+    if (!url) {
+      addToast('Cole um link do WhatsApp para verificar', 'error')
+      return
+    }
+    setLinkMonitorCheck({ status: 'loading' })
+    try {
+      const res = await api.testLinkMonitor(url)
+      if (res.success && res.valid) {
+        setLinkMonitorCheck({ status: 'success', message: res.message })
+        addToast(res.message, 'success')
+      } else {
+        setLinkMonitorCheck({ status: 'error', message: res.message })
+        addToast(res.message, 'error')
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Erro ao verificar o link'
+      setLinkMonitorCheck({ status: 'error', message: msg })
+      addToast(msg, 'error')
+    }
   }
 
   const handleUploadMlSession = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -626,6 +657,109 @@ export default function Settings() {
               evolutionApiKey:  refEvolutionKey.current?.value,
               evolutionInstance: refEvolutionInst.current?.value,
             })}
+            disabled={saving}
+          >
+            {saving ? <span className="spinner spinner-sm" /> : null}
+            Salvar
+          </button>
+        </div>
+      </div>
+
+      {/* ── Seção: Monitor de Link (WhatsApp) ─────────────────────── */}
+      <div className="settings-section">
+        <div className="settings-section-header">
+          <div className="settings-section-title">🩺 Monitor de Link (WhatsApp)</div>
+          <div className="settings-section-desc">
+            Verifica periodicamente (a cada 15 min) todos os grupos de destino WhatsApp que
+            tiverem um link de convite cadastrado — configure o link de cada grupo em{' '}
+            <strong>Grupos → Destino</strong> — e avisa neste número quando algum expirar ou for revogado.
+          </div>
+        </div>
+
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '16px 20px', background: 'var(--bg-elevated)',
+          borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)',
+          marginBottom: 16,
+        }}>
+          <div>
+            <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)' }}>Ativar monitoramento</div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 3 }}>
+              Roda em segundo plano (worker) para todos os grupos com link cadastrado
+            </div>
+          </div>
+          <Toggle checked={linkMonitorEnabled} onChange={(v) => { setLinkMonitorEnabled(v); save({ linkMonitorEnabled: v }) }} />
+        </div>
+
+        <div className="form-group">
+          <label className="label">
+            Número para receber os alertas
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 8 }}>
+              ex: 5511999999999 (DDI+DDD+número, só dígitos)
+            </span>
+          </label>
+          <input
+            ref={refLinkMonitorAlertNumber}
+            defaultValue={settingsData?.linkMonitorAlertNumber ?? ''}
+            className="input font-mono"
+            placeholder="5511999999999"
+            type="text"
+            autoComplete="off"
+            data-lpignore="true"
+            data-form-type="other"
+            name={`link-monitor-number-${Date.now()}`}
+          />
+        </div>
+
+        <div className="form-group">
+          <label className="label">
+            Testar um link avulso
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 8 }}>
+              não precisa estar cadastrado em nenhum grupo
+            </span>
+          </label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              ref={refLinkMonitorUrl}
+              className="input font-mono"
+              placeholder="https://chat.whatsapp.com/XXXXXXXXXXXXXXXXXXXXXX"
+              type="text"
+              autoComplete="off"
+              data-lpignore="true"
+              data-form-type="other"
+              name={`link-monitor-test-url-${Date.now()}`}
+              style={{ flex: 1 }}
+            />
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={handleTestLinkMonitor}
+              disabled={linkMonitorCheck.status === 'loading'}
+            >
+              {linkMonitorCheck.status === 'loading' ? (
+                <><span className="spinner spinner-sm" /> Verificando…</>
+              ) : (
+                '🔎 Verificar'
+              )}
+            </button>
+          </div>
+          {linkMonitorCheck.status === 'success' && (
+            <div style={{ color: 'var(--accent-success)', fontSize: '0.82rem', fontWeight: 600, marginTop: 6 }}>
+              ✅ {linkMonitorCheck.message}
+            </div>
+          )}
+          {linkMonitorCheck.status === 'error' && (
+            <div style={{ color: 'var(--accent-danger)', fontSize: '0.82rem', fontWeight: 600, marginTop: 6 }}>
+              ❌ {linkMonitorCheck.message}
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            onClick={() => save({ linkMonitorAlertNumber: refLinkMonitorAlertNumber.current?.value ?? '' })}
             disabled={saving}
           >
             {saving ? <span className="spinner spinner-sm" /> : null}

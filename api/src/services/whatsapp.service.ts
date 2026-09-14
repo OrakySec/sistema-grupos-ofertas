@@ -25,6 +25,12 @@ interface WhatsAppGroupItem {
   name: string;
 }
 
+/** Extracts the invite code from a `https://chat.whatsapp.com/<code>` URL, or null if it doesn't match. */
+export function extractWhatsAppInviteCode(url: string): string | null {
+  const match = url.match(/chat\.whatsapp\.com\/([A-Za-z0-9]+)/);
+  return match ? match[1] : null;
+}
+
 export class WhatsAppService {
   private async getConfig(): Promise<{
     baseUrl: string;
@@ -81,6 +87,39 @@ export class WhatsAppService {
       id: g.id,
       name: g.subject,
     }));
+  }
+
+  /**
+   * Checks whether a WhatsApp group invite link (chat.whatsapp.com/<code>) is
+   * still valid, without joining the group — via Evolution API's read-only
+   * invite lookup. Only a definite yes/no ("valid"/"revoked or expired")
+   * resolves; anything inconclusive (Evolution API/instance unreachable,
+   * unexpected error) throws instead of guessing, so callers don't mistake a
+   * transient outage for the link actually being dead.
+   */
+  async checkInviteLink(url: string): Promise<{ valid: boolean; groupName?: string }> {
+    const code = extractWhatsAppInviteCode(url);
+    if (!code) throw new Error(`Not a valid chat.whatsapp.com invite URL: ${url}`);
+
+    const { client, instance } = await this.getClient();
+    try {
+      const response = await client.get(`/group/inviteInfo/${instance}`, {
+        params: { inviteCode: code },
+      });
+      const groupName = response.data?.subject ?? response.data?.name;
+      return { valid: true, groupName };
+    } catch (err: any) {
+      const status = err.response?.status;
+      // A 4xx here means Evolution API understood the request and the invite
+      // code itself was rejected (revoked/expired/not found) — that's a
+      // confident "invalid". Anything else (network error, timeout, 5xx) is
+      // inconclusive — bubble it up rather than reporting a false "invalid".
+      if (status >= 400 && status < 500) {
+        return { valid: false };
+      }
+      const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+      throw new Error(`Evolution API inviteInfo check failed (${status ?? '?'}): ${detail}`);
+    }
   }
 
   async sendText(chatId: string, text: string): Promise<void> {

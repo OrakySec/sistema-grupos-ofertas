@@ -51,3 +51,31 @@ export async function addSendOfferJob(offerId: string): Promise<void> {
     },
   );
 }
+
+export const linkMonitorQueue = new Queue('link-monitor', {
+  connection,
+  defaultJobOptions: {
+    attempts: 1, // a failed check just gets tried again on the next repeat tick
+    removeOnComplete: { count: 200, age: 60 * 60 * 24 * 3 }, // 3 days
+    removeOnFail: { count: 200, age: 60 * 60 * 24 * 3 },
+  },
+});
+
+const LINK_MONITOR_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+
+/**
+ * Schedules the recurring "is the monitored WhatsApp invite link still
+ * valid?" check as a BullMQ repeatable job. Safe to call on every worker
+ * boot — a fixed jobId makes BullMQ update the existing repeat schedule
+ * instead of stacking duplicates.
+ */
+export async function scheduleLinkMonitor(): Promise<void> {
+  await linkMonitorQueue.add(
+    'check-invite-link',
+    {},
+    {
+      jobId: 'check-invite-link-repeat',
+      repeat: { every: LINK_MONITOR_INTERVAL_MS },
+    },
+  );
+}

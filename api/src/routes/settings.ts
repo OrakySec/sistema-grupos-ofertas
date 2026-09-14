@@ -4,7 +4,7 @@ import FormData from 'form-data';
 import { requireAuth } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { TelegramService } from '../services/telegram.service';
-import { WhatsAppService } from '../services/whatsapp.service';
+import { WhatsAppService, extractWhatsAppInviteCode } from '../services/whatsapp.service';
 
 interface UpsertSettingsBody {
   [key: string]: string;
@@ -51,6 +51,10 @@ function buildSettingsResponse(
     marketplaceAliExpressEnabled:   dbObj.marketplace_aliexpress_enabled !== 'false',
     marketplaceMagaluEnabled:       dbObj.marketplace_magalu_enabled !== 'false',
     marketplaceMercadoLivreEnabled: dbObj.marketplace_mercadolivre_enabled !== 'false',
+    // Invite link monitor — applies to every WhatsApp destination group that
+    // has an inviteLink set (configured per-group in Grupos → Destino)
+    linkMonitorEnabled:      dbObj.link_monitor_enabled === 'true',
+    linkMonitorAlertNumber:  dbObj.link_monitor_alert_number ?? '',
   };
 }
 
@@ -135,6 +139,10 @@ export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
       if ('marketplaceAliExpressEnabled' in updates)   dbUpdates.marketplace_aliexpress_enabled = String(updates.marketplaceAliExpressEnabled);
       if ('marketplaceMagaluEnabled' in updates)       dbUpdates.marketplace_magalu_enabled = String(updates.marketplaceMagaluEnabled);
       if ('marketplaceMercadoLivreEnabled' in updates) dbUpdates.marketplace_mercadolivre_enabled = String(updates.marketplaceMercadoLivreEnabled);
+      // Invite link monitor (global on/off + who gets alerted; the actual
+      // links live per-group on DestinationGroup.inviteLink)
+      if ('linkMonitorEnabled' in updates)     dbUpdates.link_monitor_enabled = String(updates.linkMonitorEnabled);
+      if ('linkMonitorAlertNumber' in updates)  dbUpdates.link_monitor_alert_number = updates.linkMonitorAlertNumber ?? '';
 
       await Promise.all(
         Object.entries(dbUpdates).map(([key, value]) =>
@@ -280,6 +288,35 @@ export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
       }
     },
   );
+
+  // POST /settings/test-link-monitor — ad-hoc check of any WhatsApp invite
+  // link, without touching any stored monitor state. Used by the "Verificar
+  // agora" button both here and per-group in Grupos → Destino.
+  fastify.post<{ Body: { url?: string } }>('/test-link-monitor', async (request, reply) => {
+    try {
+      const url = request.body?.url?.trim();
+      if (!url) {
+        return reply.code(400).send({ success: false, message: 'Informe um link para verificar' });
+      }
+      if (!extractWhatsAppInviteCode(url)) {
+        return reply.code(400).send({ success: false, message: 'Não parece um link de convite do WhatsApp (chat.whatsapp.com/...)' });
+      }
+
+      const whatsappService = new WhatsAppService();
+      const result = await whatsappService.checkInviteLink(url);
+      return reply.send({
+        success: true,
+        valid: result.valid,
+        message: result.valid
+          ? `Link válido${result.groupName ? ` — grupo "${result.groupName}"` : ''}`
+          : 'Link inválido ou expirado',
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      fastify.log.error({ err }, 'Failed to check WhatsApp invite link');
+      return reply.code(502).send({ success: false, message });
+    }
+  });
 
   // GET /settings/whatsapp-groups
   fastify.get('/whatsapp-groups', async (_request, reply) => {

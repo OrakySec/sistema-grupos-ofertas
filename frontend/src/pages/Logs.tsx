@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
-import api, { type DeliveryLog, type ProcessingOffer, type ProcessingEvent } from '../lib/api'
+import api, { type DeliveryLog, type ProcessingOffer, type ProcessingEvent, type SourceGroup } from '../lib/api'
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -384,7 +384,7 @@ function ProcessingCard({ offer }: { offer: ProcessingOffer }) {
   )
 }
 
-function ProcessingTab() {
+function ProcessingTab({ sourceGroupId }: { sourceGroupId: string }) {
   const [offers, setOffers]   = useState<ProcessingOffer[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState('')
@@ -394,7 +394,7 @@ function ProcessingTab() {
 
   const fetch = useCallback(async () => {
     try {
-      const data = await api.getProcessingLogs()
+      const data = await api.getProcessingLogs(sourceGroupId || undefined)
       setOffers(data)
       setError('')
     } catch {
@@ -402,7 +402,7 @@ function ProcessingTab() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [sourceGroupId])
 
   useEffect(() => {
     fetch()
@@ -506,7 +506,7 @@ function ProcessingTab() {
 
 // ─── Delivery tab (existing Logs page content) ───────────────────────────────
 
-function DeliveryTab() {
+function DeliveryTab({ sourceGroupId }: { sourceGroupId: string }) {
   const [logs, setLogs]       = useState<DeliveryLog[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState('')
@@ -514,7 +514,7 @@ function DeliveryTab() {
 
   const fetch = useCallback(async () => {
     try {
-      const data = await api.getDeliveryLogs()
+      const data = await api.getDeliveryLogs(100, sourceGroupId || undefined)
       setLogs(data)
       setError('')
     } catch {
@@ -522,7 +522,7 @@ function DeliveryTab() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [sourceGroupId])
 
   useEffect(() => {
     fetch()
@@ -665,17 +665,34 @@ type Tab = 'processing' | 'delivery'
 
 export default function Logs() {
   const [tab, setTab] = useState<Tab>('processing')
+  const [sourceGroups, setSourceGroups] = useState<SourceGroup[]>([])
+  const [sourceGroupId, setSourceGroupId] = useState('')
+
+  useEffect(() => {
+    api.getSourceGroups().then(setSourceGroups).catch(() => {})
+  }, [])
 
   return (
     <div style={{ animation: 'fadeIn 0.3s ease' }}>
       {/* Header */}
-      <div className="page-header">
+      <div className="page-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
         <div>
           <h1 className="page-title">📊 Logs do Sistema</h1>
           <p className="page-subtitle">
             Acompanhe o processamento de cada mensagem e o histórico de entregas
           </p>
         </div>
+        <select
+          className="select"
+          value={sourceGroupId}
+          onChange={(e) => setSourceGroupId(e.target.value)}
+          style={{ minWidth: 220 }}
+        >
+          <option value="">Todos os grupos de origem</option>
+          {sourceGroups.map((g) => (
+            <option key={g.id} value={g.id}>{g.name}</option>
+          ))}
+        </select>
       </div>
 
       {/* Tabs */}
@@ -706,7 +723,7 @@ export default function Logs() {
       </div>
 
       {/* Content */}
-      {tab === 'processing' ? <ProcessingTab /> : <DeliveryTab />}
+      {tab === 'processing' ? <ProcessingTab sourceGroupId={sourceGroupId} /> : <DeliveryTab sourceGroupId={sourceGroupId} />}
     </div>
   )
 }
