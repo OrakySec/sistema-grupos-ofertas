@@ -136,13 +136,27 @@ def _media_type_from_message(message) -> str:
     return "NONE"
 
 
+def _sanitize_filename(filename: str) -> str:
+    """
+    Strip any directory components from a filename that came straight from the
+    Telegram message (fully attacker-controlled — anyone posting to a monitored
+    source group can set it). Without this, a file_name like "../../../etc/x"
+    escapes MEDIA_BASE_PATH/<group_id>/ when concatenated into the download
+    destination path, writing arbitrary files on the host.
+    """
+    name = filename.replace("\\", "/").split("/")[-1].strip()
+    if not name or set(name) <= {"."}:
+        return "file"
+    return name
+
+
 def _filename_from_message(message, media_type: str, message_id: int) -> str:
     """Derive a filename for media download."""
     if isinstance(message.media, MessageMediaDocument):
         doc = message.media.document
         for attr in doc.attributes:
             if isinstance(attr, DocumentAttributeFilename):
-                return attr.file_name
+                return _sanitize_filename(attr.file_name)
         # Guess extension from MIME type
         mime = getattr(doc, "mime_type", None) or ""
         ext = mimetypes.guess_extension(mime) or ""
@@ -396,7 +410,14 @@ async def _make_message_handler(http_session: aiohttp.ClientSession):
                     f"Salvo: {media_local_path}" if media_local_path
                     else "Falha no download de mídia"
                 )
-                media_caption = message.message or None
+                if media_local_path:
+                    media_caption = message.message or None
+                else:
+                    # Download failed — reset to NONE so we never send a
+                    # PHOTO/VIDEO/DOCUMENT offer with no local file (the
+                    # worker rejects that outright); fall back to plain text
+                    # below instead of silently dropping the message.
+                    media_type = "NONE"
 
             text = message.message if media_type == "NONE" else None
 

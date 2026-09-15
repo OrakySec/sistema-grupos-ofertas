@@ -110,14 +110,20 @@ export class WhatsAppService {
       return { valid: true, groupName };
     } catch (err: any) {
       const status = err.response?.status;
-      // A 4xx here means Evolution API understood the request and the invite
-      // code itself was rejected (revoked/expired/not found) — that's a
-      // confident "invalid". Anything else (network error, timeout, 5xx) is
+      const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+      // 401/403 means OUR credentials were rejected, not that the invite code
+      // was — treating that as "link invalid" would mass-flag every monitored
+      // group as expired the moment evolution_api_key is wrong/rotated.
+      if (status === 401 || status === 403) {
+        throw new Error(`Evolution API rejected our credentials while checking invite link (${status}): ${detail} — check evolution_api_key`);
+      }
+      // Any other 4xx means Evolution API understood the request and the
+      // invite code itself was rejected (revoked/expired/not found) — that's
+      // a confident "invalid". Anything else (network error, timeout, 5xx) is
       // inconclusive — bubble it up rather than reporting a false "invalid".
       if (status >= 400 && status < 500) {
         return { valid: false };
       }
-      const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
       throw new Error(`Evolution API inviteInfo check failed (${status ?? '?'}): ${detail}`);
     }
   }

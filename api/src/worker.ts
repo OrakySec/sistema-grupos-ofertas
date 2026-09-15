@@ -24,16 +24,31 @@ async function handleNewOffer(job: Job<NewOfferJobData>): Promise<void> {
     throw new Error(`Offer ${offerId} not found`);
   }
 
+  if (offer.status !== 'PENDING') {
+    // A delayed/retried job (queue backlog, worker restart) can run after a
+    // human already approved or rejected this offer manually — don't let
+    // auto-approve below silently overwrite that decision.
+    console.log(`[Worker] Offer ${offerId} is no longer PENDING (status: ${offer.status}) — already handled, skipping`);
+    return;
+  }
+
   const autoApproveSetting = await prisma.setting.findUnique({
     where: { key: 'auto_approve' },
   });
 
   if (autoApproveSetting?.value === 'true') {
-    console.log(`[Worker] Auto-approving offer ${offerId}`);
-    await prisma.offer.update({
-      where: { id: offerId },
+    // Conditional update (only flips rows still PENDING) instead of a blind
+    // write — closes the gap between the read above and this write where a
+    // manual approve/reject could otherwise be reverted.
+    const { count } = await prisma.offer.updateMany({
+      where: { id: offerId, status: 'PENDING' },
       data: { status: 'APPROVED', reviewedAt: new Date() },
     });
+    if (count === 0) {
+      console.log(`[Worker] Offer ${offerId} was handled manually just before auto-approve — skipping`);
+      return;
+    }
+    console.log(`[Worker] Auto-approving offer ${offerId}`);
     await addSendOfferJob(offerId);
   } else {
     console.log(`[Worker] Offer ${offerId} queued for manual review`);
@@ -115,10 +130,26 @@ async function handleSendOffer(job: Job<SendOfferJobData>): Promise<void> {
     return;
   }
 
+  // Idempotency guard: a BullMQ retry after a mid-loop failure (or a
+  // duplicate job for the same offer) must not re-send to destinations that
+  // already succeeded in a previous attempt.
+  const alreadyDelivered = new Set(
+    (await prisma.deliveryLog.findMany({
+      where: { offerId, status: 'SUCCESS' },
+      select: { destinationGroupId: true },
+    })).map((l) => l.destinationGroupId),
+  );
+
   let successCount = 0;
   let failCount = 0;
 
   for (const dest of destinationGroups) {
+    if (alreadyDelivered.has(dest.id)) {
+      console.log(`[Worker] Offer ${offerId}: already delivered to ${dest.type} group ${dest.name} in a previous attempt — skipping`);
+      successCount++;
+      continue;
+    }
+
     let deliveryStatus: 'SUCCESS' | 'FAILED' = 'SUCCESS';
     let errorMessage: string | undefined;
 
@@ -266,11 +297,11 @@ async function handleCheckInviteLink(): Promise<void> {
     return;
   }
 
-  const groups = await prisma.destinationGroup.findMany({
+  // inviteLink is always trimmed to a non-empty string or null when written
+  // (see groups.ts), so the `not: null` filter above is already sufficient.
+  const groupsToCheck = await prisma.destinationGroup.findMany({
     where: { type: 'WHATSAPP', isActive: true, inviteLink: { not: null } },
   });
-
-  const groupsToCheck = groups.filter((g) => g.inviteLink?.trim());
   if (groupsToCheck.length === 0) return;
 
   console.log(`[Worker] Link monitor: checking ${groupsToCheck.length} WhatsApp group invite link(s)`);
@@ -331,15 +362,37 @@ async function checkGroupInviteLink(
       alertNumber,
       `⚠️ *Alerta: link de convite expirou*\n\nO grupo "${group.name}" tem um link de convite que parou de funcionar:\n${url}\n\nGere um novo link no grupo do WhatsApp e atualize-o em Grupos → Destino.`,
     );
-    await prisma.destinationGroup.update({
-      where: { id: group.id },
-      data: { linkLastNotifiedAt: now },
-    });
+    // A few short retries here matter: if this write is lost to a transient
+    // blip right after the WhatsApp send succeeds, linkLastNotifiedAt stays
+    // stale/null and the next 15-minute cycle re-notifies immediately,
+    // turning the intended "once per 12h" cooldown into "every 15 minutes".
+    await updateLastNotifiedWithRetry(group.id, now);
   } catch (err) {
     console.error(
       `[Worker] Failed to send link-monitor alert for "${group.name}" via WhatsApp:`,
       err instanceof Error ? err.message : err,
     );
+  }
+}
+
+async function updateLastNotifiedWithRetry(groupId: string, now: Date, attempts = 3): Promise<void> {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      await prisma.destinationGroup.update({
+        where: { id: groupId },
+        data: { linkLastNotifiedAt: now },
+      });
+      return;
+    } catch (err) {
+      if (attempt === attempts) {
+        console.error(
+          `[Worker] Giving up persisting linkLastNotifiedAt for group ${groupId} after ${attempts} attempts:`,
+          err instanceof Error ? err.message : err,
+        );
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
   }
 }
 

@@ -33,8 +33,12 @@ from loguru import logger
 # URL extraction
 # ---------------------------------------------------------------------------
 
+# Emoji glued directly after a URL with no space (common in Telegram ofertas,
+# e.g. "confira 🔥https://amzn.to/xyz🚀") used to get captured as part of the
+# URL itself, corrupting it before expansion/affiliate conversion — hence the
+# \U0001F300-\U0001FAFF / ☀-➿ / variation-selector / ZWJ exclusions.
 _URL_RE = re.compile(
-    r"https?://[^\s\)\]\>\"\u2019\u201d\u300d\u3011\uff09\u300f\u3015\uff3d,，。？！]+",
+    r"https?://[^\s\)\]\>\"\u2019\u201d\u300d\u3011\uff09\u300f\u3015\uff3d,，。？！\U0001F300-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]+",
     re.IGNORECASE,
 )
 
@@ -105,7 +109,7 @@ def _now_iso() -> str:
 # ---------------------------------------------------------------------------
 
 _MARKETPLACE_URL_RE = re.compile(
-    r"https?://(?:www\.)?(?:amazon\.com\.br|amazon\.com|amzn\.to|shopee\.com\.br|shope\.ee|s\.shopee\.com\.br|aliexpress\.com|s\.click\.aliexpress\.com|magazineluiza\.com\.br|magalu\.com|magazinevoce\.com\.br|mercadolivre\.com\.br|meli\.la|mlb\.link|mercadolibre\.com)[^\s\"'<>)\u2019\u201d\u300d\u3011\uff09\u300f\u3015\uff3d,，。？！]+"
+    r"https?://(?:www\.)?(?:amazon\.com\.br|amazon\.com|amzn\.to|shopee\.com\.br|shope\.ee|s\.shopee\.com\.br|aliexpress\.com|s\.click\.aliexpress\.com|magazineluiza\.com\.br|magalu\.com|magazinevoce\.com\.br|mercadolivre\.com\.br|meli\.la|mlb\.link|mercadolibre\.com)[^\s\"'<>)\u2019\u201d\u300d\u3011\uff09\u300f\u3015\uff3d,，。？！\U0001F300-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]+"
 )
 
 def _find_redirect_url_in_html(html: str) -> Optional[str]:

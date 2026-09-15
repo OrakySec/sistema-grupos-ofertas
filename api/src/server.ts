@@ -163,7 +163,12 @@ async function buildApp() {
   // The telegram-listener uses this to fetch credentials without a user JWT.
   // Cannot live inside settingsRoutes because Fastify propagates parent hooks
   // (incluindo requireAuth) to ALL child scopes regardless of registration order.
-  server.get('/settings/internal', async (_request, reply) => {
+  server.get('/settings/internal', async (request, reply) => {
+    const internalKey = request.headers['x-internal-key'];
+    if (internalKey !== JWT_SECRET && internalKey !== INTERNAL_TOKEN) {
+      return reply.status(401).send({ error: 'Unauthorized' });
+    }
+
     const settings = await prisma.setting.findMany();
     const dbObj: Record<string, string> = {};
     for (const s of settings) dbObj[s.key] = s.value;

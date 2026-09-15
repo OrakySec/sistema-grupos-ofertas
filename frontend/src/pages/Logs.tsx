@@ -391,16 +391,22 @@ function ProcessingTab({ sourceGroupId }: { sourceGroupId: string }) {
   const [filter, setFilter]   = useState<ProcFilter>('ALL')
   const [autoRefresh, setAutoRefresh] = useState(true)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Guards against an in-flight request from a previous filter/poll tick
+  // resolving AFTER a newer one and overwriting its (more current) result.
+  const requestIdRef = useRef(0)
 
   const fetch = useCallback(async () => {
+    const requestId = ++requestIdRef.current
     try {
       const data = await api.getProcessingLogs(sourceGroupId || undefined)
+      if (requestId !== requestIdRef.current) return
       setOffers(data)
       setError('')
     } catch {
+      if (requestId !== requestIdRef.current) return
       setError('Erro ao carregar logs de processamento')
     } finally {
-      setLoading(false)
+      if (requestId === requestIdRef.current) setLoading(false)
     }
   }, [sourceGroupId])
 
@@ -511,16 +517,22 @@ function DeliveryTab({ sourceGroupId }: { sourceGroupId: string }) {
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState('')
   const [filter, setFilter]   = useState<'ALL' | 'SUCCESS' | 'FAILED'>('ALL')
+  // Guards against an in-flight request from a previous filter/poll tick
+  // resolving AFTER a newer one and overwriting its (more current) result.
+  const requestIdRef = useRef(0)
 
   const fetch = useCallback(async () => {
+    const requestId = ++requestIdRef.current
     try {
       const data = await api.getDeliveryLogs(100, sourceGroupId || undefined)
+      if (requestId !== requestIdRef.current) return
       setLogs(data)
       setError('')
     } catch {
+      if (requestId !== requestIdRef.current) return
       setError('Erro ao carregar logs')
     } finally {
-      setLoading(false)
+      if (requestId === requestIdRef.current) setLoading(false)
     }
   }, [sourceGroupId])
 

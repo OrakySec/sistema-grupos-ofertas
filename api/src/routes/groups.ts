@@ -315,10 +315,20 @@ export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
         return reply.code(404).send({ error: 'Destination group not found' });
       }
 
-      const data: UpdateDestinationGroupBody = { ...rest };
+      const data: Record<string, unknown> = { ...rest };
       if ('inviteLink' in request.body) {
-        const trimmed = inviteLink?.trim();
-        data.inviteLink = trimmed || null;
+        const trimmed = inviteLink?.trim() || null;
+        data.inviteLink = trimmed;
+        // A different link (including clearing it, or setting one for the
+        // first time) invalidates whatever the monitor last knew — otherwise
+        // a freshly pasted broken link can inherit a stale VALID status, or
+        // inherit a recent linkLastNotifiedAt and have its very first alert
+        // suppressed by the renotify cooldown (see worker.ts's shouldNotify).
+        if (trimmed !== existing.inviteLink) {
+          data.linkStatus = 'UNKNOWN';
+          data.linkLastCheckedAt = null;
+          data.linkLastNotifiedAt = null;
+        }
       }
 
       const updated = await prisma.destinationGroup.update({ where: { id }, data });
