@@ -43,9 +43,22 @@ function offerProcStatus(offer: ProcessingOffer): 'ok' | 'error' | 'skipped' | '
   const events = offer.processingLog
   if (events === null || events === undefined) return 'pending' // container not redeployed yet
   if (events.length === 0) return 'nolink'
-  if (events.some(e => e.status === 'ok')) return 'ok'
+  // Error must win over ok: a link that converted fine earlier in the log
+  // (e.g. one of several URLs) must not paint the whole card green when a
+  // later step (conversão de afiliado, timeout, etc.) actually failed and
+  // got the offer auto-rejected — that combination is exactly what showed
+  // "✅ Convertido" on an offer that was never sent to any destination.
   if (events.some(e => e.status === 'error')) return 'error'
+  if (events.some(e => e.status === 'ok')) return 'ok'
   return 'nolink'
+}
+
+const OFFER_STATUS_BADGE: Record<string, { color: string; label: string }> = {
+  PENDING:  { color: '#eab308',                label: '⏳ Pendente' },
+  APPROVED: { color: 'var(--accent-info, #3b82f6)', label: '👍 Aprovada' },
+  REJECTED: { color: 'var(--accent-danger)',   label: '🚫 Rejeitada' },
+  SENT:     { color: 'var(--accent-success)',  label: '✅ Enviada' },
+  FAILED:   { color: 'var(--accent-danger)',   label: '❌ Falhou' },
 }
 
 // ─── Step icons & colors ─────────────────────────────────────────────────────
@@ -204,6 +217,7 @@ function ProcessingCard({ offer }: { offer: ProcessingOffer }) {
   const [open, setOpen] = useState(false)
   const status = offerProcStatus(offer)
   const style  = STATUS_COLORS[status] ?? STATUS_COLORS.nolink
+  const offerStatusStyle = OFFER_STATUS_BADGE[offer.status]
   const events = offer.processingLog ?? []
   const preview = offer.text || offer.mediaCaption
   const deliveryOk = offer.deliveryLogs?.filter(d => d.status === 'SUCCESS').length ?? 0
@@ -238,7 +252,8 @@ function ProcessingCard({ offer }: { offer: ProcessingOffer }) {
           <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{timeAgo(offer.createdAt)}</div>
         </div>
 
-        {/* Status badge */}
+        {/* Link processing badge — describes just the link-conversion pipeline,
+            NOT whether the offer actually got sent (see offer status badge below) */}
         <span style={{
           flexShrink: 0,
           padding: '3px 10px',
@@ -251,6 +266,24 @@ function ProcessingCard({ offer }: { offer: ProcessingOffer }) {
         }}>
           {style.label}
         </span>
+
+        {/* Offer status badge — the actual ground truth (offer.status), so an
+            offer auto-rejected after a link error is never confused with one
+            that got through, even when the link pipeline had some ok step */}
+        {offerStatusStyle && (
+          <span style={{
+            flexShrink: 0,
+            padding: '3px 10px',
+            borderRadius: 20,
+            fontSize: '0.72rem',
+            fontWeight: 700,
+            border: `1px solid ${offerStatusStyle.color}`,
+            color: offerStatusStyle.color,
+            whiteSpace: 'nowrap',
+          }}>
+            {offerStatusStyle.label}
+          </span>
+        )}
 
         {/* Group */}
         <div style={{ flexShrink: 0 }}>
