@@ -590,6 +590,14 @@ class AffiliateConverter:
                     affiliate_url, build_error = None, "Automação do Mercado Livre não inicializada"
                 else:
                     affiliate_url, build_error = await self.ml_session.generate_affiliate_link(expanded)
+                    # One retry — most failures here are transient (slow page
+                    # load, element not ready yet, a stuck page the pool
+                    # already swapped out), not a real selector/site change.
+                    # Skip it for an expired session — retrying that is
+                    # guaranteed to fail again identically.
+                    if affiliate_url is None and build_error and "expirada" not in build_error:
+                        logger.info(f"[affiliate] ML link generation failed once, retrying: {build_error}")
+                        affiliate_url, build_error = await self.ml_session.generate_affiliate_link(expanded)
             else:
                 affiliate_url, build_error = self._build_affiliate(platform, expanded)
             if affiliate_url is None:

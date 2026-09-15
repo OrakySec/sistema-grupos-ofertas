@@ -20,6 +20,7 @@ exported storage_state (cookies), never handles credentials.
 """
 
 import asyncio
+import os
 import time
 from pathlib import Path
 from typing import Optional
@@ -32,6 +33,17 @@ LINK_BUILDER_URL = "https://www.mercadolivre.com.br/afiliados/linkbuilder"
 # The status check does a real page navigation (a few seconds) — cache the
 # result briefly so GET /settings (which reads this on every load) stays fast.
 _STATUS_CACHE_TTL_SECONDS = 60
+
+# Telethon dispatches messages from different source groups as CONCURRENT
+# asyncio tasks (it does not serialize them) — under any real traffic,
+# several "generate affiliate link" calls land here at close to the same
+# moment. With a single shared Page they used to queue up single-file: the
+# N-th message in line could burn through most of its 90s per-message budget
+# just WAITING for a turn, before the automation itself even started, and
+# then still time out even though no individual Playwright call was slow.
+# A small pool of pages under the same logged-in context lets a few of these
+# run at once instead of piling up behind one another.
+_POOL_SIZE = int(os.environ.get("ML_BROWSER_POOL_SIZE", "3"))
 
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -46,9 +58,13 @@ def _looks_logged_in(current_url: str) -> bool:
 
 class MLBrowserSession:
     """
-    Owns a single long-lived headless Chromium browser + context/page,
-    serialized behind an asyncio.Lock (message processing is already
-    sequential, so this just prevents overlap if that ever changes).
+    Owns a pool of long-lived headless Chromium pages under one shared,
+    already-logged-in browser context — see the module docstring above for
+    why a pool instead of one shared Page. Each `generate_affiliate_link`/
+    `check_session_status` call checks a page out of the pool and always
+    returns one (a fresh replacement if the checked-out page just failed or
+    the call was cancelled mid-flight), so a single broken page can never
+    permanently shrink the pool or wedge every future call behind it.
     """
 
     def __init__(self, storage_state_path: str) -> None:
@@ -56,8 +72,7 @@ class MLBrowserSession:
         self._playwright: Optional[Playwright] = None
         self._browser: Optional[Browser] = None
         self._context: Optional[BrowserContext] = None
-        self._page: Optional[Page] = None
-        self._lock = asyncio.Lock()
+        self._pool: "asyncio.Queue[Page]" = asyncio.Queue()
         self._status_cache: Optional[bool] = None
         self._status_cache_at: float = 0.0
 
@@ -68,9 +83,13 @@ class MLBrowserSession:
             args=["--no-sandbox", "--disable-dev-shm-usage"],
         )
         await self._open_context()
-        logger.info("[ml_browser] Playwright browser started")
+        logger.info(f"[ml_browser] Playwright browser started (pool size {_POOL_SIZE})")
 
     async def _open_context(self) -> None:
+        """(Re)creates the browser context + the whole page pool from scratch.
+        Closing the old context (if any) also closes every page still under
+        it, so the caller must make sure no page from the old pool is
+        currently checked out — see reload_session()."""
         if self._context is not None:
             try:
                 await self._context.close()
@@ -83,14 +102,35 @@ class MLBrowserSession:
         # Chromium supports the async Clipboard API in-process — no OS
         # clipboard / Xvfb dependency needed, unlike Selenium+pyperclip.
         await self._context.grant_permissions(["clipboard-read", "clipboard-write"], origin=LINK_BUILDER_URL)
-        self._page = await self._context.new_page()
+        for _ in range(_POOL_SIZE):
+            await self._pool.put(await self._context.new_page())
+
+    async def _replace_page(self, page: Page) -> Page:
+        """Swap out a page that just failed/was cancelled for a fresh one
+        from the same context, so one bad page doesn't keep failing every
+        subsequent link that happens to draw it from the pool."""
+        try:
+            await page.close()
+        except Exception:
+            pass
+        try:
+            return await self._context.new_page()
+        except Exception as exc:
+            logger.warning(f"[ml_browser] Failed to open a replacement page: {exc}")
+            # Last resort: hand back the possibly-broken page rather than
+            # permanently losing a pool slot.
+            return page
 
     async def reload_session(self) -> None:
         """Call after a new storage_state file is uploaded so it takes effect immediately."""
-        async with self._lock:
-            await self._open_context()
-            self._status_cache = None
-            logger.info("[ml_browser] Session reloaded from disk")
+        # Wait for every checked-out page to come back before swapping the
+        # context out from under an in-flight generate_affiliate_link/
+        # check_session_status call.
+        for _ in range(_POOL_SIZE):
+            await self._pool.get()
+        await self._open_context()
+        self._status_cache = None
+        logger.info("[ml_browser] Session reloaded from disk")
 
     async def stop(self) -> None:
         try:
@@ -111,20 +151,26 @@ class MLBrowserSession:
         GET /settings reads this on every load and shouldn't pay that cost
         every time. Pass force=True to bypass the cache (e.g. right after upload).
         """
-        if self._page is None or not self.storage_state_path.exists():
+        if self._context is None or not self.storage_state_path.exists():
             return False
 
         now = time.monotonic()
         if not force and self._status_cache is not None and (now - self._status_cache_at) < _STATUS_CACHE_TTL_SECONDS:
             return self._status_cache
 
-        async with self._lock:
-            try:
-                resp = await self._page.goto(LINK_BUILDER_URL, wait_until="domcontentloaded", timeout=20000)
-                active = _looks_logged_in(self._page.url) and not (resp is not None and resp.status >= 400)
-            except Exception as exc:
-                logger.warning(f"[ml_browser] Session status check failed: {exc}")
-                active = False
+        page = await self._pool.get()
+        active = False
+        try:
+            resp = await page.goto(LINK_BUILDER_URL, wait_until="domcontentloaded", timeout=20000)
+            active = _looks_logged_in(page.url) and not (resp is not None and resp.status >= 400)
+        except asyncio.CancelledError:
+            page = await self._replace_page(page)
+            raise
+        except Exception as exc:
+            logger.warning(f"[ml_browser] Session status check failed: {exc}")
+            page = await self._replace_page(page)
+        finally:
+            await self._pool.put(page)
 
         self._status_cache = active
         self._status_cache_at = now
@@ -142,71 +188,81 @@ class MLBrowserSession:
         failure (visible button texts) is there specifically to make fixing
         selector drift fast without needing another full research round.
         """
-        if self._page is None:
+        if self._context is None:
             return None, "Navegador do Mercado Livre ainda não inicializado"
         if not self.storage_state_path.exists():
             return None, "Sessão do Mercado Livre não configurada (faça upload em Configurações)"
 
-        async with self._lock:
-            page = self._page
+        page = await self._pool.get()
+        try:
+            await page.goto(LINK_BUILDER_URL, wait_until="domcontentloaded", timeout=20000)
+
+            if not _looks_logged_in(page.url):
+                return None, "Sessão do Mercado Livre expirada — gere uma nova sessão e faça upload em Configurações"
+
+            input_field = page.locator("#url-0")
             try:
-                await page.goto(LINK_BUILDER_URL, wait_until="domcontentloaded", timeout=20000)
+                await input_field.wait_for(state="visible", timeout=15000)
+            except Exception:
+                # Fallback: any single visible text input on the page
+                input_field = page.locator("input[type='text'], input[type='url']").first
+                await input_field.wait_for(state="visible", timeout=10000)
 
-                if not _looks_logged_in(page.url):
-                    return None, "Sessão do Mercado Livre expirada — gere uma nova sessão e faça upload em Configurações"
+            await input_field.fill("")
+            await input_field.fill(product_url)
 
-                input_field = page.locator("#url-0")
+            generate_button = page.get_by_text("Gerar", exact=False).first
+            await generate_button.click(timeout=15000)
+
+            copy_button = page.get_by_text("Copiar", exact=False).first
+            await copy_button.wait_for(state="visible", timeout=15000)
+
+            affiliate_link: Optional[str] = None
+
+            # Strategy 1: a readonly input/textarea holding the generated link
+            try:
+                result_locator = page.locator("input[readonly], textarea[readonly]").first
+                await result_locator.wait_for(state="visible", timeout=5000)
+                candidate = await result_locator.input_value()
+                if candidate and candidate.startswith("http"):
+                    affiliate_link = candidate
+            except Exception:
+                pass
+
+            # Strategy 2: click "Copiar" and read it back from the clipboard
+            if not affiliate_link:
+                await copy_button.click(timeout=10000)
                 try:
-                    await input_field.wait_for(state="visible", timeout=15000)
-                except Exception:
-                    # Fallback: any single visible text input on the page
-                    input_field = page.locator("input[type='text'], input[type='url']").first
-                    await input_field.wait_for(state="visible", timeout=10000)
+                    clipboard_text = await page.evaluate("navigator.clipboard.readText()")
+                    if clipboard_text and clipboard_text.startswith("http"):
+                        affiliate_link = clipboard_text
+                except Exception as exc:
+                    logger.debug(f"[ml_browser] Clipboard read failed: {exc}")
 
-                await input_field.fill("")
-                await input_field.fill(product_url)
+            if not affiliate_link:
+                visible_texts = await page.locator("button, span").all_inner_texts()
+                logger.warning(
+                    f"[ml_browser] Could not extract generated link for {product_url[:80]} — "
+                    f"visible button/span texts on page: {visible_texts[:30]}"
+                )
+                return None, "Não foi possível ler o link gerado pelo Link Builder (seletor pode ter mudado)"
 
-                generate_button = page.get_by_text("Gerar", exact=False).first
-                await generate_button.click(timeout=15000)
+            return affiliate_link, None
 
-                copy_button = page.get_by_text("Copiar", exact=False).first
-                await copy_button.wait_for(state="visible", timeout=15000)
-
-                affiliate_link: Optional[str] = None
-
-                # Strategy 1: a readonly input/textarea holding the generated link
-                try:
-                    result_locator = page.locator("input[readonly], textarea[readonly]").first
-                    await result_locator.wait_for(state="visible", timeout=5000)
-                    candidate = await result_locator.input_value()
-                    if candidate and candidate.startswith("http"):
-                        affiliate_link = candidate
-                except Exception:
-                    pass
-
-                # Strategy 2: click "Copiar" and read it back from the clipboard
-                if not affiliate_link:
-                    await copy_button.click(timeout=10000)
-                    try:
-                        clipboard_text = await page.evaluate("navigator.clipboard.readText()")
-                        if clipboard_text and clipboard_text.startswith("http"):
-                            affiliate_link = clipboard_text
-                    except Exception as exc:
-                        logger.debug(f"[ml_browser] Clipboard read failed: {exc}")
-
-                if not affiliate_link:
-                    visible_texts = await page.locator("button, span").all_inner_texts()
-                    logger.warning(
-                        f"[ml_browser] Could not extract generated link for {product_url[:80]} — "
-                        f"visible button/span texts on page: {visible_texts[:30]}"
-                    )
-                    return None, "Não foi possível ler o link gerado pelo Link Builder (seletor pode ter mudado)"
-
-                return affiliate_link, None
-
-            except Exception as exc:
-                logger.warning(f"[ml_browser] Failed to generate affiliate link for {product_url[:80]}: {exc}")
-                return None, f"Falha na automação do Link Builder: {exc}"
+        except asyncio.CancelledError:
+            # Almost always the 90s per-message wait_for() upstream cancelling
+            # this call — the page may be mid-navigation/mid-click. Never
+            # reuse it as-is, or the NEXT link that draws it from the pool
+            # inherits whatever inconsistent state it was left in.
+            logger.warning(f"[ml_browser] Link generation for {product_url[:80]} was cancelled (likely a timeout upstream)")
+            page = await self._replace_page(page)
+            raise
+        except Exception as exc:
+            logger.warning(f"[ml_browser] Failed to generate affiliate link for {product_url[:80]}: {exc}")
+            page = await self._replace_page(page)
+            return None, f"Falha na automação do Link Builder: {exc}"
+        finally:
+            await self._pool.put(page)
 
 
 _session: Optional[MLBrowserSession] = None
