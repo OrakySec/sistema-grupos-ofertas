@@ -166,7 +166,27 @@ export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
         return reply.code(404).send({ error: 'Source group not found' });
       }
 
-      await prisma.sourceGroup.delete({ where: { id } });
+      // Offer.sourceGroupId has no onDelete: Cascade (on purpose — deleting
+      // a source group must never silently wipe its offer history/logs).
+      // Check first so the user gets an actionable message instead of a raw
+      // Postgres foreign key error.
+      const offerCount = await prisma.offer.count({ where: { sourceGroupId: id } });
+      if (offerCount > 0) {
+        return reply.code(409).send({
+          error: 'Source group has offer history',
+          message: `Este grupo tem ${offerCount} oferta${offerCount === 1 ? '' : 's'} no histórico e não pode ser excluído. Desative-o (toggle de Status) em vez de excluir, pra manter o histórico intacto.`,
+        });
+      }
+
+      try {
+        await prisma.sourceGroup.delete({ where: { id } });
+      } catch (err) {
+        fastify.log.error({ err }, `Failed to delete source group ${id}`);
+        return reply.code(409).send({
+          error: 'Cannot delete source group',
+          message: 'Não foi possível excluir esse grupo — ele ainda tem registros vinculados. Desative-o em vez de excluir.',
+        });
+      }
       return reply.code(204).send();
     },
   );
@@ -356,7 +376,26 @@ export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
         return reply.code(404).send({ error: 'Destination group not found' });
       }
 
-      await prisma.destinationGroup.delete({ where: { id } });
+      // Same reasoning as DELETE /source/:id — DeliveryLog.destinationGroupId
+      // has no onDelete: Cascade on purpose, so check first instead of
+      // letting a raw Postgres FK error reach the user.
+      const deliveryLogCount = await prisma.deliveryLog.count({ where: { destinationGroupId: id } });
+      if (deliveryLogCount > 0) {
+        return reply.code(409).send({
+          error: 'Destination group has delivery history',
+          message: `Este grupo tem ${deliveryLogCount} entrega${deliveryLogCount === 1 ? '' : 's'} no histórico e não pode ser excluído. Desative-o (toggle de Status) em vez de excluir, pra manter o histórico intacto.`,
+        });
+      }
+
+      try {
+        await prisma.destinationGroup.delete({ where: { id } });
+      } catch (err) {
+        fastify.log.error({ err }, `Failed to delete destination group ${id}`);
+        return reply.code(409).send({
+          error: 'Cannot delete destination group',
+          message: 'Não foi possível excluir esse grupo — ele ainda tem registros vinculados. Desative-o em vez de excluir.',
+        });
+      }
       return reply.code(204).send();
     },
   );
