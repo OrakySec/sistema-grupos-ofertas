@@ -5,6 +5,18 @@
 
 const BASE_URL = (import.meta.env.VITE_API_URL as string) || '/api'
 
+// Carries the HTTP status alongside the message so callers can react to a
+// specific status (e.g. 409 "has history, confirm force-delete") instead of
+// only having the display text to work with.
+export class ApiError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
 export interface PaginationParams {
   page?: number
   limit?: number
@@ -235,7 +247,7 @@ class ApiClient {
       const errMsg =
         (data as { message?: string })?.message ||
         `Erro ${res.status}: ${res.statusText}`
-      throw new Error(errMsg)
+      throw new ApiError(errMsg, res.status)
     }
 
     return data as T
@@ -311,8 +323,8 @@ class ApiClient {
     return this.request('PATCH', `/groups/source/${id}`, data)
   }
 
-  async deleteSourceGroup(id: string): Promise<{ success: boolean }> {
-    return this.request('DELETE', `/groups/source/${id}`)
+  async deleteSourceGroup(id: string, force = false): Promise<{ success: boolean }> {
+    return this.request('DELETE', `/groups/source/${id}${force ? '?force=true' : ''}`)
   }
 
   // ── Niches ────────────────────────────────────
@@ -397,8 +409,8 @@ class ApiClient {
     return this.request('PATCH', `/groups/destination/${id}`, data)
   }
 
-  async deleteDestinationGroup(id: string): Promise<{ success: boolean }> {
-    return this.request('DELETE', `/groups/destination/${id}`)
+  async deleteDestinationGroup(id: string, force = false): Promise<{ success: boolean }> {
+    return this.request('DELETE', `/groups/destination/${id}${force ? '?force=true' : ''}`)
   }
 
   // ── Settings ──────────────────────────────────

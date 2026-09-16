@@ -10,6 +10,7 @@ interface CreateSourceGroupBody {
 
 interface UpdateSourceGroupBody {
   name?: string;
+  telegramId?: string; // sent as string, parsed to BigInt
   username?: string;
   isActive?: boolean;
   nicheId?: string | null;
@@ -24,6 +25,7 @@ interface CreateDestinationGroupBody {
 
 interface UpdateDestinationGroupBody {
   name?: string;
+  chatId?: string;
   isActive?: boolean;
   inviteLink?: string | null;
 }
@@ -114,6 +116,7 @@ export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
           type: 'object',
           properties: {
             name: { type: 'string', minLength: 1 },
+            telegramId: { type: 'string' },
             username: { type: 'string' },
             isActive: { type: 'boolean' },
             nicheId: { type: ['string', 'null'] },
@@ -123,18 +126,36 @@ export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
     },
     async (request, reply) => {
       const { id } = request.params;
-      const data = request.body;
+      const { telegramId, ...rest } = request.body;
 
       const existing = await prisma.sourceGroup.findUnique({ where: { id } });
       if (!existing) {
         return reply.code(404).send({ error: 'Source group not found' });
       }
 
-      if (typeof data.nicheId === 'string') {
-        const niche = await prisma.niche.findUnique({ where: { id: data.nicheId } });
+      if (typeof rest.nicheId === 'string') {
+        const niche = await prisma.niche.findUnique({ where: { id: rest.nicheId } });
         if (!niche) {
           return reply.code(404).send({ error: 'Nicho não encontrado' });
         }
+      }
+
+      const data: Record<string, unknown> = { ...rest };
+      if (telegramId !== undefined) {
+        let telegramIdBig: bigint;
+        try {
+          telegramIdBig = BigInt(telegramId);
+        } catch {
+          return reply.code(400).send({ error: 'Invalid telegramId format' });
+        }
+        const conflict = await prisma.sourceGroup.findUnique({ where: { telegramId: telegramIdBig } });
+        if (conflict && conflict.id !== id) {
+          return reply.code(409).send({
+            error: 'telegramId already in use',
+            message: `Já existe outro grupo fonte ("${conflict.name}") usando esse Telegram ID.`,
+          });
+        }
+        data.telegramId = telegramIdBig;
       }
 
       const updated = await prisma.sourceGroup.update({
@@ -146,8 +167,8 @@ export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
     },
   );
 
-  // DELETE /groups/source/:id
-  fastify.delete<{ Params: { id: string } }>(
+  // DELETE /groups/source/:id?force=true
+  fastify.delete<{ Params: { id: string }; Querystring: { force?: string } }>(
     '/source/:id',
     {
       schema: {
@@ -156,10 +177,15 @@ export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
           required: ['id'],
           properties: { id: { type: 'string' } },
         },
+        querystring: {
+          type: 'object',
+          properties: { force: { type: 'string' } },
+        },
       },
     },
     async (request, reply) => {
       const { id } = request.params;
+      const force = request.query.force === 'true';
 
       const existing = await prisma.sourceGroup.findUnique({ where: { id } });
       if (!existing) {
@@ -167,19 +193,28 @@ export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
       }
 
       // Offer.sourceGroupId has no onDelete: Cascade (on purpose — deleting
-      // a source group must never silently wipe its offer history/logs).
-      // Check first so the user gets an actionable message instead of a raw
-      // Postgres foreign key error.
+      // a source group must never silently wipe its offer history/logs
+      // unless the caller explicitly opts into it via ?force=true).
       const offerCount = await prisma.offer.count({ where: { sourceGroupId: id } });
-      if (offerCount > 0) {
+      if (offerCount > 0 && !force) {
         return reply.code(409).send({
           error: 'Source group has offer history',
-          message: `Este grupo tem ${offerCount} oferta${offerCount === 1 ? '' : 's'} no histórico e não pode ser excluído. Desative-o (toggle de Status) em vez de excluir, pra manter o histórico intacto.`,
+          message: `Este grupo tem ${offerCount} oferta${offerCount === 1 ? '' : 's'} no histórico e não pode ser excluído. Desative-o (toggle de Status) em vez de excluir, pra manter o histórico intacto — ou confirme a exclusão definitiva.`,
         });
       }
 
       try {
-        await prisma.sourceGroup.delete({ where: { id } });
+        if (offerCount > 0) {
+          // force=true: wipe the offers (and their delivery logs) along
+          // with the group, atomically, instead of leaving orphaned rows.
+          await prisma.$transaction([
+            prisma.deliveryLog.deleteMany({ where: { offer: { sourceGroupId: id } } }),
+            prisma.offer.deleteMany({ where: { sourceGroupId: id } }),
+            prisma.sourceGroup.delete({ where: { id } }),
+          ]);
+        } else {
+          await prisma.sourceGroup.delete({ where: { id } });
+        }
       } catch (err) {
         fastify.log.error({ err }, `Failed to delete source group ${id}`);
         return reply.code(409).send({
@@ -320,6 +355,7 @@ export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
           type: 'object',
           properties: {
             name: { type: 'string', minLength: 1 },
+            chatId: { type: 'string', minLength: 1 },
             isActive: { type: 'boolean' },
             inviteLink: { type: ['string', 'null'] },
           },
@@ -356,8 +392,8 @@ export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
     },
   );
 
-  // DELETE /groups/destination/:id
-  fastify.delete<{ Params: { id: string } }>(
+  // DELETE /groups/destination/:id?force=true
+  fastify.delete<{ Params: { id: string }; Querystring: { force?: string } }>(
     '/destination/:id',
     {
       schema: {
@@ -366,10 +402,15 @@ export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
           required: ['id'],
           properties: { id: { type: 'string' } },
         },
+        querystring: {
+          type: 'object',
+          properties: { force: { type: 'string' } },
+        },
       },
     },
     async (request, reply) => {
       const { id } = request.params;
+      const force = request.query.force === 'true';
 
       const existing = await prisma.destinationGroup.findUnique({ where: { id } });
       if (!existing) {
@@ -377,18 +418,25 @@ export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
       }
 
       // Same reasoning as DELETE /source/:id — DeliveryLog.destinationGroupId
-      // has no onDelete: Cascade on purpose, so check first instead of
-      // letting a raw Postgres FK error reach the user.
+      // has no onDelete: Cascade on purpose, so check first unless the
+      // caller explicitly opts into wiping history via ?force=true.
       const deliveryLogCount = await prisma.deliveryLog.count({ where: { destinationGroupId: id } });
-      if (deliveryLogCount > 0) {
+      if (deliveryLogCount > 0 && !force) {
         return reply.code(409).send({
           error: 'Destination group has delivery history',
-          message: `Este grupo tem ${deliveryLogCount} entrega${deliveryLogCount === 1 ? '' : 's'} no histórico e não pode ser excluído. Desative-o (toggle de Status) em vez de excluir, pra manter o histórico intacto.`,
+          message: `Este grupo tem ${deliveryLogCount} entrega${deliveryLogCount === 1 ? '' : 's'} no histórico e não pode ser excluído. Desative-o (toggle de Status) em vez de excluir, pra manter o histórico intacto — ou confirme a exclusão definitiva.`,
         });
       }
 
       try {
-        await prisma.destinationGroup.delete({ where: { id } });
+        if (deliveryLogCount > 0) {
+          await prisma.$transaction([
+            prisma.deliveryLog.deleteMany({ where: { destinationGroupId: id } }),
+            prisma.destinationGroup.delete({ where: { id } }),
+          ]);
+        } else {
+          await prisma.destinationGroup.delete({ where: { id } });
+        }
       } catch (err) {
         fastify.log.error({ err }, `Failed to delete destination group ${id}`);
         return reply.code(409).send({

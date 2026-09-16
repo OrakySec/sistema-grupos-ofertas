@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import api, {
+  ApiError,
   type SourceGroup,
   type DestinationGroup,
   type WhatsAppGroup,
@@ -717,11 +718,12 @@ function NicheConfigModal({ isOpen, niche, onClose, onSaved }: NicheConfigModalP
 /* ─── Source Group Modal ─────────────────── */
 interface SourceGroupModalProps {
   isOpen: boolean
+  editing?: SourceGroup | null
   onClose: () => void
   onSaved: () => void
 }
 
-function SourceGroupModal({ isOpen, onClose, onSaved }: SourceGroupModalProps) {
+function SourceGroupModal({ isOpen, editing, onClose, onSaved }: SourceGroupModalProps) {
   const [name, setName] = useState('')
   const [telegramId, setTelegramId] = useState('')
   const [username, setUsername] = useState('')
@@ -729,13 +731,18 @@ function SourceGroupModal({ isOpen, onClose, onSaved }: SourceGroupModalProps) {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (!isOpen) {
+    if (isOpen) {
+      setName(editing?.name ?? '')
+      setTelegramId(editing?.telegramId ?? '')
+      setUsername(editing?.username ?? '')
+      setError('')
+    } else {
       setName('')
       setTelegramId('')
       setUsername('')
       setError('')
     }
-  }, [isOpen])
+  }, [isOpen, editing])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -746,7 +753,11 @@ function SourceGroupModal({ isOpen, onClose, onSaved }: SourceGroupModalProps) {
     setLoading(true)
     setError('')
     try {
-      await api.createSourceGroup({ name, telegramId, username: username || undefined })
+      if (editing) {
+        await api.updateSourceGroup(editing.id, { name, telegramId, username: username || undefined })
+      } else {
+        await api.createSourceGroup({ name, telegramId, username: username || undefined })
+      }
       onSaved()
       onClose()
     } catch (err) {
@@ -760,7 +771,7 @@ function SourceGroupModal({ isOpen, onClose, onSaved }: SourceGroupModalProps) {
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Adicionar Grupo Fonte"
+      title={editing ? 'Editar Grupo Fonte' : 'Adicionar Grupo Fonte'}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>
@@ -829,11 +840,12 @@ function SourceGroupModal({ isOpen, onClose, onSaved }: SourceGroupModalProps) {
 /* ─── Destination Group Modal ────────────── */
 interface DestGroupModalProps {
   isOpen: boolean
+  editing?: DestinationGroup | null
   onClose: () => void
   onSaved: () => void
 }
 
-function DestGroupModal({ isOpen, onClose, onSaved }: DestGroupModalProps) {
+function DestGroupModal({ isOpen, editing, onClose, onSaved }: DestGroupModalProps) {
   const [name, setName] = useState('')
   const [type, setType] = useState<'TELEGRAM' | 'WHATSAPP'>('TELEGRAM')
   const [chatId, setChatId] = useState('')
@@ -845,7 +857,15 @@ function DestGroupModal({ isOpen, onClose, onSaved }: DestGroupModalProps) {
   const [waSearch, setWaSearch] = useState('')
 
   useEffect(() => {
-    if (!isOpen) {
+    if (isOpen) {
+      setName(editing?.name ?? '')
+      setType(editing?.type ?? 'TELEGRAM')
+      setChatId(editing?.chatId ?? '')
+      setInviteLink(editing?.inviteLink ?? '')
+      setError('')
+      setWaGroups([])
+      setWaSearch('')
+    } else {
       setName('')
       setType('TELEGRAM')
       setChatId('')
@@ -854,7 +874,7 @@ function DestGroupModal({ isOpen, onClose, onSaved }: DestGroupModalProps) {
       setWaGroups([])
       setWaSearch('')
     }
-  }, [isOpen])
+  }, [isOpen, editing])
 
   const handleFetchWaGroups = async () => {
     setWaLoading(true)
@@ -886,12 +906,20 @@ function DestGroupModal({ isOpen, onClose, onSaved }: DestGroupModalProps) {
     setLoading(true)
     setError('')
     try {
-      await api.createDestinationGroup({
-        name,
-        type,
-        chatId,
-        inviteLink: type === 'WHATSAPP' ? inviteLink.trim() || undefined : undefined,
-      })
+      if (editing) {
+        await api.updateDestinationGroup(editing.id, {
+          name,
+          chatId,
+          inviteLink: type === 'WHATSAPP' ? (inviteLink.trim() || null) : null,
+        })
+      } else {
+        await api.createDestinationGroup({
+          name,
+          type,
+          chatId,
+          inviteLink: type === 'WHATSAPP' ? inviteLink.trim() || undefined : undefined,
+        })
+      }
       onSaved()
       onClose()
     } catch (err) {
@@ -905,7 +933,7 @@ function DestGroupModal({ isOpen, onClose, onSaved }: DestGroupModalProps) {
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Adicionar Grupo Destino"
+      title={editing ? 'Editar Grupo Destino' : 'Adicionar Grupo Destino'}
       width={520}
       footer={
         <>
@@ -943,7 +971,14 @@ function DestGroupModal({ isOpen, onClose, onSaved }: DestGroupModalProps) {
           />
         </div>
         <div className="form-group">
-          <label className="label">Tipo</label>
+          <label className="label">
+            Tipo
+            {editing && (
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 8 }}>
+                não pode ser alterado — crie um novo grupo se precisar trocar de plataforma
+              </span>
+            )}
+          </label>
           <div style={{ display: 'flex', gap: 8 }}>
             {(['TELEGRAM', 'WHATSAPP'] as const).map((t) => (
               <button
@@ -951,7 +986,8 @@ function DestGroupModal({ isOpen, onClose, onSaved }: DestGroupModalProps) {
                 type="button"
                 className={`btn btn-sm ${type === t ? 'btn-primary' : 'btn-secondary'}`}
                 onClick={() => setType(t)}
-                style={{ flex: 1 }}
+                disabled={!!editing}
+                style={{ flex: 1, opacity: editing && type !== t ? 0.5 : 1 }}
               >
                 {t === 'TELEGRAM' ? '✈️' : '💬'} {t}
               </button>
@@ -1084,6 +1120,8 @@ export default function Groups() {
   const [loadingNiches, setLoadingNiches] = useState(true)
   const [showAddSrc, setShowAddSrc] = useState(false)
   const [showAddDest, setShowAddDest] = useState(false)
+  const [editingSource, setEditingSource] = useState<SourceGroup | null>(null)
+  const [editingDest, setEditingDest] = useState<DestinationGroup | null>(null)
   const [showAddNiche, setShowAddNiche] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [togglingId, setTogglingId] = useState<string | null>(null)
@@ -1163,7 +1201,20 @@ export default function Groups() {
       setSourceGroups((prev) => prev.filter((g) => g.id !== id))
       addToast('Grupo de origem removido com sucesso.', 'success')
     } catch (err) {
-      addToast(err instanceof Error ? err.message : 'Erro', 'error')
+      // 409 = has offer history (see api/src/routes/groups.ts) — offer a
+      // deliberate second confirmation to force-delete it (and its history)
+      // instead of just failing.
+      if (err instanceof ApiError && err.status === 409 && confirm(`${err.message}\n\nExcluir mesmo assim? Essa ação apaga o histórico permanentemente.`)) {
+        try {
+          await api.deleteSourceGroup(id, true)
+          setSourceGroups((prev) => prev.filter((g) => g.id !== id))
+          addToast('Grupo de origem e seu histórico foram removidos.', 'success')
+        } catch (err2) {
+          addToast(err2 instanceof Error ? err2.message : 'Erro', 'error')
+        }
+      } else if (!(err instanceof ApiError && err.status === 409)) {
+        addToast(err instanceof Error ? err.message : 'Erro', 'error')
+      }
     } finally {
       setDeletingId(null)
     }
@@ -1201,7 +1252,17 @@ export default function Groups() {
       setDestGroups((prev) => prev.filter((g) => g.id !== id))
       addToast('Grupo de destino removido com sucesso.', 'success')
     } catch (err) {
-      addToast(err instanceof Error ? err.message : 'Erro', 'error')
+      if (err instanceof ApiError && err.status === 409 && confirm(`${err.message}\n\nExcluir mesmo assim? Essa ação apaga o histórico permanentemente.`)) {
+        try {
+          await api.deleteDestinationGroup(id, true)
+          setDestGroups((prev) => prev.filter((g) => g.id !== id))
+          addToast('Grupo de destino e seu histórico foram removidos.', 'success')
+        } catch (err2) {
+          addToast(err2 instanceof Error ? err2.message : 'Erro', 'error')
+        }
+      } else if (!(err instanceof ApiError && err.status === 409)) {
+        addToast(err instanceof Error ? err.message : 'Erro', 'error')
+      }
     } finally {
       setDeletingId(null)
     }
@@ -1237,14 +1298,22 @@ export default function Groups() {
   return (
     <div style={{ animation: 'fadeIn 0.3s ease' }}>
       <SourceGroupModal
-        isOpen={showAddSrc}
-        onClose={() => setShowAddSrc(false)}
-        onSaved={() => { fetchAll(); addToast('Grupo de origem adicionado com sucesso!', 'success'); }}
+        isOpen={showAddSrc || editingSource !== null}
+        editing={editingSource}
+        onClose={() => { setShowAddSrc(false); setEditingSource(null) }}
+        onSaved={() => {
+          fetchAll()
+          addToast(editingSource ? 'Grupo de origem atualizado com sucesso!' : 'Grupo de origem adicionado com sucesso!', 'success')
+        }}
       />
       <DestGroupModal
-        isOpen={showAddDest}
-        onClose={() => setShowAddDest(false)}
-        onSaved={() => { fetchAll(); addToast('Grupo de destino adicionado com sucesso!', 'success'); }}
+        isOpen={showAddDest || editingDest !== null}
+        editing={editingDest}
+        onClose={() => { setShowAddDest(false); setEditingDest(null) }}
+        onSaved={() => {
+          fetchAll()
+          addToast(editingDest ? 'Grupo de destino atualizado com sucesso!' : 'Grupo de destino adicionado com sucesso!', 'success')
+        }}
       />
       <LinkDestinationsModal
         isOpen={linkTarget !== null}
@@ -1469,14 +1538,23 @@ export default function Groups() {
                       />
                     </td>
                     <td>
-                      <button
-                        className="icon-btn danger"
-                        onClick={() => deleteSource(g.id)}
-                        disabled={deletingId === g.id}
-                        title="Remover"
-                      >
-                        {deletingId === g.id ? <span className="spinner spinner-sm" /> : '🗑'}
-                      </button>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          className="icon-btn"
+                          onClick={() => setEditingSource(g)}
+                          title="Editar"
+                        >
+                          ✏️
+                        </button>
+                        <button
+                          className="icon-btn danger"
+                          onClick={() => deleteSource(g.id)}
+                          disabled={deletingId === g.id}
+                          title="Remover"
+                        >
+                          {deletingId === g.id ? <span className="spinner spinner-sm" /> : '🗑'}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -1602,14 +1680,23 @@ export default function Groups() {
                       />
                     </td>
                     <td>
-                      <button
-                        className="icon-btn danger"
-                        onClick={() => deleteDest(g.id)}
-                        disabled={deletingId === g.id}
-                        title="Remover"
-                      >
-                        {deletingId === g.id ? <span className="spinner spinner-sm" /> : '🗑'}
-                      </button>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          className="icon-btn"
+                          onClick={() => setEditingDest(g)}
+                          title="Editar"
+                        >
+                          ✏️
+                        </button>
+                        <button
+                          className="icon-btn danger"
+                          onClick={() => deleteDest(g.id)}
+                          disabled={deletingId === g.id}
+                          title="Remover"
+                        >
+                          {deletingId === g.id ? <span className="spinner spinner-sm" /> : '🗑'}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
