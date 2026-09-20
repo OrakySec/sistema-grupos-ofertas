@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import GroupsHealthPanel from '../components/GroupsHealthPanel'
+import UnidentifiedLinksPanel from '../components/UnidentifiedLinksPanel'
 import api, { type DeliveryLog, type ProcessingOffer, type ProcessingEvent, type SourceGroup } from '../lib/api'
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -718,7 +719,7 @@ function DeliveryTab({ sourceGroupId }: { sourceGroupId: string }) {
 
 // ─── Main page ───────────────────────────────────────────────────────────────
 
-type Tab = 'health' | 'processing' | 'delivery'
+type Tab = 'health' | 'links' | 'processing' | 'delivery'
 
 export default function Logs() {
   const [tab, setTab] = useState<Tab>('health')
@@ -756,6 +757,7 @@ export default function Logs() {
       <div style={{ display: 'flex', gap: 4, marginBottom: 24, borderBottom: '1px solid var(--border)' }}>
         {([
           ['health',     '🩺 Saúde'],
+          ['links',      '🔗 Links'],
           ['processing', '🔍 Processamento'],
           ['delivery',   '📡 Entregas'],
         ] as const).map(([t, label]) => (
@@ -788,6 +790,8 @@ export default function Logs() {
             setTab('processing')
           }}
         />
+      ) : tab === 'links' ? (
+        <UnidentifiedLinksPanel />
       ) : tab === 'processing' ? (
         <ProcessingTab sourceGroupId={sourceGroupId} />
       ) : (

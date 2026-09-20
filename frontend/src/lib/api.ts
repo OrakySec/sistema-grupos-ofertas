@@ -249,6 +249,29 @@ export interface GroupsHealth {
   destinationGroups: DestinationGroupHealth[]
 }
 
+// ── Unidentified links ───────────────────────
+export interface UnidentifiedLinkDomain {
+  domain: string
+  occurrences: number
+  offers: number
+  rejectedOffers: number
+  stripped: number
+  lastSeenAt: string
+  blocked: boolean
+  looksLikeShortener: boolean
+  resolvesTo: string | null
+  groups: Array<{ id: string; name: string; count: number }>
+  samples: Array<{ url: string; at: string }>
+}
+
+export interface UnidentifiedLinks {
+  generatedAt: string
+  windowHours: number
+  blockedDomains: string[]
+  totals: { domains: number; affectedOffers: number }
+  domains: UnidentifiedLinkDomain[]
+}
+
 class ApiClient {
   private baseUrl: string
 
@@ -524,6 +547,18 @@ class ApiClient {
     const params = new URLSearchParams({ limit: String(limit) })
     if (sourceGroupId) params.set('sourceGroupId', sourceGroupId)
     return this.request('GET', `/logs?${params.toString()}`)
+  }
+
+  async getUnidentifiedLinks(hours = 72): Promise<UnidentifiedLinks> {
+    return this.request('GET', `/health/links?hours=${hours}`)
+  }
+
+  async addStripDomain(domain: string): Promise<{ success: boolean; domains: string[] }> {
+    return this.request('POST', '/settings/strip-domain', { domain })
+  }
+
+  async removeStripDomain(domain: string): Promise<{ success: boolean; domains: string[] }> {
+    return this.request('DELETE', `/settings/strip-domain?domain=${encodeURIComponent(domain)}`)
   }
 
   async getGroupsHealth(hours = 24): Promise<GroupsHealth> {

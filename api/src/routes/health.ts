@@ -292,3 +292,174 @@ export const healthRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
     },
   );
 };
+
+// ── Unidentified links ──────────────────────────────────────────────────────
+
+function hostOf(rawUrl: string): string | null {
+  try {
+    const host = new URL(rawUrl).hostname.toLowerCase();
+    return host.startsWith('www.') ? host.slice(4) : host;
+  } catch {
+    return null;
+  }
+}
+
+/** Same shape the telegram-listener treats as a marketplace short link (/s/xxxxxx). */
+function looksLikeShortener(rawUrl: string): boolean {
+  try {
+    return /^\/s\/[A-Za-z0-9]{4,12}\/?$/.test(new URL(rawUrl).pathname);
+  } catch {
+    return false;
+  }
+}
+
+export function parseStripDomains(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(/[,\n]+/)
+    .map((d) => d.trim().toLowerCase().replace(/^www\./, ''))
+    .filter(Boolean);
+}
+
+interface LinkEvent {
+  step?: string;
+  status?: string;
+  original?: string | null;
+  expanded?: string | null;
+  platform?: string | null;
+  error?: string | null;
+  detail?: string | null;
+}
+
+export const unidentifiedLinksRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
+  fastify.addHook('preHandler', requireAuth);
+
+  // GET /health/links?hours=72
+  // Every link the converter could NOT tie to a marketplace, grouped by domain,
+  // so the operator can spot the ones wrecking messages and block them with one
+  // click (adds the domain to the strip list — see POST /settings/strip-domain).
+  fastify.get<{ Querystring: { hours?: string } }>('/links', async (request, reply) => {
+    const windowHours = Math.min(Math.max(Number(request.query.hours) || 72, 1), 168);
+    const since = new Date(Date.now() - windowHours * HOUR_MS);
+
+    const [offers, stripSetting] = await Promise.all([
+      prisma.offer.findMany({
+        where: { createdAt: { gte: since } },
+        orderBy: { createdAt: 'desc' },
+        take: 4000,
+        select: {
+          id: true,
+          status: true,
+          createdAt: true,
+          processingLog: true,
+          sourceGroup: { select: { id: true, name: true } },
+        },
+      }),
+      prisma.setting.findUnique({ where: { key: 'strip_link_domains' } }),
+    ]);
+
+    const blocked = new Set(parseStripDomains(stripSetting?.value));
+
+    interface Agg {
+      domain: string;
+      occurrences: number;
+      offerIds: Set<string>;
+      rejectedOfferIds: Set<string>;
+      stripped: number;
+      lastSeenAt: Date;
+      groups: Map<string, { id: string; name: string; count: number }>;
+      samples: Map<string, { url: string; at: Date }>;
+      resolvesTo: Map<string, number>;
+      shortenerLike: boolean;
+    }
+    const byDomain = new Map<string, Agg>();
+    const get = (domain: string, at: Date): Agg => {
+      let a = byDomain.get(domain);
+      if (!a) {
+        a = {
+          domain, occurrences: 0, offerIds: new Set(), rejectedOfferIds: new Set(), stripped: 0,
+          lastSeenAt: at, groups: new Map(), samples: new Map(), resolvesTo: new Map(), shortenerLike: false,
+        };
+        byDomain.set(domain, a);
+      }
+      return a;
+    };
+
+    for (const o of offers) {
+      if (!Array.isArray(o.processingLog)) continue;
+      for (const ev of o.processingLog as LinkEvent[]) {
+        // Links already removed by the strip list — counted so a blocked domain
+        // visibly "works", but they're no longer a problem.
+        if (ev.step === 'link_strip') {
+          const url = (ev.detail ?? '').split(' (')[0];
+          const host = hostOf(url);
+          if (host) {
+            const a = get(host, o.createdAt);
+            a.stripped++;
+            if (o.createdAt > a.lastSeenAt) a.lastSeenAt = o.createdAt;
+          }
+          continue;
+        }
+        // "Not identified" = the converter had no platform for it. Conversion
+        // failures on a KNOWN platform are a different problem (see Saúde).
+        if (ev.step !== 'url' || ev.platform || (ev.status !== 'skipped' && ev.status !== 'error')) continue;
+        if (!ev.original) continue;
+        const host = hostOf(ev.original);
+        if (!host) continue;
+
+        const a = get(host, o.createdAt);
+        a.occurrences++;
+        a.offerIds.add(o.id);
+        if (o.status === 'REJECTED') a.rejectedOfferIds.add(o.id);
+        if (o.createdAt > a.lastSeenAt) a.lastSeenAt = o.createdAt;
+        if (looksLikeShortener(ev.original)) a.shortenerLike = true;
+
+        const g = o.sourceGroup;
+        if (g) {
+          const cur = a.groups.get(g.id) ?? { id: g.id, name: g.name, count: 0 };
+          cur.count++;
+          a.groups.set(g.id, cur);
+        }
+        if (a.samples.size < 3 && !a.samples.has(ev.original)) a.samples.set(ev.original, { url: ev.original, at: o.createdAt });
+        if (ev.expanded) {
+          const dest = hostOf(ev.expanded);
+          if (dest && dest !== host) a.resolvesTo.set(dest, (a.resolvesTo.get(dest) ?? 0) + 1);
+        }
+      }
+    }
+
+    // Distinct messages currently being rejected because of a NOT-yet-blocked domain.
+    const affectedOfferIds = new Set<string>();
+    for (const a of byDomain.values()) {
+      if (!blocked.has(a.domain)) a.rejectedOfferIds.forEach((id) => affectedOfferIds.add(id));
+    }
+
+    const domains = [...byDomain.values()]
+      .filter((a) => a.occurrences > 0 || a.stripped > 0)
+      .map((a) => ({
+        domain: a.domain,
+        occurrences: a.occurrences,
+        offers: a.offerIds.size,
+        rejectedOffers: a.rejectedOfferIds.size,
+        stripped: a.stripped,
+        lastSeenAt: a.lastSeenAt,
+        blocked: blocked.has(a.domain),
+        looksLikeShortener: a.shortenerLike,
+        resolvesTo: [...a.resolvesTo.entries()].sort((x, y) => y[1] - x[1])[0]?.[0] ?? null,
+        groups: [...a.groups.values()].sort((x, y) => y.count - x.count),
+        samples: [...a.samples.values()].map((s) => ({ url: s.url, at: s.at })),
+      }))
+      // Worst offenders first: the ones still breaking messages, then by volume.
+      .sort((x, y) => Number(x.blocked) - Number(y.blocked) || y.rejectedOffers - x.rejectedOffers || y.occurrences - x.occurrences);
+
+    return reply.send({
+      generatedAt: new Date().toISOString(),
+      windowHours,
+      blockedDomains: [...blocked].sort(),
+      totals: {
+        domains: domains.filter((d) => d.occurrences > 0 && !d.blocked).length,
+        affectedOffers: affectedOfferIds.size,
+      },
+      domains,
+    });
+  });
+};

@@ -5,6 +5,7 @@ import { requireAuth } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { TelegramService } from '../services/telegram.service';
 import { WhatsAppService, extractWhatsAppInviteCode } from '../services/whatsapp.service';
+import { parseStripDomains } from './health';
 
 interface UpsertSettingsBody {
   [key: string]: string;
@@ -78,6 +79,28 @@ async function fetchMlSessionActive(log: any): Promise<boolean> {
     log.warn(`Could not fetch ML session status from telegram-listener: ${err.message}`);
     return false;
   }
+}
+
+
+// Domains the converter turns into affiliate links — stripping one of these
+// would delete real offers' links, so they can never go on the strip list.
+const PROTECTED_DOMAINS = [
+  'amazon.com.br', 'amazon.com', 'amzn.to', 'amzn.com',
+  'shopee.com.br', 'shope.ee',
+  'aliexpress.com',
+  'magazineluiza.com.br', 'magalu.com', 'magazinevoce.com.br',
+  'mercadolivre.com.br', 'mercadolibre.com', 'meli.la', 'mlb.link',
+];
+
+/** Accepts "https://www.Site.com/x?y", "www.site.com" or "site.com" → "site.com" (null if invalid). */
+function normalizeDomain(input: string): string | null {
+  let d = input.trim().toLowerCase().replace(/^[a-z]+:\/\//, '').split(/[/?#]/)[0].replace(/^www\./, '');
+  d = d.replace(/:\d+$/, '');
+  return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d) ? d : null;
+}
+
+function isProtectedDomain(domain: string): boolean {
+  return PROTECTED_DOMAINS.some((p) => domain === p || domain.endsWith('.' + p));
 }
 
 export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
@@ -290,6 +313,42 @@ export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
       }
     },
   );
+
+  // POST /settings/strip-domain { domain } — add a domain to the strip list
+  // (its links get removed from messages instead of blocking them).
+  fastify.post<{ Body: { domain?: string } }>('/strip-domain', async (request, reply) => {
+    const domain = normalizeDomain(request.body?.domain ?? '');
+    if (!domain) {
+      return reply.code(400).send({ success: false, message: 'Domínio inválido' });
+    }
+    if (isProtectedDomain(domain)) {
+      return reply.code(400).send({
+        success: false,
+        message: `${domain} é uma loja suportada — remover os links dela apagaria as ofertas. Se o problema é a conversão, veja o motivo na aba Saúde.`,
+      });
+    }
+    const current = await prisma.setting.findUnique({ where: { key: 'strip_link_domains' } });
+    const domains = parseStripDomains(current?.value);
+    if (!domains.includes(domain)) domains.push(domain);
+    const value = domains.join(',');
+    await prisma.setting.upsert({ where: { key: 'strip_link_domains' }, update: { value }, create: { key: 'strip_link_domains', value } });
+    await notifyListenerReload(fastify.log);
+    return reply.send({ success: true, domains });
+  });
+
+  // DELETE /settings/strip-domain?domain=x — take a domain off the strip list
+  fastify.delete<{ Querystring: { domain?: string } }>('/strip-domain', async (request, reply) => {
+    const domain = normalizeDomain(request.query.domain ?? '');
+    if (!domain) {
+      return reply.code(400).send({ success: false, message: 'Domínio inválido' });
+    }
+    const current = await prisma.setting.findUnique({ where: { key: 'strip_link_domains' } });
+    const domains = parseStripDomains(current?.value).filter((d) => d !== domain);
+    const value = domains.join(',');
+    await prisma.setting.upsert({ where: { key: 'strip_link_domains' }, update: { value }, create: { key: 'strip_link_domains', value } });
+    await notifyListenerReload(fastify.log);
+    return reply.send({ success: true, domains });
+  });
 
   // POST /settings/test-link-monitor — ad-hoc check of any WhatsApp invite
   // link, without touching any stored monitor state. Used by the "Verificar
