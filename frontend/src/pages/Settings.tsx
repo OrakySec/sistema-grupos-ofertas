@@ -74,6 +74,7 @@ export default function Settings() {
   const refMagaluStore   = useRef<HTMLInputElement>(null)
   const refMlSessionFile = useRef<HTMLInputElement>(null)
   const refMlOwnListUrl  = useRef<HTMLInputElement>(null)
+  const refStripDomains  = useRef<HTMLTextAreaElement>(null)
   const [mlSessionActive, setMlSessionActive] = useState(false)
   const [uploadingMlSession, setUploadingMlSession] = useState(false)
   const refShortenerDomain = useRef<HTMLInputElement>(null)
@@ -920,6 +921,24 @@ export default function Settings() {
               Deixe em branco pra continuar bloqueando esse tipo de link.
             </div>
           </div>
+
+          <div className="form-group">
+            <label className="label">🧹 Domínios de links a remover das mensagens</label>
+            <textarea
+              ref={refStripDomains}
+              defaultValue={(settingsData?.stripLinkDomains ?? '').split(',').map((d: string) => d.trim()).filter(Boolean).join('\n')}
+              className="textarea font-mono"
+              placeholder={'especialistaemti.com.br\ninstagram.com'}
+              rows={3}
+              spellCheck={false}
+            />
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>
+              Um domínio por linha. Links desses sites (e das suas subpáginas) são <strong>removidos do texto</strong>{' '}
+              antes de enviar — junto com a linha de apresentação, tipo "Review no link abaixo:" — e não contam como
+              "plataforma não reconhecida" (que rejeita a mensagem inteira). Útil pra links de review, Instagram ou site
+              do próprio canal de origem. Se a mensagem ficar sem nenhum link de oferta, ela continua sendo rejeitada.
+            </div>
+          </div>
         </div>
 
         {/* Encurtador de Links */}
@@ -1012,6 +1031,7 @@ export default function Settings() {
               aliexpressTrackingId: refAliTrackId.current?.value,
               magaluStoreName:      refMagaluStore.current?.value,
               mlOwnListUrl:         refMlOwnListUrl.current?.value,
+              stripLinkDomains:     (refStripDomains.current?.value ?? '').split(/[\n,]+/).map((d) => d.trim()).filter(Boolean).join(','),
               linkShortenerEnabled,
               shortenerProvider,
               shortenerDomain:      refShortenerDomain.current?.value || settingsData?.shortenerDomain,

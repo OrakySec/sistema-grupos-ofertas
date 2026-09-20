@@ -184,6 +184,7 @@ async function buildApp() {
       aliexpress_tracking_id: dbObj.aliexpress_tracking_id ?? '',
       magalu_store_name:      dbObj.magalu_store_name ?? '',
       ml_own_list_url:        dbObj.ml_own_list_url ?? '',
+      strip_link_domains:     dbObj.strip_link_domains ?? '',
       link_shortener_enabled: dbObj.link_shortener_enabled ?? 'true',
       shortener_provider:     dbObj.shortener_provider ?? 'internal',
     });

@@ -100,6 +100,40 @@ def _platform(url: str) -> Optional[str]:
     return None
 
 
+def _host_matches(url: str, domains: set[str]) -> bool:
+    """True if the URL's host is one of `domains` or a subdomain of one."""
+    host = _host(url)
+    if host.startswith("www."):
+        host = host[4:]
+    return any(host == d or host.endswith("." + d) for d in domains)
+
+
+def _strip_urls_from_text(text: str, urls: list[str]) -> str:
+    """
+    Removes the given URLs from a message together with the line that only
+    introduced them — e.g. "✅Review no link abaixo:" followed by the link —
+    so the group doesn't get a dangling lead-in with nothing under it.
+    """
+    kept: list[str] = []
+    for line in text.split("\n"):
+        if not any(u in line for u in urls):
+            kept.append(line)
+            continue
+        for u in urls:
+            line = line.replace(u, "")
+        remaining = line.strip()
+        if not re.sub(r"[\W_]+", "", remaining):
+            # The line was just the URL (plus emoji/punctuation): drop it, and
+            # the "…abaixo:" style lead-in line right above it.
+            if kept and kept[-1].rstrip().endswith(":"):
+                kept.pop()
+            continue
+        if remaining.endswith(":"):
+            continue  # "Review: <url>" → nothing left after the colon
+        kept.append(line.rstrip())
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -531,6 +565,15 @@ class AffiliateConverter:
         self.shopee_id       = (settings.get("shopee_affiliate_id") or "").strip()
         self.ali_tracking    = (settings.get("aliexpress_tracking_id") or "").strip()
         self.magalu_store    = (settings.get("magalu_store_name") or "").strip()
+        # Domains whose links are removed from messages instead of converted
+        # (own site / review pages / Instagram) — comma or newline separated.
+        self.strip_domains: set[str] = set()
+        for d in re.split(r"[,\n]+", settings.get("strip_link_domains") or ""):
+            d = d.strip().lower()
+            if d.startswith("www."):
+                d = d[4:]
+            if d:
+                self.strip_domains.add(d)
         self.ml_session = ml_session  # ml_browser.MLBrowserSession, generates real ML affiliate links
         self.ml_own_list_url = (settings.get("ml_own_list_url") or "").strip()
         self.shortener_on = settings.get("link_shortener_enabled", "true") != "false"
@@ -554,6 +597,31 @@ class AffiliateConverter:
 
         all_events: list[dict] = []
         replacements: dict[str, str] = {}
+
+        # Links to configured domains (the channel's own site, review pages,
+        # Instagram…) are REMOVED from the message rather than converted: they
+        # aren't offers, each one used to cost an extra (slow) conversion, and
+        # being "unrecognized" they made the API reject the whole message.
+        strip_urls = [u for u in unique_urls if self.strip_domains and _host_matches(u, self.strip_domains)]
+        if strip_urls:
+            unique_urls = [u for u in unique_urls if u not in strip_urls]
+            text = _strip_urls_from_text(text, strip_urls)
+            for u in strip_urls:
+                all_events.append({
+                    "ts": _now_iso(), "step": "link_strip", "status": "info",
+                    "label": "Link removido", "detail": f"{u} (domínio configurado pra remoção)",
+                })
+                logger.info(f"[affiliate] Stripped link from message: {u[:80]}")
+            if not unique_urls:
+                # Nothing but stripped links — not an offer. Keep it blocked
+                # (same as before, when the unrecognized link rejected it).
+                all_events.append({
+                    "ts": _now_iso(), "step": "url", "label": "Conversão de link",
+                    "original": strip_urls[0], "expanded": None, "platform": None, "affiliate": None,
+                    "shortened": None, "final": None, "status": "skipped",
+                    "error": "Mensagem sem link de oferta (só links removidos)",
+                })
+                return text, all_events
 
         # Convert the message's links CONCURRENTLY. They used to run one after
         # another, so a post with several slow links (each Mercado Livre one

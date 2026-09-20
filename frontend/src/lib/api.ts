@@ -165,6 +165,7 @@ export interface Settings {
   aliexpressTrackingId?: string
   magaluStoreName?: string
   mlOwnListUrl?: string
+  stripLinkDomains?: string
   mlSessionActive?: boolean
   linkShortenerEnabled?: boolean
   shortenerProvider?: string
