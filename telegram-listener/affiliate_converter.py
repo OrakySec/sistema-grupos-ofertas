@@ -555,8 +555,31 @@ class AffiliateConverter:
         all_events: list[dict] = []
         replacements: dict[str, str] = {}
 
-        for raw_url in unique_urls:
-            final_url, event = await self._process_url(raw_url, session)
+        # Convert the message's links CONCURRENTLY. They used to run one after
+        # another, so a post with several slow links (each Mercado Livre one
+        # needs the browser, ~10-25s) blew the 90s per-message budget on the sum
+        # alone — even with the browser page pool sitting idle. The pool and the
+        # redirect-resolver semaphore already cap real browser concurrency; this
+        # just bounds how many links of one message are in flight at once.
+        # gather() keeps results in input order, so the events stay ordered.
+        sem = asyncio.Semaphore(4)
+
+        async def _run(url: str) -> tuple[Optional[str], dict]:
+            async with sem:
+                return await self._process_url(url, session)
+
+        results = await asyncio.gather(*(_run(u) for u in unique_urls), return_exceptions=True)
+
+        for raw_url, result in zip(unique_urls, results):
+            if isinstance(result, Exception):
+                logger.warning(f"[affiliate] Unexpected error converting {raw_url[:80]}: {result!r}")
+                all_events.append({
+                    "ts": _now_iso(), "step": "url", "label": "Conversão de link",
+                    "original": raw_url, "expanded": None, "platform": None, "affiliate": None,
+                    "shortened": None, "final": None, "status": "error", "error": f"Erro inesperado: {result}",
+                })
+                continue
+            final_url, event = result
             all_events.append(event)
             if final_url and final_url != raw_url:
                 replacements[raw_url] = final_url

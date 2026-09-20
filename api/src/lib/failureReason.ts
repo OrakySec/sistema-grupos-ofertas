@@ -57,7 +57,13 @@ export function classifyOfferProblem(offer: OfferLike): string | null {
       (e.step === 'url' && (e.status === 'error' || e.status === 'skipped')) ||
       (e.step === 'url_convert' && e.status === 'error'),
   );
-  if (cause) return bucketFromError(cause.error ?? cause.detail ?? 'Erro na conversão do link', cause.platform);
+  // A whole-conversion timeout is logged as a 'url_convert' event with no
+  // platform — borrow it from the message's url events so the reason says
+  // WHICH marketplace was slow.
+  if (cause) {
+    const platform = cause.platform ?? evs.find((e) => e.step === 'url' && e.platform)?.platform;
+    return bucketFromError(cause.error ?? cause.detail ?? 'Erro na conversão do link', platform);
+  }
 
   if (evs.some((e) => e.step === 'link_filter')) return 'Link não identificado';
 
