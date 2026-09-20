@@ -75,6 +75,10 @@ class MLBrowserSession:
         self._pool: "asyncio.Queue[Page]" = asyncio.Queue()
         self._status_cache: Optional[bool] = None
         self._status_cache_at: float = 0.0
+        # Caps concurrent redirect-resolution browser contexts (see
+        # resolve_redirect) so a burst of shortened links can't spawn a pile of
+        # Chromium contexts next to the affiliate-link page pool.
+        self._resolve_sem = asyncio.Semaphore(2)
 
     async def start(self) -> None:
         self._playwright = await async_playwright().start()
@@ -120,6 +124,39 @@ class MLBrowserSession:
             # Last resort: hand back the possibly-broken page rather than
             # permanently losing a pool slot.
             return page
+
+    async def resolve_redirect(self, url: str) -> Optional[str]:
+        """
+        Follows a redirect chain with a real browser and returns the final URL
+        (or None on failure). Used as a fallback when plain aiohttp can't
+        expand a link — e.g. the amzon.promo / meli.promo shorteners, which
+        302 straight to the marketplace but sit behind Cloudflare bot
+        protection that refuses non-browser clients.
+
+        Uses a throwaway context with NO cookies/login, so it neither touches
+        the Mercado Livre affiliate session nor competes with its page pool.
+        Only the final URL matters, so it returns as soon as the last
+        redirect's response is committed instead of waiting for the (heavy)
+        destination page to load.
+        """
+        if self._browser is None:
+            return None
+        async with self._resolve_sem:
+            context = None
+            try:
+                context = await self._browser.new_context(user_agent=_USER_AGENT, locale="pt-BR")
+                page = await context.new_page()
+                await page.goto(url, wait_until="commit", timeout=20000)
+                return page.url
+            except Exception as exc:
+                logger.warning(f"[ml_browser] Redirect resolution failed for {url[:70]}: {exc}")
+                return None
+            finally:
+                if context is not None:
+                    try:
+                        await context.close()
+                    except Exception:
+                        pass
 
     async def reload_session(self) -> None:
         """Call after a new storage_state file is uploaded so it takes effect immediately."""

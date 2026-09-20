@@ -176,12 +176,47 @@ def _extract_url_from_query(url: str) -> Optional[str]:
     return None
 
 
+# HTTP statuses that mean "the server refused our plain HTTP request" (bot
+# protection / rate limit) rather than "this link doesn't exist" — see
+# expand_url_ex(): a real browser often gets through where aiohttp doesn't.
+_BLOCK_STATUSES = {401, 403, 429, 503}
+
+# Link-shortener family used by many Brazilian promo channels
+# (amzon.promo/s/xxxxxx, meli.promo/s/xxxxxx, ...). They 302 straight to the
+# marketplace, but sit behind Cloudflare, which tends to refuse plain aiohttp
+# requests from a datacenter IP. Matching the shape lets us go straight to
+# the browser fallback even when the refusal isn't a clean 403.
+_SHORTENER_PATH_RE = re.compile(r"^/s/[A-Za-z0-9]{4,12}/?$")
+
+
+def looks_like_shortener(url: str) -> bool:
+    try:
+        return bool(_SHORTENER_PATH_RE.match(urlparse(url).path))
+    except Exception:
+        return False
+
+
 async def expand_url(url: str, session: aiohttp.ClientSession) -> str:
+    expanded, _blocked = await expand_url_ex(url, session)
+    return expanded
+
+
+async def expand_url_ex(url: str, session: aiohttp.ClientSession) -> tuple[str, bool]:
+    """
+    Follows redirects to the final URL. Returns (final_url, blocked), where
+    blocked=True means the server answered with a bot-protection style status
+    (401/403/429/503) — the caller can then retry with a real browser instead
+    of silently treating the link as "platform not recognized".
+    """
+    blocked = False
+    head_status: Optional[int] = None
+    get_status: Optional[int] = None
+
     # Pre-check: try to extract from query parameters to save requests
     query_extracted = _extract_url_from_query(url)
     if query_extracted:
         # Recursively expand the extracted URL in case it is another short link
-        return await expand_url(query_extracted, session)
+        return await expand_url_ex(query_extracted, session)
 
     headers = {
         "User-Agent": (
@@ -206,11 +241,14 @@ async def expand_url(url: str, session: aiohttp.ClientSession) -> str:
             timeout=aiohttp.ClientTimeout(total=8),
             ssl=False,
         ) as resp:
+            head_status = resp.status
             if resp.status < 400:
                 final_url = str(resp.url)
                 if _platform(final_url):
-                    return final_url
+                    return final_url, False
                 logger.debug(f"expand_url HEAD returned non-platform url: {final_url}")
+            elif resp.status in _BLOCK_STATUSES:
+                blocked = True
     except Exception as exc:
         logger.debug(f"expand_url HEAD failed for {url}: {exc}")
 
@@ -223,10 +261,13 @@ async def expand_url(url: str, session: aiohttp.ClientSession) -> str:
             timeout=aiohttp.ClientTimeout(total=8),
             ssl=False,
         ) as resp:
+            get_status = resp.status
+            if resp.status in _BLOCK_STATUSES:
+                blocked = True
             final_url = str(resp.url)
             if _platform(final_url):
-                return final_url
-            
+                return final_url, False
+
             # If not a recognized platform, check HTML content
             content_type = resp.headers.get("Content-Type", "")
             if "text/html" in content_type.lower():
@@ -236,7 +277,7 @@ async def expand_url(url: str, session: aiohttp.ClientSession) -> str:
                     # Resolve relative URLs if any
                     resolved_url = urljoin(str(resp.url), extracted_url)
                     logger.info(f"Extracted destination URL from HTML: {resolved_url[:80]}")
-                    
+
                     # If the extracted URL is also a short URL or another redirect, recursively expand it once
                     if not _platform(resolved_url):
                         logger.debug(f"Recursively expanding extracted URL: {resolved_url[:80]}")
@@ -252,11 +293,21 @@ async def expand_url(url: str, session: aiohttp.ClientSession) -> str:
                                     resolved_url = str(r_resp.url)
                         except Exception:
                             pass
-                    return resolved_url
-            return final_url
+                    return resolved_url, False
+
+            # Nothing resolved to a marketplace. Log WHY at INFO — this used to
+            # be invisible (DEBUG, or nothing at all), which is what made a whole
+            # channel's links fail as "Plataforma não reconhecida" with no clue.
+            logger.info(
+                f"[expand] no marketplace URL for {url[:70]} "
+                f"(HEAD={head_status}, GET={get_status}, final={final_url[:80]}, blocked={blocked})"
+            )
+            return final_url, blocked
     except Exception as exc:
-        logger.debug(f"expand_url GET failed for {url}: {exc}")
-        return url
+        logger.info(
+            f"[expand] request failed for {url[:70]} (HEAD={head_status}, GET={get_status}): {exc}"
+        )
+        return url, blocked
 
 
 # ---------------------------------------------------------------------------
@@ -335,19 +386,27 @@ async def resolve_ml_social_product_url(social_url: str, session: aiohttp.Client
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
     }
-    try:
-        async with session.get(
-            social_url,
-            headers=headers,
-            allow_redirects=True,
-            timeout=aiohttp.ClientTimeout(total=10),
-            ssl=False,
-        ) as resp:
-            if resp.status >= 400:
-                return None
-            html = await resp.text()
-    except Exception as exc:
-        logger.debug(f"[affiliate] Failed to fetch ML social profile page: {exc}")
+    html = None
+    # One retry: this page is slow/flaky from a datacenter IP, and a bare
+    # timeout used to be swallowed (blank message at DEBUG) — turning a
+    # transient hiccup into "perfil/lista de outro afiliado" and a rejected offer.
+    for attempt in (1, 2):
+        try:
+            async with session.get(
+                social_url,
+                headers=headers,
+                allow_redirects=True,
+                timeout=aiohttp.ClientTimeout(total=12),
+                ssl=False,
+            ) as resp:
+                if resp.status >= 400:
+                    logger.info(f"[affiliate] ML social profile page returned HTTP {resp.status}")
+                    return None
+                html = await resp.text()
+                break
+        except Exception as exc:
+            logger.info(f"[affiliate] Failed to fetch ML social profile page (attempt {attempt}/2): {exc!r}")
+    if html is None:
         return None
 
     match = _ML_SOCIAL_SHOW_PRODUCT_RE.search(html)
@@ -526,7 +585,29 @@ class AffiliateConverter:
 
         try:
             # Step 1 — expand
-            expanded = await expand_url(raw_url, session)
+            expanded, blocked = await expand_url_ex(raw_url, session)
+
+            # Plain HTTP couldn't reach a marketplace: either the server refused
+            # us (403/429/503 — bot protection) or it's one of the /s/xxxxxx
+            # promo shorteners that sit behind Cloudflare. A real browser gets
+            # through where aiohttp doesn't — ask it to follow the redirect
+            # instead of giving up with "Plataforma não reconhecida".
+            if (
+                _platform(expanded) is None
+                and _platform(raw_url) is None
+                and (blocked or looks_like_shortener(raw_url))
+                and self.ml_session is not None
+            ):
+                browser_url = await self.ml_session.resolve_redirect(raw_url)
+                if browser_url and browser_url != raw_url and _platform(browser_url):
+                    logger.info(f"[affiliate] Browser resolved {raw_url[:60]} → {browser_url[:80]}")
+                    expanded = browser_url
+                else:
+                    logger.warning(
+                        f"[affiliate] Browser fallback could not resolve {raw_url[:60]} "
+                        f"(got: {(browser_url or 'nothing')[:80]})"
+                    )
+
             event["expanded"] = expanded if expanded != raw_url else None
 
             # Mercado Livre sometimes gates automated requests with an interstitial
