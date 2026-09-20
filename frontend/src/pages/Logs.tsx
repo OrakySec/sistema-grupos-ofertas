@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
+import GroupsHealthPanel from '../components/GroupsHealthPanel'
 import api, { type DeliveryLog, type ProcessingOffer, type ProcessingEvent, type SourceGroup } from '../lib/api'
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -282,6 +283,17 @@ function ProcessingCard({ offer }: { offer: ProcessingOffer }) {
             whiteSpace: 'nowrap',
           }}>
             {offerStatusStyle.label}
+          </span>
+        )}
+        {offer.problemReason && (
+          <span
+            title={offer.problemReason}
+            style={{
+              flexShrink: 0, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              fontSize: '0.72rem', color: 'var(--accent-danger)',
+            }}
+          >
+            {offer.problemReason}
           </span>
         )}
 
@@ -706,10 +718,10 @@ function DeliveryTab({ sourceGroupId }: { sourceGroupId: string }) {
 
 // ─── Main page ───────────────────────────────────────────────────────────────
 
-type Tab = 'processing' | 'delivery'
+type Tab = 'health' | 'processing' | 'delivery'
 
 export default function Logs() {
-  const [tab, setTab] = useState<Tab>('processing')
+  const [tab, setTab] = useState<Tab>('health')
   const [sourceGroups, setSourceGroups] = useState<SourceGroup[]>([])
   const [sourceGroupId, setSourceGroupId] = useState('')
 
@@ -743,6 +755,7 @@ export default function Logs() {
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 24, borderBottom: '1px solid var(--border)' }}>
         {([
+          ['health',     '🩺 Saúde'],
           ['processing', '🔍 Processamento'],
           ['delivery',   '📡 Entregas'],
         ] as const).map(([t, label]) => (
@@ -768,7 +781,18 @@ export default function Logs() {
       </div>
 
       {/* Content */}
-      {tab === 'processing' ? <ProcessingTab sourceGroupId={sourceGroupId} /> : <DeliveryTab sourceGroupId={sourceGroupId} />}
+      {tab === 'health' ? (
+        <GroupsHealthPanel
+          onOpenLogs={(id) => {
+            setSourceGroupId(id)
+            setTab('processing')
+          }}
+        />
+      ) : tab === 'processing' ? (
+        <ProcessingTab sourceGroupId={sourceGroupId} />
+      ) : (
+        <DeliveryTab sourceGroupId={sourceGroupId} />
+      )}
     </div>
   )
 }

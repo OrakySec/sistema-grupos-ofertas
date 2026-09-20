@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { requireAuth } from '../middleware/auth';
 import prisma from '../lib/prisma';
+import { classifyOfferProblem } from '../lib/failureReason';
 
 // In-memory log buffer for SSE streaming
 const logBuffer: Array<{ timestamp: string; level: string; message: string; data?: unknown }> = [];
@@ -164,6 +165,7 @@ export const logsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
     const serialized = offers.map((o) => ({
       ...o,
       telegramMessageId: o.telegramMessageId.toString(),
+      problemReason: classifyOfferProblem(o),
     }));
 
     return reply.send(serialized);

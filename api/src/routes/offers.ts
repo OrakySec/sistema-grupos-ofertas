@@ -3,6 +3,7 @@ import { requireAuth } from '../middleware/auth';
 import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { addNewOfferJob, addSendOfferJob } from '../lib/queue';
+import { classifyOfferProblem } from '../lib/failureReason';
 
 const JWT_SECRET = process.env.JWT_SECRET ?? 'changeme-jwt-secret';
 const INTERNAL_TOKEN = 'sistema-grupos-ofertas-internal-token-fallback-key-2026';
@@ -278,6 +279,7 @@ export const offersRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
         ...o,
         telegramMessageId: o.telegramMessageId.toString(),
         mediaPath: o.mediaLocalPath, // frontend (OfferCard) reads mediaPath
+        problemReason: classifyOfferProblem(o),
         sourceGroup: o.sourceGroup
           ? { ...o.sourceGroup, telegramId: o.sourceGroup.telegramId.toString() }
           : null,
@@ -335,6 +337,7 @@ export const offersRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
         ...offer,
         telegramMessageId: offer.telegramMessageId.toString(),
         mediaPath: offer.mediaLocalPath, // frontend (OfferCard) reads mediaPath
+        problemReason: classifyOfferProblem(offer),
         sourceGroup: offer.sourceGroup
           ? { ...offer.sourceGroup, telegramId: offer.sourceGroup.telegramId.toString() }
           : null,

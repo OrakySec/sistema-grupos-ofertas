@@ -255,7 +255,7 @@ export default function Dashboard() {
                       flexShrink: 0,
                     }}
                   >
-                    <StatusBadge status={offer.status} />
+                    <StatusBadge status={offer.status} reason={offer.problemReason} />
                     {offer.status === 'PENDING' && (
                       <>
                         <button

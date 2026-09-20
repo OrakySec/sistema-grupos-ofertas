@@ -175,7 +175,7 @@ export default function History() {
                         </span>
                       </td>
                       <td>
-                        <StatusBadge status={offer.status} />
+                        <StatusBadge status={offer.status} reason={offer.problemReason} />
                       </td>
                       <td>
                         <span

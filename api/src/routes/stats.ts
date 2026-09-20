@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { requireAuth } from '../middleware/auth';
 import prisma from '../lib/prisma';
+import { classifyOfferProblem } from '../lib/failureReason';
 
 export const statsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   fastify.addHook('preHandler', requireAuth);
@@ -58,6 +59,7 @@ export const statsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
     const recentSerialized = recentOffers.map((o: any) => ({
       ...o,
       telegramMessageId: o.telegramMessageId.toString(),
+      problemReason: classifyOfferProblem(o),
       sourceGroup: o.sourceGroup
         ? { ...o.sourceGroup }
         : null,

@@ -14,6 +14,7 @@ import { statsRoutes } from './routes/stats';
 import { trackingRoutes } from './routes/tracking'
 import { clicksRoutes } from './routes/clicks';
 import { publicRoutes } from './routes/public';
+import { healthRoutes } from './routes/health';
 import prisma from './lib/prisma';
 import { seed } from './seed';
 
@@ -199,6 +200,7 @@ async function buildApp() {
   await server.register(clicksRoutes, { prefix: '/stats/clicks' });
   await server.register(trackingRoutes, { prefix: '/tracking' });
   await server.register(publicRoutes, { prefix: '/public' });
+  await server.register(healthRoutes, { prefix: '/health' });
 
   return server;
 }

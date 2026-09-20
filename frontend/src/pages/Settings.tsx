@@ -673,6 +673,8 @@ export default function Settings() {
             Verifica periodicamente (a cada 15 min) todos os grupos de destino WhatsApp que
             tiverem um link de convite cadastrado — configure o link de cada grupo em{' '}
             <strong>Grupos → Destino</strong> — e avisa neste número quando algum expirar ou for revogado.
+            O mesmo número também recebe um alerta quando um grupo de <strong>origem</strong> ficar mais
+            de 12h sem gerar nenhuma oferta (veja o estado de cada grupo em <strong>Logs &amp; Debug → Saúde</strong>).
           </div>
         </div>
 

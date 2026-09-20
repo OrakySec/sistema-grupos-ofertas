@@ -43,6 +43,7 @@ export interface ProcessingEvent {
 
 export interface Offer {
   id: string
+  problemReason?: string | null
   sourceGroupId: string
   sourceGroup?: {
     id: string
@@ -68,6 +69,7 @@ export interface Offer {
 
 export interface ProcessingOffer {
   id: string
+  problemReason?: string | null
   telegramMessageId: string
   text?: string | null
   mediaType: string
@@ -191,6 +193,59 @@ export interface WhatsAppGroup {
   id: string
   name: string
   participants?: number
+}
+
+// ── Health (per-group) ───────────────────────
+export type HealthLevel = 'ok' | 'warning' | 'critical' | 'inactive'
+
+export interface ReasonCount {
+  reason: string
+  count: number
+}
+
+export interface SourceGroupHealth {
+  id: string
+  name: string
+  telegramId: string
+  isActive: boolean
+  nicheName: string | null
+  level: HealthLevel
+  issues: string[]
+  lastOfferAt: string | null
+  lastSentAt: string | null
+  silentHours: number | null
+  counts: { total: number; pending: number; approved: number; sent: number; rejected: number; failed: number }
+  problemReasons: ReasonCount[]
+  destinations: Array<{ id: string; name: string; type: 'TELEGRAM' | 'WHATSAPP'; isActive: boolean }>
+}
+
+export interface DestinationGroupHealth {
+  id: string
+  name: string
+  type: 'TELEGRAM' | 'WHATSAPP'
+  chatId: string
+  isActive: boolean
+  level: HealthLevel
+  issues: string[]
+  linkedSources: number
+  lastSuccessAt: string | null
+  lastFailure: { at: string; error: string | null } | null
+  counts: { success: number; failed: number }
+  failureReasons: ReasonCount[]
+  linkStatus: 'VALID' | 'INVALID' | 'UNKNOWN' | null
+}
+
+export interface GroupsHealth {
+  generatedAt: string
+  windowHours: number
+  thresholds: { silentWarnHours: number; silentCritHours: number }
+  system: {
+    autoApprove: boolean
+    listener: { reachable: boolean; authenticated: boolean | null; mlSessionActive: boolean | null }
+    evolutionConnected: boolean
+  }
+  sourceGroups: SourceGroupHealth[]
+  destinationGroups: DestinationGroupHealth[]
 }
 
 class ApiClient {
@@ -468,6 +523,10 @@ class ApiClient {
     const params = new URLSearchParams({ limit: String(limit) })
     if (sourceGroupId) params.set('sourceGroupId', sourceGroupId)
     return this.request('GET', `/logs?${params.toString()}`)
+  }
+
+  async getGroupsHealth(hours = 24): Promise<GroupsHealth> {
+    return this.request('GET', `/health/groups?hours=${hours}`)
   }
 
   async getProcessingLogs(sourceGroupId?: string): Promise<ProcessingOffer[]> {

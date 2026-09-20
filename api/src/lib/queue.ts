@@ -79,3 +79,21 @@ export async function scheduleLinkMonitor(): Promise<void> {
     },
   );
 }
+
+const SILENT_GROUP_CHECK_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+
+/**
+ * Schedules the recurring "has any active source group gone quiet?" check.
+ * Same idempotency trick as scheduleLinkMonitor — fixed jobId, safe to call on
+ * every worker boot.
+ */
+export async function scheduleSilentGroupCheck(): Promise<void> {
+  await linkMonitorQueue.add(
+    'check-silent-groups',
+    {},
+    {
+      jobId: 'check-silent-groups-repeat',
+      repeat: { every: SILENT_GROUP_CHECK_INTERVAL_MS },
+    },
+  );
+}

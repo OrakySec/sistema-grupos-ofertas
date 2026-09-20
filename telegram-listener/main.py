@@ -215,7 +215,10 @@ async def fetch_settings(session: aiohttp.ClientSession) -> Optional[dict]:
         async with session.get(url, headers=_internal_headers(), timeout=aiohttp.ClientTimeout(total=10)) as resp:
             if resp.status == 200:
                 data = await resp.json()
-                logger.debug(f"Settings fetched: {data}")
+                # Never log the raw dict — it carries the Telegram api_hash,
+                # bot token and phone in plain text (and logs end up pasted
+                # into chats/tickets). Log only which keys are present.
+                logger.debug(f"Settings fetched: {sorted(k for k, v in data.items() if v)}")
                 return data
             logger.warning(f"GET /settings/internal returned HTTP {resp.status}")
     except Exception as exc:

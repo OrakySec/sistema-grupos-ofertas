@@ -1,7 +1,7 @@
 import { Worker, Job } from 'bullmq';
 import redis from './lib/redis';
 import prisma from './lib/prisma';
-import { addSendOfferJob, scheduleLinkMonitor } from './lib/queue';
+import { addSendOfferJob, scheduleLinkMonitor, scheduleSilentGroupCheck } from './lib/queue';
 import { TelegramService } from './services/telegram.service';
 import { WhatsAppService } from './services/whatsapp.service';
 
@@ -396,6 +396,73 @@ async function updateLastNotifiedWithRetry(groupId: string, now: Date, attempts 
   }
 }
 
+// A source group that stops producing offers (listener lost access, channel
+// went private, pipeline stuck…) is otherwise completely silent — nothing
+// errors, there's just nothing to look at. This is what let a group sit dead
+// for 3 days unnoticed. Alerts through the same WhatsApp number as the
+// invite-link monitor, at most once per SILENT_GROUP_RENOTIFY_MS per group.
+const SILENT_GROUP_THRESHOLD_MS = 12 * 60 * 60 * 1000; // 12h with no new offer
+const SILENT_GROUP_RENOTIFY_MS = 24 * 60 * 60 * 1000;
+
+async function handleCheckSilentGroups(): Promise<void> {
+  const settingsRows = await prisma.setting.findMany({
+    where: { key: { in: ['link_monitor_enabled', 'link_monitor_alert_number'] } },
+  });
+  const settingsMap: Record<string, string> = {};
+  for (const r of settingsRows) settingsMap[r.key] = r.value;
+
+  if (settingsMap.link_monitor_enabled !== 'true') return;
+  const alertNumber = settingsMap.link_monitor_alert_number?.trim();
+  if (!alertNumber) return;
+
+  const [groups, lastOffers, alertRows] = await Promise.all([
+    prisma.sourceGroup.findMany({ where: { isActive: true }, select: { id: true, name: true, createdAt: true } }),
+    prisma.offer.groupBy({ by: ['sourceGroupId'], _max: { createdAt: true } }),
+    prisma.setting.findMany({ where: { key: { startsWith: 'silent_alert_' } } }),
+  ]);
+
+  const lastByGroup = new Map(lastOffers.map((r) => [r.sourceGroupId, r._max.createdAt]));
+  const notifiedByKey = new Map(alertRows.map((r) => [r.key, new Date(r.value)]));
+  const now = Date.now();
+  const recoveredKeys: string[] = [];
+
+  for (const g of groups) {
+    const key = `silent_alert_${g.id}`;
+    // Terminal offers are purged after 7 days, so a very quiet group may have
+    // no offers at all — fall back to when the group was registered.
+    const reference = lastByGroup.get(g.id) ?? g.createdAt;
+    const silentMs = now - reference.getTime();
+
+    if (silentMs < SILENT_GROUP_THRESHOLD_MS) {
+      if (notifiedByKey.has(key)) recoveredKeys.push(key); // talking again — re-arm
+      continue;
+    }
+
+    const lastNotified = notifiedByKey.get(key);
+    if (lastNotified && now - lastNotified.getTime() < SILENT_GROUP_RENOTIFY_MS) continue;
+
+    const hours = Math.floor(silentMs / (60 * 60 * 1000));
+    console.warn(`[Worker] Silent group: "${g.name}" has produced no offers for ${hours}h — alerting ${alertNumber}`);
+    try {
+      await whatsappService.sendText(
+        alertNumber,
+        `⚠️ *Grupo de origem sem mensagens*\n\nO grupo "${g.name}" está há ${hours}h sem gerar nenhuma oferta.\n\nPode ser que o listener perdeu acesso ao canal, ou que o canal parou de postar. Confira em Logs & Debug → Saúde.`,
+      );
+      await prisma.setting.upsert({
+        where: { key },
+        update: { value: new Date(now).toISOString() },
+        create: { key, value: new Date(now).toISOString() },
+      });
+    } catch (err) {
+      console.error(`[Worker] Failed to send silent-group alert for "${g.name}":`, err instanceof Error ? err.message : err);
+    }
+  }
+
+  if (recoveredKeys.length > 0) {
+    await prisma.setting.deleteMany({ where: { key: { in: recoveredKeys } } });
+  }
+}
+
 const worker = new Worker<NewOfferJobData | SendOfferJobData>(
   'offers',
   async (job) => {
@@ -435,7 +502,9 @@ const linkMonitorWorker = new Worker(
   'link-monitor',
   async (job) => {
     console.log(`[Worker] Processing job ${job.id} (${job.name}) on queue: link-monitor`);
-    if (job.name === 'check-invite-link') {
+    if (job.name === 'check-silent-groups') {
+      await handleCheckSilentGroups();
+    } else if (job.name === 'check-invite-link') {
       await handleCheckInviteLink();
     } else {
       console.warn(`[Worker] Unknown link-monitor job type: ${job.name}`);
@@ -458,6 +527,10 @@ linkMonitorWorker.on('error', (err) => {
 
 scheduleLinkMonitor().catch((err) => {
   console.error('[Worker] Failed to schedule link-monitor repeatable job:', err);
+});
+
+scheduleSilentGroupCheck().catch((err) => {
+  console.error('[Worker] Failed to schedule silent-group repeatable job:', err);
 });
 
 // Graceful shutdown

@@ -86,7 +86,7 @@ export default function OfferCard({
             </div>
           </div>
         </div>
-        <StatusBadge status={offer.status} />
+        <StatusBadge status={offer.status} reason={offer.problemReason} />
       </div>
 
       {/* Message text */}
