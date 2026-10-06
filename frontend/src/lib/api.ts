@@ -196,6 +196,25 @@ export interface WhatsAppGroup {
   participants?: number
 }
 
+// ── Clicks ───────────────────────────────────
+export interface ClickStats {
+  /** Real people only (plus clicks logged before bots could be told apart). */
+  total: number
+  chartData: { date: string; clicks: number }[]
+  topLinks: { originalUrl: string; title?: string; count: number }[]
+  breakdown?: {
+    human: number
+    legacy: number
+    duplicate: number
+    bot: number
+    uniqueVisitors: number
+    allRequests: number
+  }
+  botAgents?: { agent: string; count: number }[]
+  botSamples?: { userAgent: string; count: number }[]
+  timezone?: string
+}
+
 // ── Health (per-group) ───────────────────────
 export type HealthLevel = 'ok' | 'warning' | 'critical' | 'inactive'
 
@@ -346,7 +365,7 @@ class ApiClient {
     return this.request('GET', '/stats')
   }
 
-  async getClicksStats(period: string = 'today'): Promise<{ total: number; chartData: { date: string; clicks: number }[]; topLinks: { originalUrl: string; title?: string; count: number }[] }> {
+  async getClicksStats(period: string = 'today'): Promise<ClickStats> {
     return this.request('GET', `/stats/clicks?period=${period}`)
   }
 

@@ -159,5 +159,18 @@ model ShortUrlClick {
   code      String
   createdAt DateTime @default(now())
 
+  // Every request to /s/:code is logged, but only some are real people.
+  // kind: HUMAN | BOT (link-preview fetchers, crawlers, HEAD checks) |
+  // DUPLICATE (same visitor + link within a few minutes) | LEGACY (logged
+  // before this classification existed — can't be told apart from bots).
+  // Only HUMAN and LEGACY feed the "clicks" numbers in the panel.
+  kind      String   @default("LEGACY")
+  agent     String?  // short label, e.g. "WhatsApp", "Telegram", "Navegador"
+  userAgent String?  @db.Text
+  ipHash    String?  // salted hash — never the raw IP
+
   shortUrl  ShortUrl @relation(fields: [code], references: [code], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([code, ipHash, createdAt])
 }

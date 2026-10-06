@@ -15,6 +15,8 @@ import { trackingRoutes } from './routes/tracking'
 import { clicksRoutes } from './routes/clicks';
 import { publicRoutes } from './routes/public';
 import { healthRoutes, unidentifiedLinksRoutes } from './routes/health';
+import { classifyClick } from './lib/clickClassifier';
+import { createHash } from 'crypto';
 import prisma from './lib/prisma';
 import { seed } from './seed';
 
@@ -79,16 +81,29 @@ async function buildApp() {
         where: { code },
       });
       if (shortUrl) {
-        // Increment global clicks and log the click asynchronously
-        Promise.all([
-          prisma.shortUrl.update({
-            where: { code },
-            data: { clicks: { increment: 1 } },
-          }),
-          prisma.shortUrlClick.create({
-            data: { code },
-          }),
-        ]).catch(err => server.log.error({ err }, `Failed to track click for code ${code}`));
+        // Log the access without delaying the redirect. Every request is
+        // recorded (with who made it), but only real people count as clicks.
+        const userAgent = (request.headers['user-agent'] as string | undefined)?.slice(0, 300);
+        const { kind, agent } = classifyClick({ method: request.method, userAgent });
+        // Salted hash: lets us spot the same visitor twice without storing the IP.
+        const ipHash = createHash('sha256').update(`${request.ip}|${JWT_SECRET}`).digest('hex').slice(0, 16);
+
+        (async () => {
+          let finalKind: string = kind;
+          if (kind === 'HUMAN') {
+            // Double-tap / refresh / app re-opening the link: same visitor,
+            // same link, within a few minutes → one click, not several.
+            const repeat = await prisma.shortUrlClick.findFirst({
+              where: { code, ipHash, kind: 'HUMAN', createdAt: { gte: new Date(Date.now() - 10 * 60 * 1000) } },
+              select: { id: true },
+            });
+            if (repeat) finalKind = 'DUPLICATE';
+          }
+          await prisma.shortUrlClick.create({ data: { code, kind: finalKind, agent, userAgent, ipHash } });
+          if (finalKind === 'HUMAN') {
+            await prisma.shortUrl.update({ where: { code }, data: { clicks: { increment: 1 } } });
+          }
+        })().catch((err) => server.log.error({ err }, `Failed to track click for code ${code}`));
 
         return reply.redirect(302, shortUrl.originalUrl);
       }

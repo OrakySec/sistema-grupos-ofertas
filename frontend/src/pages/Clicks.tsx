@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import api from '../lib/api'
+import api, { type ClickStats } from '../lib/api'
 import {
   AreaChart,
   Area,
@@ -10,12 +10,6 @@ import {
   ResponsiveContainer
 } from 'recharts'
 import { useToast } from '../lib/toast'
-
-interface ClickStats {
-  total: number
-  chartData: { date: string; clicks: number }[]
-  topLinks: { originalUrl: string; title?: string; count: number }[]
-}
 
 export default function Clicks() {
   const [loading, setLoading] = useState(true)
@@ -107,7 +101,7 @@ export default function Clicks() {
               </div>
               <div>
                 <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1 }}>
-                  Total de Cliques
+                  Cliques reais
                 </div>
                 <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--text-primary)' }}>
                   {stats.total.toLocaleString('pt-BR')}
@@ -115,6 +109,90 @@ export default function Clicks() {
               </div>
             </div>
           </div>
+
+          {/* What was left out, and why — so the number can be compared with Mercado Livre's */}
+          {stats.breakdown && (
+            <div
+              style={{
+                background: 'var(--bg-glass)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-lg)',
+                padding: '20px 24px',
+                marginBottom: 30,
+              }}
+            >
+              <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                <div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600 }}>
+                    Acessos ao link (tudo)
+                  </div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 700 }}>{stats.breakdown.allRequests.toLocaleString('pt-BR')}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600 }}>
+                    Visitantes únicos
+                  </div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 700 }}>{stats.breakdown.uniqueVisitors.toLocaleString('pt-BR')}</div>
+                  <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>pessoa + link</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600 }}>
+                    Robôs e prévias
+                  </div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 700, color: stats.breakdown.bot > 0 ? '#eab308' : undefined }}>
+                    {stats.breakdown.bot.toLocaleString('pt-BR')}
+                  </div>
+                  <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>não contados</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600 }}>
+                    Repetidos
+                  </div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 700 }}>{stats.breakdown.duplicate.toLocaleString('pt-BR')}</div>
+                  <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>mesma pessoa em 10 min</div>
+                </div>
+              </div>
+
+              {stats.botAgents && stats.botAgents.length > 0 && (
+                <div style={{ marginTop: 16, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Quem são os robôs:</span>
+                  {stats.botAgents.map((b) => (
+                    <span key={b.agent} style={{ fontSize: '0.75rem', padding: '2px 10px', borderRadius: 12, background: 'rgba(255,255,255,0.05)' }}>
+                      {b.agent} <strong>{b.count}</strong>
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {stats.botSamples && stats.botSamples.length > 0 && (
+                <details style={{ marginTop: 12 }}>
+                  <summary style={{ fontSize: '0.72rem', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                    Ver exemplos de "Outros robôs" (pra conferir se alguma pessoa foi classificada errado)
+                  </summary>
+                  <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {stats.botSamples.map((b) => (
+                      <div key={b.userAgent} className="font-mono" style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', wordBreak: 'break-all' }}>
+                        <strong>{b.count}×</strong> {b.userAgent}
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+
+              {stats.breakdown.legacy > 0 && (
+                <div style={{ marginTop: 12, fontSize: '0.75rem', color: '#eab308' }}>
+                  ⚠️ {stats.breakdown.legacy.toLocaleString('pt-BR')} dos cliques acima são de <strong>antes</strong> da atualização que separa
+                  pessoas de robôs — esses não dá pra filtrar e podem incluir prévias de link e verificações automáticas.
+                </div>
+              )}
+
+              <div style={{ marginTop: 12, fontSize: '0.72rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                Horários em Brasília. O painel de afiliados do Mercado Livre conta só cliques nos links <strong>do Mercado Livre</strong>, depois de
+                filtrar tráfego automático e com algum atraso — então o número dele tende a ficar abaixo do nosso mesmo com os robôs
+                já descontados (aqui entram também Amazon, Shopee etc.).
+              </div>
+            </div>
+          )}
 
           {/* Chart */}
           <div

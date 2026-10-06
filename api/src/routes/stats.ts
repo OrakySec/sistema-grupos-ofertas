@@ -2,15 +2,17 @@ import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { requireAuth } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { classifyOfferProblem } from '../lib/failureReason';
+import { brtDayStart } from '../lib/time';
 
 export const statsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   fastify.addHook('preHandler', requireAuth);
 
   // GET /stats
   fastify.get('/', async (_request, reply) => {
-    const now = new Date();
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
+    // "Today" is the Brasília day (UTC-3) — the container runs in UTC, so
+    // plain local-date math cut the day off at 21:00 in Brazil.
+    const startOfDay = brtDayStart(0);
+    const endOfDay = brtDayStart(-1);
 
     const [pending, approvedToday, sentToday, failedToday, totalOffers, clicksToday, recentOffers] =
       await Promise.all([
@@ -42,6 +44,8 @@ export const statsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
         prisma.shortUrlClick.count({
           where: {
             createdAt: { gte: startOfDay, lt: endOfDay },
+            // real people only (LEGACY = logged before bots could be told apart)
+            kind: { in: ['HUMAN', 'LEGACY'] },
           },
         }),
 
