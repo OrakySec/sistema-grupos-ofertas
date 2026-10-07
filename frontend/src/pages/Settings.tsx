@@ -79,6 +79,7 @@ export default function Settings() {
   const [uploadingMlSession, setUploadingMlSession] = useState(false)
   const refShortenerDomain = useRef<HTMLInputElement>(null)
   const refFooterText = useRef<HTMLTextAreaElement>(null)
+  const refStripWords = useRef<HTMLTextAreaElement>(null)
   const [linkShortenerEnabled, setLinkShortenerEnabled] = useState(true)
   const [shortenerProvider, setShortenerProvider] = useState('internal')
 
@@ -321,11 +322,34 @@ export default function Settings() {
             Deixe em branco para não adicionar nenhum texto extra. Fica assim: MENSAGEM (linha em branco) TEXTO PADRÃO
           </div>
         </div>
+
+        <div className="form-group">
+          <label className="label">🧹 Palavras a remover das mensagens</label>
+          <textarea
+            ref={refStripWords}
+            defaultValue={settingsData?.stripWords ?? ''}
+            className="textarea font-mono"
+            placeholder={'#nomedogrupo\n#ofertasbr'}
+            rows={4}
+            spellCheck={false}
+          />
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.6 }}>
+            Uma por linha. Essas palavras são <strong>apagadas do texto</strong> antes de a mensagem ir pros seus grupos — os links
+            nunca são alterados. Ignora maiúsculas/minúsculas e só apaga a palavra inteira. Se a linha ficar vazia, ela some junto.
+            <br />
+            <code>#nomedogrupo</code> apaga a hashtag (sem o <code>#</code>, só apaga a palavra solta, nunca a hashtag) ·{' '}
+            <code>#ofertas*</code> apaga <code>#ofertas</code>, <code>#ofertasbr</code>… · <code>#*</code> apaga <strong>todas</strong> as hashtags ·{' '}
+            <code>@canal</code> apaga menções · várias palavras na mesma linha valem como uma frase.
+          </div>
+        </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
           <button
             type="button"
             className="btn btn-primary btn-sm"
-            onClick={() => save({ messageFooterText: refFooterText.current?.value ?? '' })}
+            onClick={() => save({
+              messageFooterText: refFooterText.current?.value ?? '',
+              stripWords: refStripWords.current?.value ?? '',
+            })}
             disabled={saving}
           >
             {saving ? <span className="spinner spinner-sm" /> : null}

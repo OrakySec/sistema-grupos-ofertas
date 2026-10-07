@@ -35,6 +35,7 @@ from telethon.tl.types import (
 from affiliate_converter import AffiliateConverter
 import ml_browser
 import mockup_composer
+from text_cleanup import parse_terms, strip_terms
 
 # ---------------------------------------------------------------------------
 # Bootstrap
@@ -553,6 +554,39 @@ async def _make_message_handler(http_session: aiohttp.ClientSession):
                         "error": mockup_error or "Falha desconhecida — oferta enviada sem foto",
                     })
 
+            # ── STEP 5.8: Strip configured words ──────────────────────────────────
+            # e.g. a source channel signing its posts with its own #hashtag.
+            # Runs after link conversion and the mockup so it only ever sees
+            # the final text, and text_cleanup never touches URLs.
+            words_to_strip = parse_terms(state.affiliate_settings.get("strip_words", ""))
+            if words_to_strip:
+                cleaned_text, removed_in_text = strip_terms(text, words_to_strip)
+                cleaned_caption, removed_in_caption = strip_terms(media_caption, words_to_strip)
+                removed_words: dict[str, int] = {}
+                for removed_part in (removed_in_text, removed_in_caption):
+                    for word, count in removed_part.items():
+                        removed_words[word] = removed_words.get(word, 0) + count
+
+                if removed_words:
+                    if media_type == "NONE" and not (cleaned_text or "").strip():
+                        # The message was nothing but the unwanted words — don't
+                        # turn it into an empty offer the worker can't send.
+                        logger.warning("[strip] Message would be empty after removing words — keeping original text")
+                        processing_events.append({
+                            "ts": _ts(), "step": "word_strip", "status": "skipped",
+                            "label": "Palavras removidas",
+                            "detail": "Ignorado: a mensagem ficaria vazia",
+                        })
+                    else:
+                        text = cleaned_text
+                        media_caption = cleaned_caption or None
+                        removed_label = ", ".join(f"{w} ({n}×)" for w, n in removed_words.items())
+                        logger.info(f"[strip] Removed words from message: {removed_label}")
+                        processing_events.append({
+                            "ts": _ts(), "step": "word_strip", "status": "info",
+                            "label": "Palavras removidas", "detail": removed_label,
+                        })
+
             # ── STEP 6: Send to API ───────────────────────────────────────────────
             original_date: str = (
                 message.date.astimezone(timezone.utc).isoformat()
@@ -734,6 +768,7 @@ async def _apply_settings(settings: dict, http_session: aiohttp.ClientSession, *
         "magalu_store_name":      settings.get("magalu_store_name") or "",
         "ml_own_list_url":        settings.get("ml_own_list_url") or "",
         "strip_link_domains":      settings.get("strip_link_domains") or "",
+        "strip_words":             settings.get("strip_words") or "",
         "link_shortener_enabled": settings.get("link_shortener_enabled", "true"),
         "shortener_provider":     settings.get("shortener_provider", "internal"),
         "internal_api_url":       INTERNAL_API_URL,

@@ -200,6 +200,7 @@ async function buildApp() {
       magalu_store_name:      dbObj.magalu_store_name ?? '',
       ml_own_list_url:        dbObj.ml_own_list_url ?? '',
       strip_link_domains:     dbObj.strip_link_domains ?? '',
+      strip_words:            dbObj.strip_words ?? '',
       link_shortener_enabled: dbObj.link_shortener_enabled ?? 'true',
       shortener_provider:     dbObj.shortener_provider ?? 'internal',
     });

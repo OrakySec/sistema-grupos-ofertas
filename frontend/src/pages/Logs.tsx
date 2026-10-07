@@ -73,6 +73,8 @@ const STEP_ICON: Record<string, string> = {
   url:           '🔗',
   url_convert:   '💰',
   api_post:      '🚀',
+  link_strip:    '🧹',
+  word_strip:    '🧹',
 }
 
 function stepColor(status: string): { border: string; bg: string; text: string } {

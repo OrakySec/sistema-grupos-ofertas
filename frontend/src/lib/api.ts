@@ -166,6 +166,7 @@ export interface Settings {
   magaluStoreName?: string
   mlOwnListUrl?: string
   stripLinkDomains?: string
+  stripWords?: string
   mlSessionActive?: boolean
   linkShortenerEnabled?: boolean
   shortenerProvider?: string
