@@ -230,6 +230,73 @@ def looks_like_shortener(url: str) -> bool:
         return False
 
 
+_HOP_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+}
+
+
+async def follow_redirect_hops(
+    url: str, session: aiohttp.ClientSession, max_hops: int = 8
+) -> tuple[Optional[str], str]:
+    """
+    Walks a redirect chain one hop at a time by reading each Location header
+    (allow_redirects=False), and stops as soon as a hop lands on a marketplace
+    host — so the marketplace page itself is never requested.
+
+    That matters for promo-channel shorteners: amzon.promo/s/x -> link.amazon
+    -> amzlinks.in -> amazon.com.br. Letting aiohttp follow the whole chain
+    (and then fetch the Amazon page from a datacenter IP) is what used to fail;
+    the hops alone are cheap and already carry the destination.
+
+    Returns (marketplace_url_or_None, trace) where trace is a short
+    human-readable summary of the hops, for logging.
+    """
+    cur = url
+    trace: list[str] = []
+    last_platform: Optional[str] = None
+    for _ in range(max_hops):
+        plat = _platform(cur)
+        if plat and plat != "mercadolivre":
+            return cur, " > ".join(trace)
+        if plat:
+            # Mercado Livre short hosts (meli.la / mlb.link) should still be
+            # followed to the final page; remember where we were if it fails.
+            last_platform = cur
+        try:
+            async with session.get(
+                cur,
+                headers=_HOP_HEADERS,
+                allow_redirects=False,
+                timeout=aiohttp.ClientTimeout(total=8),
+                ssl=False,
+            ) as resp:
+                status = resp.status
+                loc = resp.headers.get("Location")
+        except Exception as exc:
+            trace.append(f"{_host(cur)}:ERR({type(exc).__name__})")
+            break
+        trace.append(f"{_host(cur)}:{status}")
+        if status in (301, 302, 303, 307, 308) and loc:
+            cur = urljoin(cur, loc)
+            continue
+        # Not a redirect: this is the end of the line.
+        if _platform(cur):
+            return cur, " > ".join(trace)
+        break
+    else:
+        # Ran out of hops; accept an ML URL if we reached one.
+        pass
+    if _platform(cur):
+        return cur, " > ".join(trace)
+    return last_platform, " > ".join(trace)
+
+
 async def expand_url(url: str, session: aiohttp.ClientSession) -> str:
     expanded, _blocked = await expand_url_ex(url, session)
     return expanded
@@ -251,6 +318,14 @@ async def expand_url_ex(url: str, session: aiohttp.ClientSession) -> tuple[str, 
     if query_extracted:
         # Recursively expand the extracted URL in case it is another short link
         return await expand_url_ex(query_extracted, session)
+
+    # Cheapest and most reliable path: read the redirect hops directly.
+    hop_final, hop_trace = await follow_redirect_hops(url, session)
+    if hop_final:
+        if hop_final != url:
+            logger.info(f"[expand] {url[:60]} -> {hop_final[:90]} ({hop_trace})")
+        return hop_final, False
+    logger.info(f"[expand] hop walk found no marketplace for {url[:70]} ({hop_trace})")
 
     headers = {
         "User-Agent": (
