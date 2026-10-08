@@ -12,6 +12,7 @@ import sys
 import mimetypes
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Optional
 
 import aiofiles
@@ -107,6 +108,10 @@ class AppState:
 
         # Affiliate link conversion settings (refreshed from API on every poll)
         self.affiliate_settings: dict = {}
+
+        # Message ids already handled per source group (UUID), so the catch-up
+        # poller never re-processes what the live event handler already did.
+        self.seen_message_ids: dict[str, set[int]] = {}
 
 
 state = AppState()
@@ -360,6 +365,16 @@ async def _make_message_handler(http_session: aiohttp.ClientSession):
         # template) — empty dict when the group has no custom config, which
         # falls back to the exact behavior that existed before niches.
         group_config = state.source_group_configs.get(uuid, {})
+
+        # Live update and catch-up poller can both see the same message; only
+        # the first one gets to process it.
+        seen = state.seen_message_ids.setdefault(uuid, set())
+        if message.id in seen:
+            return
+        seen.add(message.id)
+        if len(seen) > 1000:
+            for old in sorted(seen)[:500]:
+                seen.discard(old)
 
         logger.info(
             f"New message in chat {chat_id} (uuid={uuid}), "
@@ -694,6 +709,85 @@ async def start_client(http_session: aiohttp.ClientSession) -> bool:
         return True
 
 
+CATCHUP_INTERVAL_S = int(os.getenv("CATCHUP_INTERVAL_S", "120"))
+CATCHUP_MIN_AGE_S = 45        # leave very fresh messages to the live handler
+CATCHUP_MAX_AGE_S = 60 * 60   # never resurrect anything older than this
+
+
+def _catchup_chats() -> dict[str, int]:
+    """One Telegram chat key per source group UUID (prefer the -100… form)."""
+    chosen: dict[str, int] = {}
+    for chat_key, uuid in state.source_groups.items():
+        current = chosen.get(uuid)
+        if current is None or str(chat_key).startswith("-100"):
+            chosen[uuid] = chat_key
+    return chosen
+
+
+async def catchup_loop() -> None:
+    """
+    Safety net for Telegram live updates. Telethon only receives a channel's
+    updates while Telegram keeps pushing them, and that can silently stop for
+    one channel while every other keeps working (the group then looks dead in
+    the dashboard even though people are posting). Every few minutes, read the
+    latest messages of each source group and process any the live handler
+    never saw. First pass only records a baseline, so a restart never replays
+    old messages.
+    """
+    baseline: dict[str, int] = {}
+    unreadable: set[str] = set()
+    await asyncio.sleep(90)
+    while True:
+        try:
+            client = state.client
+            handler_fn = getattr(state, "_handler_fn", None)
+            if client is not None and state.authenticated and handler_fn is not None:
+                for uuid, chat_key in _catchup_chats().items():
+                    try:
+                        msgs = await client.get_messages(chat_key, limit=15)
+                    except Exception as exc:
+                        if uuid not in unreadable:
+                            unreadable.add(uuid)
+                            logger.warning(
+                                f"[catchup] cannot read chat {chat_key} (uuid={uuid}): {exc} — "
+                                "the Telegram account may not be a member of this group"
+                            )
+                        continue
+                    unreadable.discard(uuid)
+                    msgs = [m for m in msgs if m is not None and getattr(m, "id", None)]
+                    if not msgs:
+                        continue
+                    if uuid not in baseline:
+                        baseline[uuid] = max(m.id for m in msgs)
+                        continue
+
+                    now = datetime.now(timezone.utc)
+                    seen = state.seen_message_ids.setdefault(uuid, set())
+                    ready = []
+                    for m in sorted(msgs, key=lambda x: x.id):
+                        if m.id <= baseline[uuid] or m.id in seen:
+                            continue
+                        age = (now - m.date).total_seconds() if m.date else 0
+                        if age < CATCHUP_MIN_AGE_S:
+                            continue
+                        ready.append((m, age))
+                    for m, age in ready:
+                        baseline[uuid] = max(baseline[uuid], m.id)
+                        if age > CATCHUP_MAX_AGE_S:
+                            continue
+                        logger.warning(
+                            f"[catchup] msg {m.id} in chat {chat_key} was missed by live updates "
+                            f"({int(age)}s old) — processing it now"
+                        )
+                        shim = SimpleNamespace(message=m, chat_id=chat_key, get_sender=m.get_sender)
+                        await handler_fn(shim)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(f"[catchup] pass failed: {exc}")
+        await asyncio.sleep(CATCHUP_INTERVAL_S)
+
+
 async def reconnect_loop(http_session: aiohttp.ClientSession) -> None:
     """Background task: watch for disconnections and reconnect automatically."""
     while True:
@@ -1014,6 +1108,7 @@ async def on_startup(app: web.Application) -> None:
     app["task_reconnect"] = asyncio.create_task(
         reconnect_loop(http_session), name="reconnect_loop"
     )
+    app["task_catchup"] = asyncio.create_task(catchup_loop(), name="catchup_loop")
 
     try:
         await ml_browser.get_session(ML_STORAGE_STATE_PATH).start()
@@ -1030,7 +1125,7 @@ async def on_startup(app: web.Application) -> None:
 
 async def on_shutdown(app: web.Application) -> None:
     """aiohttp shutdown hook — clean up tasks, client, and HTTP session."""
-    for task_key in ("task_settings_poll", "task_reconnect"):
+    for task_key in ("task_settings_poll", "task_reconnect", "task_catchup"):
         task = app.get(task_key)
         if task is not None:
             task.cancel()
