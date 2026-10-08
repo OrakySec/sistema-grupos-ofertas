@@ -230,6 +230,19 @@ def looks_like_shortener(url: str) -> bool:
         return False
 
 
+# Why a link could not be expanded, keyed by the original URL. Surfaced in the
+# "Plataforma não reconhecida" error so the dashboard says WHY (HTTP 403 from
+# the shortener, hop chain, browser result...) instead of leaving it a mystery.
+_EXPAND_NOTES: dict[str, str] = {}
+
+
+def _note(url: str, text: str) -> None:
+    if len(_EXPAND_NOTES) > 300:
+        _EXPAND_NOTES.clear()
+    prev = _EXPAND_NOTES.get(url)
+    _EXPAND_NOTES[url] = f"{prev}; {text}" if prev else text
+
+
 _HOP_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -326,6 +339,7 @@ async def expand_url_ex(url: str, session: aiohttp.ClientSession) -> tuple[str, 
             logger.info(f"[expand] {url[:60]} -> {hop_final[:90]} ({hop_trace})")
         return hop_final, False
     logger.info(f"[expand] hop walk found no marketplace for {url[:70]} ({hop_trace})")
+    _note(url, f"saltos: {hop_trace}")
 
     headers = {
         "User-Agent": (
@@ -407,12 +421,14 @@ async def expand_url_ex(url: str, session: aiohttp.ClientSession) -> tuple[str, 
             # Nothing resolved to a marketplace. Log WHY at INFO — this used to
             # be invisible (DEBUG, or nothing at all), which is what made a whole
             # channel's links fail as "Plataforma não reconhecida" with no clue.
+            _note(url, f"HEAD={head_status} GET={get_status} final={_host(final_url)}")
             logger.info(
                 f"[expand] no marketplace URL for {url[:70]} "
                 f"(HEAD={head_status}, GET={get_status}, final={final_url[:80]}, blocked={blocked})"
             )
             return final_url, blocked
     except Exception as exc:
+        _note(url, f"HEAD={head_status} GET={get_status} erro={type(exc).__name__}")
         logger.info(
             f"[expand] request failed for {url[:70]} (HEAD={head_status}, GET={get_status}): {exc}"
         )
@@ -765,6 +781,7 @@ class AffiliateConverter:
                 and self.ml_session is not None
             ):
                 browser_url = await self.ml_session.resolve_redirect(raw_url)
+                _note(raw_url, f"navegador: {_host(browser_url) if browser_url else 'sem resposta'}")
                 if browser_url and browser_url != raw_url and _platform(browser_url):
                     logger.info(f"[affiliate] Browser resolved {raw_url[:60]} → {browser_url[:80]}")
                     expanded = browser_url
@@ -798,6 +815,9 @@ class AffiliateConverter:
             if platform is None:
                 event["status"] = "skipped"
                 event["error"] = "Plataforma não reconhecida"
+                why = _EXPAND_NOTES.pop(raw_url, None)
+                if why:
+                    event["error"] += f" ({why[:200]})"
                 logger.debug(f"[affiliate] Platform not recognized: {expanded[:80]}")
                 return None, event
 
