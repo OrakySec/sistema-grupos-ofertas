@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import api from '../lib/api'
+import Icon from '../components/Icon'
 import Toggle from '../components/Toggle'
 import { Skeleton } from '../components/LoadingSkeleton'
 import { useToast } from '../lib/toast'
@@ -307,7 +308,7 @@ export default function Settings() {
       {/* ── Seção 1: Comportamento ─────────── */}
       <div className="settings-section">
         <div className="settings-section-header">
-          <div className="settings-section-title">⚡ Comportamento</div>
+          <div className="settings-section-title"><span className="icon-chip"><Icon name="zap" /></span>Comportamento</div>
           <div className="settings-section-desc">Configure como o sistema processa as ofertas recebidas</div>
         </div>
         <div style={{
@@ -326,7 +327,7 @@ export default function Settings() {
       {/* ── Seção: Texto Padrão (Rodapé) ─────────── */}
       <div className="settings-section">
         <div className="settings-section-header">
-          <div className="settings-section-title">✍️ Texto Padrão</div>
+          <div className="settings-section-title"><span className="icon-chip"><Icon name="message" /></span>Texto Padrão</div>
           <div className="settings-section-desc">
             Texto adicionado automaticamente no final de toda mensagem replicada (após a mensagem original)
           </div>
@@ -383,7 +384,7 @@ export default function Settings() {
       {/* ── Seção: Marketplaces Ativos ─────────── */}
       <div className="settings-section">
         <div className="settings-section-header">
-          <div className="settings-section-title">🛒 Marketplaces Ativos</div>
+          <div className="settings-section-title"><span className="icon-chip"><Icon name="bag" /></span>Marketplaces Ativos</div>
           <div className="settings-section-desc">Ative ou desative o encaminhamento de ofertas de cada marketplace</div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -465,7 +466,7 @@ export default function Settings() {
       {/* ── Seção 2: Telegram Bot ──────────── */}
       <div className="settings-section">
         <div className="settings-section-header">
-          <div className="settings-section-title">🤖 Telegram Bot (Envio)</div>
+          <div className="settings-section-title"><span className="icon-chip"><Icon name="send" /></span>Telegram Bot (Envio)</div>
           <div className="settings-section-desc">Bot do Telegram usado para enviar as ofertas aos grupos destino</div>
         </div>
 
@@ -502,7 +503,7 @@ export default function Settings() {
       {/* ── Seção 3: Telegram Conta Pessoal ── */}
       <div className="settings-section">
         <div className="settings-section-header">
-          <div className="settings-section-title">📱 Telegram (Leitura — Conta Pessoal)</div>
+          <div className="settings-section-title"><span className="icon-chip"><Icon name="telegram" /></span>Telegram (Leitura — Conta Pessoal)</div>
           <div className="settings-section-desc">Conta pessoal Telegram usada para monitorar os grupos fonte via MTProto</div>
         </div>
 
@@ -644,7 +645,7 @@ export default function Settings() {
       {/* ── Seção 4: WhatsApp ──────────────── */}
       <div className="settings-section">
         <div className="settings-section-header">
-          <div className="settings-section-title">💬 WhatsApp (Evolution API)</div>
+          <div className="settings-section-title"><span className="icon-chip"><Icon name="message" /></span>WhatsApp (Evolution API)</div>
           <div className="settings-section-desc">Integração com Evolution API para envio de mensagens WhatsApp</div>
         </div>
 
@@ -715,7 +716,7 @@ export default function Settings() {
       {/* ── Seção: Monitor de Link (WhatsApp) ─────────────────────── */}
       <div className="settings-section">
         <div className="settings-section-header">
-          <div className="settings-section-title">🩺 Monitor de Link (WhatsApp)</div>
+          <div className="settings-section-title"><span className="icon-chip"><Icon name="shield" /></span>Monitor de Link (WhatsApp)</div>
           <div className="settings-section-desc">
             Verifica periodicamente (a cada 15 min) todos os grupos de destino WhatsApp que
             tiverem um link de convite cadastrado — configure o link de cada grupo em{' '}
@@ -820,7 +821,7 @@ export default function Settings() {
       {/* ── Seção: Links de Afiliado ─────────────────────────────── */}
       <div className="settings-section">
         <div className="settings-section-header">
-          <div className="settings-section-title">🔗 Links de Afiliado</div>
+          <div className="settings-section-title"><span className="icon-chip"><Icon name="link" /></span>Links de Afiliado</div>
           <div className="settings-section-desc">
             Configure suas tags de afiliado. Os links detectados nas mensagens serão convertidos
             automaticamente e encurtados via TinyURL antes de serem enviados ao grupo de destino.

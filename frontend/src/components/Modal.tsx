@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, type ReactNode } from 'react'
+import Icon from './Icon'
 
 interface ModalProps {
   isOpen: boolean
@@ -54,7 +55,7 @@ export default function Modal({
         style={{
           position: 'absolute',
           inset: 0,
-          background: 'rgba(0,0,0,0.7)',
+          background: 'var(--bg-overlay)',
           backdropFilter: 'blur(6px)',
           WebkitBackdropFilter: 'blur(6px)',
           animation: 'fadeInFast 0.2s ease',
@@ -74,11 +75,11 @@ export default function Modal({
           background: 'var(--bg-elevated)',
           border: '1px solid var(--border-default)',
           borderRadius: 'var(--radius-xl)',
-          boxShadow: 'var(--shadow-lg)',
+          boxShadow: 'var(--highlight-top), var(--shadow-lg)',
           display: 'flex',
           flexDirection: 'column',
           maxHeight: 'calc(100vh - 80px)',
-          animation: 'scaleIn 0.25s cubic-bezier(0.34,1.56,0.64,1) both',
+          animation: 'scaleIn 0.22s cubic-bezier(0.16,1,0.3,1) both',
           overflow: 'hidden',
         }}
       >
@@ -96,8 +97,8 @@ export default function Modal({
           >
             <h2
               style={{
-                fontSize: '1rem',
-                fontWeight: 700,
+                fontSize: '0.98rem',
+                fontWeight: 600,
                 color: 'var(--text-primary)',
                 letterSpacing: '-0.01em',
               }}
@@ -108,9 +109,9 @@ export default function Modal({
               onClick={onClose}
               className="icon-btn"
               aria-label="Fechar"
-              style={{ fontSize: '1.1rem' }}
+              style={{ width: 30, height: 30 }}
             >
-              ✕
+              <Icon name="x" size={15} />
             </button>
           </div>
         )}

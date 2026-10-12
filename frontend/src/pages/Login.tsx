@@ -1,6 +1,7 @@
 import React, { useState, type FormEvent } from 'react'
 import { useAuth } from '../lib/auth'
 import { useNavigate } from 'react-router-dom'
+import Icon from '../components/Icon'
 
 export default function Login() {
   const { login } = useAuth()
@@ -22,9 +23,7 @@ export default function Login() {
       await login(email, password)
       navigate('/dashboard', { replace: true })
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'Erro ao fazer login. Tente novamente.'
-      )
+      setError(err instanceof Error ? err.message : 'Erro ao fazer login. Tente novamente.')
     } finally {
       setLoading(false)
     }
@@ -41,178 +40,96 @@ export default function Login() {
         padding: 16,
       }}
     >
-      {/* Animated background */}
       <div className="login-bg" />
       <div className="login-bg-noise" />
 
-      {/* Decorative orbs */}
-      <div
-        style={{
-          position: 'fixed',
-          top: '15%',
-          left: '10%',
-          width: 300,
-          height: 300,
-          borderRadius: '50%',
-          background: 'radial-gradient(circle, rgba(108,99,255,0.08) 0%, transparent 70%)',
-          animation: 'float 8s ease-in-out infinite',
-          pointerEvents: 'none',
-          zIndex: 0,
-        }}
-      />
-      <div
-        style={{
-          position: 'fixed',
-          bottom: '20%',
-          right: '8%',
-          width: 250,
-          height: 250,
-          borderRadius: '50%',
-          background: 'radial-gradient(circle, rgba(59,130,246,0.06) 0%, transparent 70%)',
-          animation: 'float 10s ease-in-out infinite 2s',
-          pointerEvents: 'none',
-          zIndex: 0,
-        }}
-      />
-
-      {/* Login card */}
-      <div
-        style={{
-          position: 'relative',
-          zIndex: 1,
-          width: '100%',
-          maxWidth: 420,
-          background: 'rgba(17, 17, 24, 0.9)',
-          border: '1px solid var(--border-default)',
-          borderRadius: 'var(--radius-xl)',
-          padding: '40px 36px',
-          boxShadow: 'var(--shadow-lg), var(--shadow-glow)',
-          backdropFilter: 'blur(20px)',
-          WebkitBackdropFilter: 'blur(20px)',
-          animation: 'scaleIn 0.4s cubic-bezier(0.34,1.56,0.64,1) both',
-        }}
-      >
+      <div style={{ position: 'relative', zIndex: 1, width: '100%', maxWidth: 400, animation: 'scaleIn 0.35s cubic-bezier(0.16,1,0.3,1) both' }}>
         {/* Brand */}
-        <div
-          style={{
-            textAlign: 'center',
-            marginBottom: 36,
-          }}
-        >
+        <div style={{ textAlign: 'center', marginBottom: 28 }}>
           <div
-            style={{
-              width: 56,
-              height: 56,
-              borderRadius: 16,
-              background: 'var(--accent-primary)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '1.6rem',
-              margin: '0 auto 16px',
-              boxShadow: 'var(--shadow-glow)',
-              animation: 'pulse-glow 3s ease-in-out infinite',
-            }}
+            className="brand-mark"
+            style={{ width: 52, height: 52, borderRadius: 15, margin: '0 auto 18px', animation: 'pulse-glow 4s ease-in-out infinite' }}
           >
-            ⚡
+            <Icon name="zap" size={24} strokeWidth={2.2} />
           </div>
-          <h1
-            style={{
-              fontSize: '1.5rem',
-              fontWeight: 700,
-              letterSpacing: '-0.03em',
-              background: 'linear-gradient(135deg, #f1f1f3 0%, #8b83ff 100%)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-              backgroundClip: 'text',
-              marginBottom: 6,
-            }}
-          >
-            Ofertas Manager
+          <h1 style={{ fontSize: '1.5rem', fontWeight: 650, letterSpacing: '-0.035em', marginBottom: 6 }}>
+            Bem-vindo de volta
           </h1>
-          <p
-            style={{
-              fontSize: '0.83rem',
-              color: 'var(--text-muted)',
-              letterSpacing: '0.02em',
-            }}
-          >
-            Acesse sua conta para continuar
+          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
+            Entre para gerenciar seus grupos de ofertas
           </p>
         </div>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit}>
-          {error && (
-            <div className="alert alert-error" style={{ marginBottom: 20 }}>
-              <span>⚠</span>
-              <span>{error}</span>
-            </div>
-          )}
-
-          <div className="form-group">
-            <label className="label" htmlFor="email">
-              E-mail
-            </label>
-            <input
-              id="email"
-              type="email"
-              className="input"
-              placeholder="seu@email.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              autoComplete="email"
-              disabled={loading}
-              required
-            />
-          </div>
-
-          <div className="form-group" style={{ marginBottom: 24 }}>
-            <label className="label" htmlFor="password">
-              Senha
-            </label>
-            <input
-              id="password"
-              type="password"
-              className="input"
-              placeholder="••••••••"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-              disabled={loading}
-              required
-            />
-          </div>
-
-          <button
-            type="submit"
-            className="btn btn-primary btn-lg w-full"
-            disabled={loading}
-            style={{ width: '100%' }}
-          >
-            {loading ? (
-              <>
-                <span className="spinner spinner-sm" />
-                Entrando…
-              </>
-            ) : (
-              'Entrar'
-            )}
-          </button>
-        </form>
-
+        {/* Card */}
         <div
           style={{
-            marginTop: 28,
-            paddingTop: 20,
-            borderTop: '1px solid var(--border-subtle)',
-            textAlign: 'center',
-            fontSize: '0.75rem',
-            color: 'var(--text-muted)',
+            background: 'rgba(16, 16, 20, 0.78)',
+            border: '1px solid var(--border-default)',
+            borderRadius: 'var(--radius-xl)',
+            padding: '28px 28px 24px',
+            boxShadow: 'var(--highlight-top), var(--shadow-lg)',
+            backdropFilter: 'blur(20px)',
+            WebkitBackdropFilter: 'blur(20px)',
           }}
         >
-          Sistema de gerenciamento de ofertas Telegram
+          <form onSubmit={handleSubmit}>
+            {error && (
+              <div className="alert alert-error" style={{ marginBottom: 18 }}>
+                <Icon name="alert" size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+                <span>{error}</span>
+              </div>
+            )}
+
+            <div className="form-group">
+              <label className="label" htmlFor="email">E-mail</label>
+              <input
+                id="email"
+                type="email"
+                className="input"
+                placeholder="voce@empresa.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                autoComplete="email"
+                disabled={loading}
+                required
+                autoFocus
+              />
+            </div>
+
+            <div className="form-group" style={{ marginBottom: 22 }}>
+              <label className="label" htmlFor="password">Senha</label>
+              <input
+                id="password"
+                type="password"
+                className="input"
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                disabled={loading}
+                required
+              />
+            </div>
+
+            <button type="submit" className="btn btn-primary btn-lg" disabled={loading} style={{ width: '100%' }}>
+              {loading ? (
+                <>
+                  <span className="spinner spinner-sm" />
+                  Entrando…
+                </>
+              ) : (
+                <>
+                  Entrar
+                  <Icon name="arrowRight" />
+                </>
+              )}
+            </button>
+          </form>
         </div>
+
+        <p style={{ marginTop: 22, textAlign: 'center', fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+          Ofertas Manager · Telegram e WhatsApp
+        </p>
       </div>
     </div>
   )

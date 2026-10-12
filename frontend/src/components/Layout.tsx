@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react'
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { NavLink, Link, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import api from '../lib/api'
+import Icon from './Icon'
 
 interface NavItem {
   to: string
@@ -10,13 +11,20 @@ interface NavItem {
   badge?: number
 }
 
+interface NavSection {
+  title: string
+  items: NavItem[]
+}
+
+const TODAY_FMT = new Intl.DateTimeFormat('pt-BR', { weekday: 'short', day: '2-digit', month: 'short' })
+
 export default function Layout() {
   const { user, logout } = useAuth()
   const location = useLocation()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [pendingCount, setPendingCount] = useState(0)
 
-  // Fetch pending count for badge
+  // Pending count for the "Aprovação" badge
   useEffect(() => {
     const fetchPending = async () => {
       try {
@@ -36,249 +44,121 @@ export default function Layout() {
     setSidebarOpen(false)
   }, [location.pathname])
 
-  const navItems: NavItem[] = [
-    { to: '/dashboard', icon: '📊', label: 'Dashboard' },
-    { to: '/queue', icon: '⏳', label: 'Aprovação', badge: pendingCount },
-    { to: '/history', icon: '📋', label: 'Histórico' },
-    { to: '/groups', icon: '👥', label: 'Grupos' },
-    { to: '/clicks', icon: '🖱️', label: 'Cliques' },
-    { to: '/settings', icon: '⚙️', label: 'Configurações' },
-    { to: '/logs', icon: '📊', label: 'Logs & Debug' },
+  const sections: NavSection[] = [
+    {
+      title: 'Operação',
+      items: [
+        { to: '/dashboard', icon: 'dashboard', label: 'Dashboard' },
+        { to: '/queue', icon: 'inbox', label: 'Aprovação', badge: pendingCount },
+        { to: '/history', icon: 'history', label: 'Histórico' },
+      ],
+    },
+    {
+      title: 'Gestão',
+      items: [
+        { to: '/groups', icon: 'users', label: 'Grupos' },
+        { to: '/clicks', icon: 'cursor', label: 'Cliques' },
+      ],
+    },
+    {
+      title: 'Sistema',
+      items: [
+        { to: '/settings', icon: 'settings', label: 'Configurações' },
+        { to: '/logs', icon: 'activity', label: 'Logs & Debug' },
+      ],
+    },
   ]
+
+  const current = sections.flatMap((s) => s.items).find((i) => location.pathname.startsWith(i.to))
+  const initial = user?.email?.charAt(0).toUpperCase() ?? 'U'
 
   return (
     <div className="layout">
       {/* Mobile overlay */}
       {sidebarOpen && (
-        <div
-          className="overlay"
-          style={{ zIndex: 49 }}
-          onClick={() => setSidebarOpen(false)}
-        />
+        <div className="overlay" style={{ zIndex: 49 }} onClick={() => setSidebarOpen(false)} />
       )}
 
       {/* Sidebar */}
       <aside className={`sidebar${sidebarOpen ? ' open' : ''}`}>
-        {/* Brand */}
-        <div
-          style={{
-            padding: '24px 20px 20px',
-            borderBottom: '1px solid var(--border-subtle)',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div
-              style={{
-                width: 36,
-                height: 36,
-                borderRadius: 10,
-                background: 'var(--accent-primary)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '1.1rem',
-                boxShadow: 'var(--shadow-glow-sm)',
-                flexShrink: 0,
-              }}
-            >
-              ⚡
-            </div>
-            <div>
-              <div
-                style={{
-                  fontSize: '1rem',
-                  fontWeight: 700,
-                  background: 'linear-gradient(135deg, #f1f1f3 0%, #8b83ff 100%)',
-                  WebkitBackgroundClip: 'text',
-                  WebkitTextFillColor: 'transparent',
-                  backgroundClip: 'text',
-                  letterSpacing: '-0.02em',
-                }}
-              >
-                Ofertas
-              </div>
-              <div
-                style={{
-                  fontSize: '0.68rem',
-                  color: 'var(--text-muted)',
-                  letterSpacing: '0.08em',
-                  textTransform: 'uppercase',
-                  fontWeight: 600,
-                  marginTop: -2,
-                }}
-              >
-                Manager
-              </div>
-            </div>
+        <div className="sidebar-brand">
+          <div className="brand-mark">
+            <Icon name="zap" strokeWidth={2.2} />
+          </div>
+          <div>
+            <div className="brand-name">Ofertas</div>
+            <div className="brand-sub">Manager</div>
           </div>
         </div>
 
-        {/* Navigation */}
-        <nav
-          style={{
-            flex: 1,
-            padding: '12px 10px',
-            overflowY: 'auto',
-          }}
-        >
-          {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              style={({ isActive }) => ({
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                padding: '10px 12px',
-                borderRadius: 'var(--radius-md)',
-                marginBottom: 2,
-                fontSize: '0.875rem',
-                fontWeight: isActive ? 600 : 500,
-                color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
-                background: isActive ? 'var(--accent-primary-dim)' : 'transparent',
-                borderLeft: isActive
-                  ? '3px solid var(--accent-primary)'
-                  : '3px solid transparent',
-                transition: 'all var(--transition)',
-                textDecoration: 'none',
-              })}
-            >
-              <span style={{ fontSize: '1rem', flexShrink: 0 }}>{item.icon}</span>
-              <span style={{ flex: 1 }}>{item.label}</span>
-              {item.badge !== undefined && item.badge > 0 && (
-                <span
-                  style={{
-                    background: 'var(--accent-warning)',
-                    color: '#000',
-                    borderRadius: 'var(--radius-full)',
-                    fontSize: '0.65rem',
-                    fontWeight: 700,
-                    minWidth: 18,
-                    height: 18,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    padding: '0 5px',
-                  }}
+        <nav className="sidebar-nav">
+          {sections.map((section) => (
+            <div key={section.title}>
+              <div className="nav-section">{section.title}</div>
+              {section.items.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
                 >
-                  {item.badge > 99 ? '99+' : item.badge}
-                </span>
-              )}
-            </NavLink>
+                  <Icon name={item.icon} />
+                  <span>{item.label}</span>
+                  {item.badge !== undefined && item.badge > 0 && (
+                    <span className="nav-badge">{item.badge > 99 ? '99+' : item.badge}</span>
+                  )}
+                </NavLink>
+              ))}
+            </div>
           ))}
         </nav>
 
-        {/* User + Logout */}
-        <div
-          style={{
-            padding: '16px 12px',
-            borderTop: '1px solid var(--border-subtle)',
-          }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              padding: '10px 12px',
-              borderRadius: 'var(--radius-md)',
-              background: 'var(--bg-glass)',
-              border: '1px solid var(--border-subtle)',
-            }}
-          >
-            <div
-              style={{
-                width: 30,
-                height: 30,
-                borderRadius: '50%',
-                background: 'var(--accent-primary-dim)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '0.75rem',
-                fontWeight: 700,
-                color: 'var(--text-accent)',
-                flexShrink: 0,
-                border: '1px solid rgba(108,99,255,0.3)',
-              }}
-            >
-              {user?.email?.charAt(0).toUpperCase() ?? 'U'}
-            </div>
+        <div className="sidebar-footer">
+          <div className="user-card">
+            <div className="avatar">{initial}</div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div
-                className="truncate"
-                style={{
-                  fontSize: '0.78rem',
-                  color: 'var(--text-secondary)',
-                  fontWeight: 500,
-                }}
-              >
-                {user?.email ?? 'Usuário'}
+              <div className="truncate" style={{ fontSize: '0.8rem', color: 'var(--text-primary)', fontWeight: 550 }}>
+                {user?.email?.split('@')[0] ?? 'Usuário'}
+              </div>
+              <div className="truncate" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                {user?.email ?? ''}
               </div>
             </div>
-            <button
-              className="icon-btn danger"
-              onClick={logout}
-              data-tooltip="Sair"
-              title="Sair"
-              style={{ width: 28, height: 28, fontSize: '0.85rem' }}
-            >
-              ↩
+            <button className="icon-btn danger" onClick={logout} title="Sair" aria-label="Sair" style={{ width: 30, height: 30 }}>
+              <Icon name="logout" size={15} />
             </button>
           </div>
         </div>
       </aside>
 
-      {/* Main Content */}
+      {/* Main */}
       <div className="main-content">
-        {/* Mobile top bar */}
-        <div
-          style={{
-            display: 'none',
-            padding: '12px 16px',
-            borderBottom: '1px solid var(--border-subtle)',
-            alignItems: 'center',
-            gap: 12,
-            background: 'var(--bg-surface)',
-            position: 'sticky',
-            top: 0,
-            zIndex: 40,
-          }}
-          className="mobile-topbar"
-        >
-          <button
-            className="hamburger"
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            aria-label="Toggle sidebar"
-          >
-            <span />
-            <span />
-            <span />
+        <header className="topbar">
+          <button className="hamburger" onClick={() => setSidebarOpen(!sidebarOpen)} aria-label="Abrir menu">
+            <Icon name="menu" />
           </button>
-          <span
-            style={{
-              fontWeight: 700,
-              fontSize: '1rem',
-              background: 'linear-gradient(135deg, #f1f1f3 0%, #8b83ff 100%)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-              backgroundClip: 'text',
-            }}
-          >
-            ⚡ Ofertas Manager
-          </span>
-        </div>
+          <div className="breadcrumb">
+            <span>Ofertas</span>
+            <Icon name="chevronRight" />
+            <strong className="truncate">{current?.label ?? 'Painel'}</strong>
+          </div>
+          <div className="topbar-right">
+            {pendingCount > 0 && !location.pathname.startsWith('/queue') && (
+              <Link to="/queue" className="topbar-pill" style={{ color: '#ffc15e', borderColor: 'rgba(245,165,36,0.25)' }}>
+                <span className="status-dot warning" />
+                {pendingCount}<span className="pill-label"> aguardando aprovação</span>
+              </Link>
+            )}
+            <span className="topbar-pill hide-mobile" style={{ textTransform: 'capitalize' }}>
+              <Icon name="clock" size={13} />
+              {TODAY_FMT.format(new Date()).replace('.', '')}
+            </span>
+          </div>
+        </header>
 
-        <div className="content-area">
+        <main className="content-area" key={location.pathname}>
           <Outlet />
-        </div>
+        </main>
       </div>
-
-      <style>{`
-        @media (max-width: 768px) {
-          .mobile-topbar { display: flex !important; }
-        }
-      `}</style>
     </div>
   )
 }

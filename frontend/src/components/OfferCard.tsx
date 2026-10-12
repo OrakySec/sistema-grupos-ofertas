@@ -1,6 +1,7 @@
 import React from 'react'
 import type { Offer } from '../lib/api'
 import StatusBadge from './StatusBadge'
+import Icon from './Icon'
 
 interface OfferCardProps {
   offer: Offer
@@ -51,18 +52,9 @@ export default function OfferCard({
           marginBottom: 10,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-          <span
-            style={{
-              fontSize: '1rem',
-              background: 'var(--bg-elevated)',
-              padding: '4px 8px',
-              borderRadius: 'var(--radius-sm)',
-              border: '1px solid var(--border-subtle)',
-              flexShrink: 0,
-            }}
-          >
-            📦
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+          <span className="avatar" style={{ width: 34, height: 34, fontSize: '0.8rem' }}>
+            {(offer.sourceGroup?.name || '?').charAt(0).toUpperCase()}
           </span>
           <div style={{ minWidth: 0 }}>
             <div
@@ -82,7 +74,9 @@ export default function OfferCard({
                 marginTop: 1,
               }}
             >
-              👉 Para: {destsLabel} • {timeAgo(offer.createdAt)}
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                <Icon name="send" size={11} /> {destsLabel} · {timeAgo(offer.createdAt)}
+              </span>
             </div>
           </div>
         </div>
@@ -123,7 +117,7 @@ export default function OfferCard({
               disabled={loading}
               style={{ flex: 1 }}
             >
-              {loading ? <span className="spinner spinner-sm" /> : '✅'} Aprovar
+              {loading ? <span className="spinner spinner-sm" /> : <Icon name="check" />} Aprovar
             </button>
           )}
           {onReject && (
@@ -133,7 +127,7 @@ export default function OfferCard({
               disabled={loading}
               style={{ flex: 1 }}
             >
-              {loading ? <span className="spinner spinner-sm" /> : '❌'} Rejeitar
+              {loading ? <span className="spinner spinner-sm" /> : <Icon name="x" />} Rejeitar
             </button>
           )}
         </div>

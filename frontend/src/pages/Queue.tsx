@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import api, { type Offer } from '../lib/api'
 import OfferCard from '../components/OfferCard'
+import Icon from '../components/Icon'
 import { SkeletonCard } from '../components/LoadingSkeleton'
 import { useToast } from '../lib/toast'
 
@@ -112,7 +113,7 @@ export default function Queue() {
                 <span className="spinner spinner-sm" /> Aprovando…
               </>
             ) : (
-              <>✅ Aprovar todos ({offers.length})</>
+              <><Icon name="check" /> Aprovar todos ({offers.length})</>
             )}
           </button>
         )}
@@ -127,7 +128,7 @@ export default function Queue() {
         </div>
       ) : offers.length === 0 ? (
         <div className="empty-state">
-          <span className="empty-state-icon">🎉</span>
+          <span className="empty-state-icon" style={{ color: 'var(--accent-success)' }}><Icon name="checkCircle" size={24} /></span>
           <span className="empty-state-title">Fila limpa!</span>
           <span className="empty-state-desc">
             Não há ofertas aguardando aprovação. Bom trabalho!

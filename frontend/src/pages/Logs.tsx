@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import GroupsHealthPanel from '../components/GroupsHealthPanel'
 import UnidentifiedLinksPanel from '../components/UnidentifiedLinksPanel'
+import Icon from '../components/Icon'
 import api, { type DeliveryLog, type ProcessingOffer, type ProcessingEvent, type SourceGroup } from '../lib/api'
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -737,7 +738,7 @@ export default function Logs() {
       {/* Header */}
       <div className="page-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <h1 className="page-title">📊 Logs do Sistema</h1>
+          <h1 className="page-title">Logs & Debug</h1>
           <p className="page-subtitle">
             Acompanhe o processamento de cada mensagem e o histórico de entregas
           </p>
@@ -746,7 +747,7 @@ export default function Logs() {
           className="select"
           value={sourceGroupId}
           onChange={(e) => setSourceGroupId(e.target.value)}
-          style={{ minWidth: 220 }}
+          style={{ minWidth: 240, width: 'auto' }}
         >
           <option value="">Todos os grupos de origem</option>
           {sourceGroups.map((g) => (
@@ -756,32 +757,20 @@ export default function Logs() {
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 24, borderBottom: '1px solid var(--border)' }}>
-        {([
-          ['health',     '🩺 Saúde'],
-          ['links',      '🔗 Links'],
-          ['processing', '🔍 Processamento'],
-          ['delivery',   '📡 Entregas'],
-        ] as const).map(([t, label]) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            style={{
-              padding: '8px 20px',
-              fontSize: '0.88rem',
-              fontWeight: tab === t ? 700 : 400,
-              color: tab === t ? 'var(--accent-primary)' : 'var(--text-muted)',
-              background: 'none',
-              border: 'none',
-              borderBottom: tab === t ? '2px solid var(--accent-primary)' : '2px solid transparent',
-              cursor: 'pointer',
-              transition: 'all 0.15s',
-              marginBottom: -1,
-            }}
-          >
-            {label}
-          </button>
-        ))}
+      <div style={{ marginBottom: 24, overflowX: 'auto' }}>
+        <div className="tabs">
+          {([
+            ['health',     'shield',   'Saúde'],
+            ['links',      'link',     'Links'],
+            ['processing', 'activity', 'Processamento'],
+            ['delivery',   'send',     'Entregas'],
+          ] as const).map(([t, icon, label]) => (
+            <button key={t} onClick={() => setTab(t)} className={`tab${tab === t ? ' active' : ''}`}>
+              <Icon name={icon} size={15} />
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Content */}

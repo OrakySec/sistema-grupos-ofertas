@@ -48,9 +48,7 @@ export default function StatusBadge({ status, reason }: StatusBadgeProps) {
 
   const badge = (
     <span className={config.className} title={reason ?? undefined}>
-      <span style={{ fontSize: '0.55rem', verticalAlign: 'middle' }}>
-        {config.dot}
-      </span>
+      <span className="badge-dot" />
       {config.label}
     </span>
   )

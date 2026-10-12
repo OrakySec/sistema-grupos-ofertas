@@ -32,10 +32,10 @@ export function SkeletonCard() {
   return (
     <div
       style={{
-        background: 'var(--bg-glass)',
+        background: 'var(--bg-card)',
         border: '1px solid var(--border-subtle)',
         borderRadius: 'var(--radius-lg)',
-        padding: 24,
+        padding: 18,
         display: 'flex',
         flexDirection: 'column',
         gap: 12,
@@ -56,10 +56,10 @@ export function SkeletonMetricCard() {
   return (
     <div
       style={{
-        background: 'var(--bg-glass)',
+        background: 'var(--bg-card)',
         border: '1px solid var(--border-subtle)',
         borderRadius: 'var(--radius-lg)',
-        padding: 24,
+        padding: 18,
         display: 'flex',
         flexDirection: 'column',
         gap: 10,
