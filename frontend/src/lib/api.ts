@@ -162,6 +162,8 @@ export interface Settings {
   // Affiliate link conversion
   amazonAffiliateTag?: string
   shopeeAffiliateId?: string
+  shopeeAppId?: string
+  shopeeAppSecret?: string
   aliexpressTrackingId?: string
   magaluStoreName?: string
   mlOwnListUrl?: string
@@ -523,6 +525,10 @@ class ApiClient {
 
   async testTelegram(): Promise<{ success: boolean; message: string }> {
     return this.request('POST', '/settings/test-telegram')
+  }
+
+  async testShopee(): Promise<{ success: boolean; message: string }> {
+    return this.request('POST', '/settings/test-shopee')
   }
 
   async testWhatsApp(): Promise<{ success: boolean; message: string }> {

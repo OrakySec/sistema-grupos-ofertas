@@ -49,6 +49,7 @@ export default function Settings() {
   const [autoApprove, setAutoApprove] = useState(false)
   const [testTgBot, setTestTgBot] = useState<TestStatus>('idle')
   const [testWa, setTestWa] = useState<TestStatus>('idle')
+  const [testShopee, setTestShopee] = useState<TestStatus>('idle')
   const [settingsData, setSettingsData] = useState<any>(null)
   
   const { addToast } = useToast()
@@ -70,6 +71,8 @@ export default function Settings() {
   // Affiliate refs
   const refAmazonTag     = useRef<HTMLInputElement>(null)
   const refShopeeId      = useRef<HTMLInputElement>(null)
+  const refShopeeAppId   = useRef<HTMLInputElement>(null)
+  const refShopeeSecret  = useRef<HTMLInputElement>(null)
   const refAliTrackId    = useRef<HTMLInputElement>(null)
   const refMagaluStore   = useRef<HTMLInputElement>(null)
   const refMlSessionFile = useRef<HTMLInputElement>(null)
@@ -178,6 +181,25 @@ export default function Settings() {
       addToast(err instanceof Error ? err.message : 'Erro ao testar conexão com a Evolution API', 'error')
     }
     setTimeout(() => setTestWa('idle'), 5000)
+  }
+
+  // Saves the two credential fields first, then checks them live — so the
+  // button always tests what is currently typed, not what was saved last week.
+  const handleTestShopee = async () => {
+    setTestShopee('loading')
+    try {
+      await api.updateSettings({
+        shopeeAppId: refShopeeAppId.current?.value ?? '',
+        shopeeAppSecret: refShopeeSecret.current?.value ?? '',
+      } as any)
+      const res = await api.testShopee()
+      setTestShopee(res.success ? 'success' : 'error')
+      addToast(res.success ? `Shopee API: ${res.message}` : `Shopee API: ${res.message}`, res.success ? 'success' : 'error')
+    } catch (err) {
+      setTestShopee('error')
+      addToast(err instanceof Error ? err.message : 'Erro ao testar a API da Shopee', 'error')
+    }
+    setTimeout(() => setTestShopee('idle'), 5000)
   }
 
   const handleTestLinkMonitor = async () => {
@@ -851,6 +873,43 @@ export default function Settings() {
 
           <div className="form-group">
             <label className="label">
+              🔑 Shopee API — App ID e Secret
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 8 }}>
+                opcional, mas recomendado
+              </span>
+            </label>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <input
+                ref={refShopeeAppId}
+                defaultValue={settingsData?.shopeeAppId ?? ''}
+                className="input font-mono"
+                style={{ flex: '1 1 160px' }}
+                placeholder="App ID"
+                type="text"
+                autoComplete="off"
+                data-lpignore="true"
+              />
+              <input
+                ref={refShopeeSecret}
+                defaultValue={settingsData?.shopeeAppSecret ?? ''}
+                className="input font-mono"
+                style={{ flex: '2 1 260px' }}
+                placeholder="Secret"
+                type="password"
+                autoComplete="new-password"
+                data-lpignore="true"
+              />
+              <TestButton label="Testar API" onTest={handleTestShopee} status={testShopee} />
+            </div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>
+              Com a API da Shopee o sistema envia a foto do produto nas ofertas da Shopee (sem ela, a Shopee bloqueia a
+              busca da imagem) e gera o link de afiliado oficial. Encontrado em: Shopee Affiliate → Open API.
+              O botão salva os dois campos e testa a conexão.
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label className="label">
               🛒 AliExpress Tracking ID
               <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 8 }}>
                 ex: meucanal
@@ -1052,6 +1111,8 @@ export default function Settings() {
             onClick={() => save({
               amazonAffiliateTag:   refAmazonTag.current?.value,
               shopeeAffiliateId:    refShopeeId.current?.value,
+              shopeeAppId:          refShopeeAppId.current?.value,
+              shopeeAppSecret:      refShopeeSecret.current?.value,
               aliexpressTrackingId: refAliTrackId.current?.value,
               magaluStoreName:      refMagaluStore.current?.value,
               mlOwnListUrl:         refMlOwnListUrl.current?.value,

@@ -29,6 +29,8 @@ import urllib.parse
 import aiohttp
 from loguru import logger
 
+from shopee_api import ShopeeApi, extract_ids as shopee_extract_ids
+
 # ---------------------------------------------------------------------------
 # URL extraction
 # ---------------------------------------------------------------------------
@@ -243,6 +245,9 @@ def _note(url: str, text: str) -> None:
     _EXPAND_NOTES[url] = f"{prev}; {text}" if prev else text
 
 
+# Shopee short-link hosts: still need following to reach the product page.
+_SHOPEE_SHORT_HOSTS = {"s.shopee.com.br", "shope.ee", "www.shope.ee"}
+
 _HOP_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -275,7 +280,8 @@ async def follow_redirect_hops(
     last_platform: Optional[str] = None
     for _ in range(max_hops):
         plat = _platform(cur)
-        if plat and plat != "mercadolivre":
+        keep_going = plat == "mercadolivre" or _host(cur) in _SHOPEE_SHORT_HOSTS
+        if plat and not keep_going:
             return cur, " > ".join(trace)
         if plat:
             # Mercado Livre short hosts (meli.la / mlb.link) should still be
@@ -666,6 +672,8 @@ class AffiliateConverter:
             if d:
                 self.strip_domains.add(d)
         self.ml_session = ml_session  # ml_browser.MLBrowserSession, generates real ML affiliate links
+        # Official Shopee Affiliate API (optional): affiliate short links + product photo.
+        self.shopee_api = ShopeeApi.from_settings(settings)
         self.ml_own_list_url = (settings.get("ml_own_list_url") or "").strip()
         self.shortener_on = settings.get("link_shortener_enabled", "true") != "false"
         self.shortener_provider = settings.get("shortener_provider", "internal")
@@ -852,6 +860,14 @@ class AffiliateConverter:
             # Step 3 — build affiliate URL
             if ml_direct_affiliate is not None:
                 affiliate_url, build_error = ml_direct_affiliate, None
+            elif platform == "shopee" and self.shopee_api is not None:
+                # Official API first (commission-tracked short link from the product's
+                # canonical URL); the an_redir builder stays as the fallback.
+                affiliate_url, build_error = await self.shopee_api.short_link(session, expanded)
+                if affiliate_url is None:
+                    logger.warning(f"[affiliate] Shopee API short link failed ({build_error}); using an_redir fallback")
+                    affiliate_url, fb_error = self._build_affiliate(platform, expanded)
+                    build_error = None if affiliate_url else (fb_error or build_error)
             elif platform == "mercadolivre":
                 if self.ml_session is None:
                     affiliate_url, build_error = None, "Automação do Mercado Livre não inicializada"

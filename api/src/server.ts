@@ -196,6 +196,8 @@ async function buildApp() {
       // Affiliate link conversion
       amazon_affiliate_tag:   dbObj.amazon_affiliate_tag ?? '',
       shopee_affiliate_id:    dbObj.shopee_affiliate_id ?? '',
+      shopee_app_id:          dbObj.shopee_app_id ?? '',
+      shopee_app_secret:      dbObj.shopee_app_secret ?? '',
       aliexpress_tracking_id: dbObj.aliexpress_tracking_id ?? '',
       magalu_store_name:      dbObj.magalu_store_name ?? '',
       ml_own_list_url:        dbObj.ml_own_list_url ?? '',

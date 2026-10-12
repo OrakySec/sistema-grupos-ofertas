@@ -34,6 +34,7 @@ from telethon.tl.types import (
     DocumentAttributeVideo,
 )
 from affiliate_converter import AffiliateConverter
+from shopee_api import ShopeeApi
 import ml_browser
 import mockup_composer
 from text_cleanup import parse_terms, strip_terms
@@ -531,16 +532,27 @@ async def _make_message_handler(http_session: aiohttp.ClientSession):
             # find the recognized marketplace link and fetch the product's own
             # image (og:image) to paste into our branded mockup instead.
             product_url_for_mockup: Optional[str] = None
+            product_platform: Optional[str] = None
             for ev in processing_events:
                 if ev.get("step") == "url" and ev.get("platform"):
                     product_url_for_mockup = ev.get("expanded") or ev.get("original")
+                    product_platform = ev.get("platform")
                     break
 
             if product_url_for_mockup:
                 message_text = text or media_caption
+                # Shopee blocks page scraping, so its photo comes from the official
+                # Affiliate API when credentials are configured (else: og:image path).
+                shopee_image_url: Optional[str] = None
+                if product_platform == "Shopee":
+                    shopee_api = ShopeeApi.from_settings(state.affiliate_settings)
+                    if shopee_api is not None:
+                        info = await shopee_api.product_info(http_session, product_url_for_mockup)
+                        shopee_image_url = info["image_url"] if info else None
                 image_bytes, mockup_error = await mockup_composer.generate_offer_image(
                     product_url_for_mockup, http_session,
                     template_override=group_config.get("mockup"),
+                    image_url_override=shopee_image_url,
                 )
                 if image_bytes:
                     mockup_dir = Path(MEDIA_BASE_PATH) / str(chat_id)
@@ -858,6 +870,8 @@ async def _apply_settings(settings: dict, http_session: aiohttp.ClientSession, *
     state.affiliate_settings = {
         "amazon_affiliate_tag":   settings.get("amazon_affiliate_tag") or "",
         "shopee_affiliate_id":    settings.get("shopee_affiliate_id") or "",
+        "shopee_app_id":          settings.get("shopee_app_id") or "",
+        "shopee_app_secret":      settings.get("shopee_app_secret") or "",
         "aliexpress_tracking_id": settings.get("aliexpress_tracking_id") or "",
         "magalu_store_name":      settings.get("magalu_store_name") or "",
         "ml_own_list_url":        settings.get("ml_own_list_url") or "",
@@ -1084,6 +1098,24 @@ async def route_ml_session_upload(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=500)
 
 
+async def route_shopee_test(request: web.Request) -> web.Response:
+    """POST /shopee/test → { ok, message } — checks the Shopee Affiliate API credentials live."""
+    http_session: aiohttp.ClientSession = request.app["http_session"]
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    # Credentials may come in the body (just saved, before the 60s settings poll).
+    api = ShopeeApi.from_settings({
+        "shopee_app_id": body.get("app_id") or state.affiliate_settings.get("shopee_app_id"),
+        "shopee_app_secret": body.get("secret") or state.affiliate_settings.get("shopee_app_secret"),
+    })
+    if api is None:
+        return web.json_response({"ok": False, "message": "App ID / Secret da Shopee não configurados"})
+    ok, message = await api.test(http_session)
+    return web.json_response({"ok": ok, "message": message})
+
+
 async def route_ml_session_status(request: web.Request) -> web.Response:
     """GET /ml-session/status → { active: bool } — does a live check, not just a file-exists check."""
     session = ml_browser.get_session(ML_STORAGE_STATE_PATH)
@@ -1167,6 +1199,7 @@ def build_app() -> web.Application:
     app.router.add_post("/reload-settings", route_reload_settings)
     app.router.add_post("/ml-session/upload", route_ml_session_upload)
     app.router.add_get("/ml-session/status", route_ml_session_status)
+    app.router.add_post("/shopee/test", route_shopee_test)
 
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)

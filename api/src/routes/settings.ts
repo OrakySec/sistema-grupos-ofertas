@@ -39,6 +39,8 @@ function buildSettingsResponse(
     // Affiliate link conversion
     amazonAffiliateTag:     dbObj.amazon_affiliate_tag ?? '',
     shopeeAffiliateId:      dbObj.shopee_affiliate_id ?? '',
+    shopeeAppId:            dbObj.shopee_app_id ?? '',
+    shopeeAppSecret:        dbObj.shopee_app_secret ? '***' : '',
     aliexpressTrackingId:   dbObj.aliexpress_tracking_id ?? '',
     magaluStoreName:        dbObj.magalu_store_name ?? '',
     mlOwnListUrl:           dbObj.ml_own_list_url ?? '',
@@ -152,6 +154,8 @@ export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
       // Affiliate link conversion
       if ('amazonAffiliateTag' in updates)   dbUpdates.amazon_affiliate_tag   = updates.amazonAffiliateTag ?? '';
       if ('shopeeAffiliateId' in updates)    dbUpdates.shopee_affiliate_id    = updates.shopeeAffiliateId ?? '';
+      if ('shopeeAppId' in updates)          dbUpdates.shopee_app_id          = String(updates.shopeeAppId ?? '').trim();
+      if ('shopeeAppSecret' in updates && updates.shopeeAppSecret !== '***') dbUpdates.shopee_app_secret = String(updates.shopeeAppSecret ?? '').trim();
       if ('aliexpressTrackingId' in updates) dbUpdates.aliexpress_tracking_id = updates.aliexpressTrackingId ?? '';
       if ('magaluStoreName' in updates)      dbUpdates.magalu_store_name      = updates.magaluStoreName ?? '';
       if ('mlOwnListUrl' in updates)         dbUpdates.ml_own_list_url        = updates.mlOwnListUrl ?? '';
@@ -242,6 +246,28 @@ export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       return reply.code(502).send({ success: false, message });
+    }
+  });
+
+  // POST /settings/test-shopee — checks the Shopee Affiliate API credentials
+  // live (the listener signs and sends the request, from the same network the
+  // real conversions use).
+  fastify.post('/test-shopee', async (_request, reply) => {
+    const rows = await prisma.setting.findMany({ where: { key: { in: ['shopee_app_id', 'shopee_app_secret'] } } });
+    const cfg: Record<string, string> = {};
+    for (const r of rows) cfg[r.key] = r.value;
+    if (!cfg.shopee_app_id || !cfg.shopee_app_secret) {
+      return reply.send({ success: false, message: 'Preencha e salve o App ID e o Secret da Shopee primeiro' });
+    }
+    try {
+      const res = await axios.post(
+        `${TELEGRAM_LISTENER_URL}/shopee/test`,
+        { app_id: cfg.shopee_app_id, secret: cfg.shopee_app_secret },
+        { timeout: 20000 },
+      );
+      return reply.send({ success: !!res.data?.ok, message: res.data?.message ?? '' });
+    } catch (err: any) {
+      return reply.send({ success: false, message: `Não consegui falar com o listener: ${err.message}` });
     }
   });
 

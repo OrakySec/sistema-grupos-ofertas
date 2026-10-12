@@ -278,6 +278,7 @@ async def generate_offer_image(
     product_url: str,
     session: aiohttp.ClientSession,
     template_override: Optional[dict] = None,
+    image_url_override: Optional[str] = None,
 ) -> tuple[Optional[bytes], Optional[str]]:
     """
     Returns (image_jpeg_bytes, error_message) — bytes is None on any failure.
@@ -295,7 +296,10 @@ async def generate_offer_image(
     that wants that exact look uploads mockup_template.jpg as its own
     template via the Niches UI instead.
     """
-    image_url = await _fetch_product_image_url(product_url, session)
+    # A marketplace API (Shopee) already gave us the photo URL — no page scraping.
+    image_url = image_url_override
+    if not image_url:
+        image_url = await _fetch_product_image_url(product_url, session)
 
     if not image_url:
         logger.info(f"[mockup] Plain fetch failed, trying browser fallback: {product_url[:80]}")
