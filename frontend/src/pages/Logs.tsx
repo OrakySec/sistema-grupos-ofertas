@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react'
 import GroupsHealthPanel from '../components/GroupsHealthPanel'
 import UnidentifiedLinksPanel from '../components/UnidentifiedLinksPanel'
 import Icon from '../components/Icon'
+import { useSearchParams } from 'react-router-dom'
 import api, { type DeliveryLog, type ProcessingOffer, type ProcessingEvent, type SourceGroup } from '../lib/api'
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -725,9 +726,14 @@ function DeliveryTab({ sourceGroupId }: { sourceGroupId: string }) {
 type Tab = 'health' | 'links' | 'processing' | 'delivery'
 
 export default function Logs() {
-  const [tab, setTab] = useState<Tab>('health')
+  // ?tab=processing&group=<id> lets other pages (Analytics → Saúde) deep-link here
+  const [params] = useSearchParams()
+  const initialTab = params.get('tab')
+  const [tab, setTab] = useState<Tab>(
+    initialTab === 'links' || initialTab === 'processing' || initialTab === 'delivery' ? initialTab : 'health',
+  )
   const [sourceGroups, setSourceGroups] = useState<SourceGroup[]>([])
-  const [sourceGroupId, setSourceGroupId] = useState('')
+  const [sourceGroupId, setSourceGroupId] = useState(params.get('group') ?? '')
 
   useEffect(() => {
     api.getSourceGroups().then(setSourceGroups).catch(() => {})

@@ -1,7 +1,9 @@
 import { Worker, Job } from 'bullmq';
 import redis from './lib/redis';
 import prisma from './lib/prisma';
-import { addSendOfferJob, scheduleLinkMonitor, scheduleSilentGroupCheck } from './lib/queue';
+import { addSendOfferJob, scheduleLinkMonitor, scheduleSilentGroupCheck, scheduleMemberSnapshot } from './lib/queue';
+import { tagShortLinks } from './lib/linkTagging';
+import { snapshotWhatsAppGroups } from './lib/memberTracking';
 import { TelegramService } from './services/telegram.service';
 import { WhatsAppService } from './services/whatsapp.service';
 
@@ -153,11 +155,18 @@ async function handleSendOffer(job: Job<SendOfferJobData>): Promise<void> {
     let deliveryStatus: 'SUCCESS' | 'FAILED' = 'SUCCESS';
     let errorMessage: string | undefined;
 
+    // Per-group click attribution: same links, tagged with this group's seq.
+    const offerForDest: OfferWithMediaType = {
+      ...offerToSend,
+      text: tagShortLinks(offerToSend.text, publicBaseUrl, dest.seq),
+      mediaCaption: tagShortLinks(offerToSend.mediaCaption, publicBaseUrl, dest.seq),
+    };
+
     try {
       if (dest.type === 'TELEGRAM') {
-        await sendToTelegram(dest.chatId, offerToSend);
+        await sendToTelegram(dest.chatId, offerForDest);
       } else if (dest.type === 'WHATSAPP') {
-        await sendToWhatsApp(dest.chatId, offerToSend);
+        await sendToWhatsApp(dest.chatId, offerForDest);
       }
       successCount++;
       console.log(`[Worker] Sent offer ${offerId} to ${dest.type} group ${dest.name}`);
@@ -506,6 +515,9 @@ const linkMonitorWorker = new Worker(
       await handleCheckSilentGroups();
     } else if (job.name === 'check-invite-link') {
       await handleCheckInviteLink();
+    } else if (job.name === 'snapshot-wa-members') {
+      const results = await snapshotWhatsAppGroups();
+      console.log('[Worker] WhatsApp member snapshot:', JSON.stringify(results));
     } else {
       console.warn(`[Worker] Unknown link-monitor job type: ${job.name}`);
     }
@@ -531,6 +543,10 @@ scheduleLinkMonitor().catch((err) => {
 
 scheduleSilentGroupCheck().catch((err) => {
   console.error('[Worker] Failed to schedule silent-group repeatable job:', err);
+});
+
+scheduleMemberSnapshot().catch((err) => {
+  console.error('[Worker] Failed to schedule WhatsApp member snapshot job:', err);
 });
 
 // Graceful shutdown

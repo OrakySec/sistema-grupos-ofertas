@@ -15,6 +15,13 @@ import { trackingRoutes } from './routes/tracking'
 import { clicksRoutes } from './routes/clicks';
 import { publicRoutes } from './routes/public';
 import { healthRoutes, unidentifiedLinksRoutes } from './routes/health';
+import { analyticsRoutes } from './routes/analytics';
+import {
+  getWebhookSecret,
+  isParticipantsEvent,
+  recordParticipantsUpdate,
+  WEBHOOK_TOKEN_HEADER,
+} from './lib/memberTracking';
 import { classifyClick } from './lib/clickClassifier';
 import { createHash } from 'crypto';
 import prisma from './lib/prisma';
@@ -26,6 +33,17 @@ const INTERNAL_TOKEN = 'sistema-grupos-ofertas-internal-token-fallback-key-2026'
 const NODE_ENV = process.env.NODE_ENV ?? 'development';
 const CORS_ORIGIN = process.env.CORS_ORIGIN ?? '*';
 const MEDIA_BASE_PATH = process.env.MEDIA_BASE_PATH ?? '/app/media';
+
+// ?g=<seq> on a short link → destination group id, cached briefly so a click
+// never waits on an extra query more than once a minute.
+let groupSeqCache: { at: number; map: Map<number, string> } = { at: 0, map: new Map() };
+async function destinationIdForSeq(seq: number): Promise<string | null> {
+  if (Date.now() - groupSeqCache.at > 60_000) {
+    const rows = await prisma.destinationGroup.findMany({ select: { id: true, seq: true } });
+    groupSeqCache = { at: Date.now(), map: new Map(rows.map((r) => [r.seq, r.id])) };
+  }
+  return groupSeqCache.map.get(seq) ?? null;
+}
 
 const server = Fastify({
   // Behind Traefik in production — without this, request.ip resolves to the
@@ -76,6 +94,7 @@ async function buildApp() {
   // Redirect route for internal shortener (no auth required)
   server.get('/s/:code', async (request, reply) => {
     const { code } = request.params as { code: string };
+    const groupSeq = Number((request.query as { g?: string })?.g);
     try {
       const shortUrl = await prisma.shortUrl.findUnique({
         where: { code },
@@ -89,6 +108,7 @@ async function buildApp() {
         const ipHash = createHash('sha256').update(`${request.ip}|${JWT_SECRET}`).digest('hex').slice(0, 16);
 
         (async () => {
+          const destinationGroupId = Number.isInteger(groupSeq) && groupSeq > 0 ? await destinationIdForSeq(groupSeq) : null;
           let finalKind: string = kind;
           if (kind === 'HUMAN') {
             // Double-tap / refresh / app re-opening the link: same visitor,
@@ -99,7 +119,7 @@ async function buildApp() {
             });
             if (repeat) finalKind = 'DUPLICATE';
           }
-          await prisma.shortUrlClick.create({ data: { code, kind: finalKind, agent, userAgent, ipHash } });
+          await prisma.shortUrlClick.create({ data: { code, kind: finalKind, agent, userAgent, ipHash, destinationGroupId } });
           if (finalKind === 'HUMAN') {
             await prisma.shortUrl.update({ where: { code }, data: { clicks: { increment: 1 } } });
           }
@@ -111,6 +131,24 @@ async function buildApp() {
       server.log.error({ err }, `Error looking up short code ${code}`);
     }
     return reply.status(404).send('Link não encontrado');
+  });
+
+  // Evolution API webhook — WhatsApp group joins/leaves for analytics.
+  // Authenticated by the secret header we set when configuring the webhook
+  // (see lib/memberTracking.ts setupWebhook). Always answers 200 quickly so
+  // Evolution doesn't retry; processing errors are only logged.
+  server.post('/webhooks/evolution', async (request, reply) => {
+    const token = request.headers[WEBHOOK_TOKEN_HEADER];
+    if (!token || token !== (await getWebhookSecret())) {
+      return reply.status(401).send({ error: 'Unauthorized' });
+    }
+    const body = request.body as { event?: string; data?: unknown } | undefined;
+    if (isParticipantsEvent(body?.event)) {
+      recordParticipantsUpdate(body?.data)
+        .then((r) => server.log.info({ result: r }, 'WhatsApp participants update recorded'))
+        .catch((err) => server.log.error({ err }, 'Failed to record WhatsApp participants update'));
+    }
+    return reply.send({ ok: true });
   });
 
   // Internal shorten route (requires X-Internal-Key)
@@ -221,6 +259,7 @@ async function buildApp() {
   await server.register(publicRoutes, { prefix: '/public' });
   await server.register(healthRoutes, { prefix: '/health' });
   await server.register(unidentifiedLinksRoutes, { prefix: '/health' });
+  await server.register(analyticsRoutes, { prefix: '/analytics' });
 
   return server;
 }

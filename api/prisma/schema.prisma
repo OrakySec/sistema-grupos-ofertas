@@ -47,7 +47,7 @@ model SourceGroup {
   // feeding the same public catalog/mockup/footer). Destination routing stays
   // per-SourceGroup regardless — see SourceGroupDestination below.
   nicheId String?
-  niche   Niche?   @relation(fields: [nicheId], references: [id], onDelete: SetNull)
+  niche   Niche?  @relation(fields: [nicheId], references: [id], onDelete: SetNull)
 
   offers       Offer[]
   destinations SourceGroupDestination[]
@@ -91,8 +91,15 @@ model DestinationGroup {
   linkLastCheckedAt  DateTime?
   linkLastNotifiedAt DateTime?
 
-  deliveryLogs  DeliveryLog[]
-  sourceGroups  SourceGroupDestination[]
+  // Short numeric id appended to our short links as ?g=<seq> when an offer is
+  // sent to this group, so a click can be attributed to the group it came from.
+  seq Int @unique @default(autoincrement())
+
+  deliveryLogs   DeliveryLog[]
+  sourceGroups   SourceGroupDestination[]
+  waMembers      WaMember[]
+  waMemberEvents WaMemberEvent[]
+  waSnapshots    WaGroupSnapshot[]
 }
 
 model SourceGroupDestination {
@@ -106,20 +113,20 @@ model SourceGroupDestination {
 }
 
 model Offer {
-  id               String      @id @default(cuid())
-  sourceGroupId    String
+  id                String      @id @default(cuid())
+  sourceGroupId     String
   telegramMessageId BigInt
-  text             String?     @db.Text
-  mediaType        MediaType   @default(NONE)
-  mediaLocalPath   String?
-  mediaCaption     String?     @db.Text
-  senderName       String?
-  status           OfferStatus @default(PENDING)
-  originalDate     DateTime
-  createdAt        DateTime    @default(now())
-  reviewedAt       DateTime?
-  sentAt           DateTime?
-  processingLog    Json?
+  text              String?     @db.Text
+  mediaType         MediaType   @default(NONE)
+  mediaLocalPath    String?
+  mediaCaption      String?     @db.Text
+  senderName        String?
+  status            OfferStatus @default(PENDING)
+  originalDate      DateTime
+  createdAt         DateTime    @default(now())
+  reviewedAt        DateTime?
+  sentAt            DateTime?
+  processingLog     Json?
 
   sourceGroup  SourceGroup   @relation(fields: [sourceGroupId], references: [id])
   deliveryLogs DeliveryLog[]
@@ -151,7 +158,7 @@ model ShortUrl {
   clicks      Int      @default(0)
   createdAt   DateTime @default(now())
 
-  clickLogs   ShortUrlClick[]
+  clickLogs ShortUrlClick[]
 }
 
 model ShortUrlClick {
@@ -164,13 +171,67 @@ model ShortUrlClick {
   // DUPLICATE (same visitor + link within a few minutes) | LEGACY (logged
   // before this classification existed — can't be told apart from bots).
   // Only HUMAN and LEGACY feed the "clicks" numbers in the panel.
-  kind      String   @default("LEGACY")
-  agent     String?  // short label, e.g. "WhatsApp", "Telegram", "Navegador"
-  userAgent String?  @db.Text
-  ipHash    String?  // salted hash — never the raw IP
+  kind               String  @default("LEGACY")
+  // Destination group the click came from (?g=<seq> on the short link);
+  // null for links sent before per-group tagging existed.
+  destinationGroupId String?
+  agent              String? // short label, e.g. "WhatsApp", "Telegram", "Navegador"
+  userAgent          String? @db.Text
+  ipHash             String? // salted hash — never the raw IP
 
-  shortUrl  ShortUrl @relation(fields: [code], references: [code], onDelete: Cascade)
+  shortUrl ShortUrl @relation(fields: [code], references: [code], onDelete: Cascade)
 
   @@index([createdAt])
   @@index([code, ipHash, createdAt])
+  @@index([destinationGroupId, createdAt])
+}
+
+// ── WhatsApp group membership analytics ─────────────────────────────────────
+// Fed by the Evolution API group-participants.update webhook (real time) and
+// a periodic participant snapshot (fills gaps while the webhook was down).
+// Members are identified by a salted hash of their WhatsApp id, never the raw
+// phone number.
+
+model WaMember {
+  id                 String    @id @default(cuid())
+  destinationGroupId String
+  memberHash         String
+  // When the current stint started; null = was already in the group when
+  // tracking began (join date unknown, excluded from retention cohorts).
+  joinedAt           DateTime?
+  leftAt             DateTime? // null = currently in the group
+  joinCount          Int       @default(0)
+  updatedAt          DateTime  @updatedAt
+
+  destinationGroup DestinationGroup @relation(fields: [destinationGroupId], references: [id], onDelete: Cascade)
+
+  @@unique([destinationGroupId, memberHash])
+  @@index([destinationGroupId, leftAt])
+}
+
+model WaMemberEvent {
+  id                 String    @id @default(cuid())
+  destinationGroupId String
+  memberHash         String
+  type               String // JOIN | LEAVE (left on their own) | KICK (removed by an admin)
+  source             String // WEBHOOK | SNAPSHOT
+  // For LEAVE/KICK: when that stint began (null if unknown), for tenure metrics.
+  memberJoinedAt     DateTime?
+  createdAt          DateTime  @default(now())
+
+  destinationGroup DestinationGroup @relation(fields: [destinationGroupId], references: [id], onDelete: Cascade)
+
+  @@index([destinationGroupId, createdAt])
+  @@index([destinationGroupId, memberHash, createdAt])
+}
+
+model WaGroupSnapshot {
+  id                 String   @id @default(cuid())
+  destinationGroupId String
+  memberCount        Int
+  createdAt          DateTime @default(now())
+
+  destinationGroup DestinationGroup @relation(fields: [destinationGroupId], references: [id], onDelete: Cascade)
+
+  @@index([destinationGroupId, createdAt])
 }

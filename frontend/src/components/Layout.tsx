@@ -56,6 +56,7 @@ export default function Layout() {
     {
       title: 'Gestão',
       items: [
+        { to: '/analytics', icon: 'trendUp', label: 'Analytics' },
         { to: '/groups', icon: 'users', label: 'Grupos' },
         { to: '/clicks', icon: 'cursor', label: 'Cliques' },
       ],

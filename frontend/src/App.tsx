@@ -17,6 +17,7 @@ import Groups from './pages/Groups'
 import Settings from './pages/Settings'
 import Logs from './pages/Logs'
 import Clicks from './pages/Clicks'
+import Analytics from './pages/Analytics'
 import Landing3D from './pages/Landing3D'
 import PublicNicheIndex from './pages/PublicNicheIndex'
 import PublicOffers from './pages/PublicOffers'
@@ -83,6 +84,7 @@ function AppRoutes() {
           <Route path="/history" element={<History />} />
           <Route path="/groups" element={<Groups />} />
           <Route path="/clicks" element={<Clicks />} />
+          <Route path="/analytics" element={<Analytics />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/logs" element={<Logs />} />
         </Route>

@@ -97,3 +97,20 @@ export async function scheduleSilentGroupCheck(): Promise<void> {
     },
   );
 }
+
+const MEMBER_SNAPSHOT_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+/**
+ * Schedules the recurring WhatsApp member snapshot (member count + catching
+ * joins/leaves the webhook missed). Fixed jobId — safe on every worker boot.
+ */
+export async function scheduleMemberSnapshot(): Promise<void> {
+  await linkMonitorQueue.add(
+    'snapshot-wa-members',
+    {},
+    {
+      jobId: 'snapshot-wa-members-repeat',
+      repeat: { every: MEMBER_SNAPSHOT_INTERVAL_MS, immediately: true },
+    },
+  );
+}

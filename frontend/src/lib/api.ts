@@ -193,6 +193,67 @@ export interface Stats {
   clicksToday?: number
 }
 
+// ── WhatsApp group analytics ─────────────────
+export interface WaPeriodStats {
+  membersNow: number | null
+  joins: number
+  leaves: number
+  kicks: number
+  net: number
+  membersStart: number | null
+  retentionPct: number | null
+  churnPct: number | null
+  quickLeaves: number
+  avgTenureDays: number | null
+  offersSent: number
+  clicks: number
+  clicksPerMember: number | null
+  clicksPerOffer: number | null
+  exitsPer100Offers: number | null
+}
+
+export interface WaGroupAnalytics extends WaPeriodStats {
+  id: string
+  name: string
+  isActive: boolean
+  trackingSince: string | null
+}
+
+export interface WaAnalytics {
+  generatedAt: string
+  days: number
+  trackingSince: string | null
+  groupOptions: Array<{ id: string; name: string }>
+  totals: WaPeriodStats
+  series: Array<{ date: string; members: number | null; joins: number; exits: number; offers: number; clicks: number }>
+  cohorts: Array<{ label: string; size: number; d1: number | null; d7: number | null; d30: number | null }>
+  joinsByHour: number[]
+  exitsByHour: number[]
+  clicksByHour: number[]
+  groups: WaGroupAnalytics[]
+}
+
+export type WaWebhookState = 'ACTIVE' | 'NOT_CONFIGURED' | 'DISABLED' | 'OTHER_URL' | 'MISSING_EVENT' | 'ERROR'
+
+export interface WaWebhookStatus {
+  state: WaWebhookState
+  ourUrl: string
+  currentUrl?: string
+  currentEvents?: string[]
+  lastEventAt?: string | null
+  error?: string
+}
+
+export interface WaSnapshotResult {
+  group: string
+  members?: number
+  joins?: number
+  leaves?: number
+  baseline?: boolean
+  skipped?: string
+  error?: string
+}
+
 export interface WhatsAppGroup {
   id: string
   name: string
@@ -585,6 +646,24 @@ class ApiClient {
 
   async removeStripDomain(domain: string): Promise<{ success: boolean; domains: string[] }> {
     return this.request('DELETE', `/settings/strip-domain?domain=${encodeURIComponent(domain)}`)
+  }
+
+  async getWaAnalytics(days = 30, groupId?: string): Promise<WaAnalytics> {
+    const qs = new URLSearchParams({ days: String(days) })
+    if (groupId) qs.set('groupId', groupId)
+    return this.request('GET', `/analytics/whatsapp?${qs.toString()}`)
+  }
+
+  async getWaWebhookStatus(): Promise<WaWebhookStatus> {
+    return this.request('GET', '/analytics/whatsapp/webhook')
+  }
+
+  async setupWaWebhook(force = false): Promise<WaWebhookStatus> {
+    return this.request('POST', '/analytics/whatsapp/webhook', { force })
+  }
+
+  async snapshotWaGroups(): Promise<{ results: WaSnapshotResult[] }> {
+    return this.request('POST', '/analytics/whatsapp/snapshot', {})
   }
 
   async getGroupsHealth(hours = 24): Promise<GroupsHealth> {

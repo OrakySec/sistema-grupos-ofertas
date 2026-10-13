@@ -128,6 +128,57 @@ export class WhatsAppService {
     }
   }
 
+  /**
+   * Current participant ids of a group (whatever id WhatsApp uses in that
+   * group — a phone JID or an @lid). Throws on any failure, so callers never
+   * mistake an outage for "everyone left".
+   */
+  async getGroupParticipantIds(groupJid: string): Promise<string[]> {
+    const { client, instance } = await this.getClient();
+    try {
+      const response = await client.get(`/group/participants/${instance}`, { params: { groupJid } });
+      const list = response.data?.participants;
+      if (!Array.isArray(list)) throw new Error('resposta sem "participants"');
+      return list.map((p: any) => String(p?.id ?? '')).filter(Boolean);
+    } catch (err: any) {
+      const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+      throw new Error(`Evolution API participants failed (${err.response?.status ?? '?'}): ${detail}`);
+    }
+  }
+
+  /** The instance's current webhook config, or null when none is set. */
+  async getWebhook(): Promise<{ enabled: boolean; url: string; events: string[] } | null> {
+    const { client, instance } = await this.getClient();
+    const response = await client.get(`/webhook/find/${instance}`);
+    const data = response.data;
+    if (!data || !data.url) return null;
+    return {
+      enabled: !!data.enabled,
+      url: String(data.url),
+      events: Array.isArray(data.events) ? data.events.map(String) : [],
+    };
+  }
+
+  /** Replaces the instance's (single) webhook config. */
+  async setWebhook(cfg: { url: string; events: string[]; headers?: Record<string, string> }): Promise<void> {
+    const { client, instance } = await this.getClient();
+    try {
+      await client.post(`/webhook/set/${instance}`, {
+        webhook: {
+          enabled: true,
+          url: cfg.url,
+          headers: cfg.headers ?? {},
+          byEvents: false,
+          base64: false,
+          events: cfg.events,
+        },
+      });
+    } catch (err: any) {
+      const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+      throw new Error(`Evolution API webhook/set failed (${err.response?.status ?? '?'}): ${detail}`);
+    }
+  }
+
   async sendText(chatId: string, text: string): Promise<void> {
     const { client, instance } = await this.getClient();
     try {
