@@ -677,6 +677,10 @@ class AffiliateConverter:
         self.ml_own_list_url = (settings.get("ml_own_list_url") or "").strip()
         self.shortener_on = settings.get("link_shortener_enabled", "true") != "false"
         self.shortener_provider = settings.get("shortener_provider", "internal")
+        # Platforms whose links get shortened; empty = all of them (the old behaviour).
+        self.shortener_platforms: set[str] = {
+            p.strip().lower() for p in (settings.get("shortener_platforms") or "").split(",") if p.strip()
+        }
         self.internal_api_url = settings.get("internal_api_url", "http://api:3001")
         self.internal_token = settings.get("internal_token", "")
 
@@ -892,8 +896,8 @@ class AffiliateConverter:
             event["affiliate"] = affiliate_url
             logger.info(f"[affiliate] Affiliate: {affiliate_url[:80]}")
 
-            # Step 4 — shorten
-            if self.shortener_on:
+            # Step 4 — shorten (only the platforms chosen in Settings, if any were)
+            if self.shortener_on and (not self.shortener_platforms or platform in self.shortener_platforms):
                 if self.shortener_provider == "tinyurl":
                     final, shorten_error = await shorten_tinyurl(affiliate_url, session)
                     if shorten_error:

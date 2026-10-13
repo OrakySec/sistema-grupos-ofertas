@@ -44,6 +44,14 @@ function TestButton({
   )
 }
 
+const SHORTENER_PLATFORMS: Array<[string, string]> = [
+  ['amazon', 'Amazon'],
+  ['mercadolivre', 'Mercado Livre'],
+  ['shopee', 'Shopee'],
+  ['magalu', 'Magalu'],
+  ['aliexpress', 'AliExpress'],
+]
+
 export default function Settings() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -86,6 +94,8 @@ export default function Settings() {
   const refStripWords = useRef<HTMLTextAreaElement>(null)
   const [linkShortenerEnabled, setLinkShortenerEnabled] = useState(true)
   const [shortenerProvider, setShortenerProvider] = useState('internal')
+  // Empty = shorten every platform (the original behaviour)
+  const [shortenerPlatforms, setShortenerPlatforms] = useState<string[]>([])
 
   // Invite link monitor
   const refLinkMonitorUrl = useRef<HTMLInputElement>(null)
@@ -108,6 +118,7 @@ export default function Settings() {
       setTgPhone(s.telegramPhone ?? '')
       setLinkShortenerEnabled(s.linkShortenerEnabled ?? true)
       setShortenerProvider(s.shortenerProvider ?? 'internal')
+      setShortenerPlatforms(s.shortenerPlatforms ?? [])
       setMarketplaceAmazonEnabled(s.marketplaceAmazonEnabled ?? true)
       setMarketplaceShopeeEnabled(s.marketplaceShopeeEnabled ?? true)
       setMarketplaceAliExpressEnabled(s.marketplaceAliExpressEnabled ?? true)
@@ -134,6 +145,7 @@ export default function Settings() {
       setTgPhone(updated.telegramPhone ?? '')
       if (updated.linkShortenerEnabled !== undefined) setLinkShortenerEnabled(updated.linkShortenerEnabled)
       if (updated.shortenerProvider !== undefined) setShortenerProvider(updated.shortenerProvider)
+      if (updated.shortenerPlatforms !== undefined) setShortenerPlatforms(updated.shortenerPlatforms)
       if (updated.marketplaceAmazonEnabled !== undefined) setMarketplaceAmazonEnabled(updated.marketplaceAmazonEnabled)
       if (updated.marketplaceShopeeEnabled !== undefined) setMarketplaceShopeeEnabled(updated.marketplaceShopeeEnabled)
       if (updated.marketplaceAliExpressEnabled !== undefined) setMarketplaceAliExpressEnabled(updated.marketplaceAliExpressEnabled)
@@ -1079,6 +1091,51 @@ export default function Settings() {
                 </select>
               </div>
 
+              <div className="form-group">
+                <label className="label">Encurtar links de</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {SHORTENER_PLATFORMS.map(([key, label]) => {
+                    const all = shortenerPlatforms.length === 0
+                    const on = all || shortenerPlatforms.includes(key)
+                    return (
+                      <label
+                        key={key}
+                        className="badge"
+                        style={{
+                          height: 32,
+                          padding: '0 12px',
+                          cursor: 'pointer',
+                          gap: 8,
+                          fontSize: '0.82rem',
+                          color: on ? 'var(--text-primary)' : 'var(--text-muted)',
+                          background: on ? 'var(--accent-primary-dim)' : 'rgba(255,255,255,0.03)',
+                          borderColor: on ? 'rgba(124,108,255,0.35)' : 'var(--border-subtle)',
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          onChange={(e) => {
+                            const current = all ? SHORTENER_PLATFORMS.map(([k]) => k) : shortenerPlatforms
+                            const next = e.target.checked ? [...current, key] : current.filter((p) => p !== key)
+                            // None ticked would read as "all" — to shorten nothing, switch the shortener off instead
+                            if (next.length === 0) return
+                            // Every platform ticked = same as "all" (stored as empty)
+                            setShortenerPlatforms(next.length === SHORTENER_PLATFORMS.length ? [] : next)
+                          }}
+                          style={{ accentColor: 'var(--accent-primary)' }}
+                        />
+                        {label}
+                      </label>
+                    )
+                  })}
+                </div>
+                <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.5 }}>
+                  Links das lojas desmarcadas vão no formato longo e <strong>não contam cliques</strong> (nem por grupo, na Analytics).
+                  A página do produto da Amazon é criada sempre, com ou sem encurtador.
+                </div>
+              </div>
+
               {shortenerProvider === 'internal' && (
                 <div className="form-group">
                   <label className="label">
@@ -1120,6 +1177,7 @@ export default function Settings() {
               stripLinkDomains:     (refStripDomains.current?.value ?? '').split(/[\n,]+/).map((d) => d.trim()).filter(Boolean).join(','),
               linkShortenerEnabled,
               shortenerProvider,
+              shortenerPlatforms,
               shortenerDomain:      refShortenerDomain.current?.value || settingsData?.shortenerDomain,
             })}
             disabled={saving}

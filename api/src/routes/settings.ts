@@ -50,6 +50,8 @@ function buildSettingsResponse(
     linkShortenerEnabled:   dbObj.link_shortener_enabled !== 'false',
     shortenerProvider:      dbObj.shortener_provider ?? 'internal',
     shortenerDomain:        dbObj.shortener_domain ?? 'https://ofertas.ykaromarques.com',
+    // Platforms whose links get shortened; empty/unset = every platform.
+    shortenerPlatforms:     (dbObj.shortener_platforms ?? '').split(',').map((p) => p.trim()).filter(Boolean),
     // Marketplaces toggles
     marketplaceAmazonEnabled:       dbObj.marketplace_amazon_enabled !== 'false',
     marketplaceShopeeEnabled:       dbObj.marketplace_shopee_enabled !== 'false',
@@ -165,6 +167,11 @@ export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
       if ('linkShortenerEnabled' in updates) dbUpdates.link_shortener_enabled = String(updates.linkShortenerEnabled);
       if ('shortenerProvider' in updates)     dbUpdates.shortener_provider = updates.shortenerProvider ?? 'internal';
       if ('shortenerDomain' in updates)       dbUpdates.shortener_domain = updates.shortenerDomain ?? '';
+      if ('shortenerPlatforms' in updates) {
+        const allowed = new Set(['amazon', 'shopee', 'aliexpress', 'magalu', 'mercadolivre']);
+        const list: string[] = Array.isArray(updates.shortenerPlatforms) ? updates.shortenerPlatforms : [];
+        dbUpdates.shortener_platforms = list.filter((p) => allowed.has(p)).join(',');
+      }
       // Marketplaces toggles
       if ('marketplaceAmazonEnabled' in updates)       dbUpdates.marketplace_amazon_enabled = String(updates.marketplaceAmazonEnabled);
       if ('marketplaceShopeeEnabled' in updates)       dbUpdates.marketplace_shopee_enabled = String(updates.marketplaceShopeeEnabled);

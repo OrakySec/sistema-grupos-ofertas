@@ -879,6 +879,7 @@ async def _apply_settings(settings: dict, http_session: aiohttp.ClientSession, *
         "strip_words":             settings.get("strip_words") or "",
         "link_shortener_enabled": settings.get("link_shortener_enabled", "true"),
         "shortener_provider":     settings.get("shortener_provider", "internal"),
+        "shortener_platforms":    settings.get("shortener_platforms") or "",
         "internal_api_url":       INTERNAL_API_URL,
         "internal_token":         INTERNAL_TOKEN,
     }

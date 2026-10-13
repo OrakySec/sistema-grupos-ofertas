@@ -243,6 +243,7 @@ async function buildApp() {
       strip_words:            dbObj.strip_words ?? '',
       link_shortener_enabled: dbObj.link_shortener_enabled ?? 'true',
       shortener_provider:     dbObj.shortener_provider ?? 'internal',
+      shortener_platforms:    dbObj.shortener_platforms ?? '',
     });
   });
 

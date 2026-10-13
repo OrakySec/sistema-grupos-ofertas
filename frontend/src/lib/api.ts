@@ -173,6 +173,8 @@ export interface Settings {
   linkShortenerEnabled?: boolean
   shortenerProvider?: string
   shortenerDomain?: string
+  // Platforms whose links get shortened; empty = all
+  shortenerPlatforms?: string[]
   // Marketplace toggles
   marketplaceAmazonEnabled?: boolean
   marketplaceShopeeEnabled?: boolean
