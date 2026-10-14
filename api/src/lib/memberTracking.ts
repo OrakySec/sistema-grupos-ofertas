@@ -163,6 +163,26 @@ export async function snapshotWhatsAppGroups(): Promise<SnapshotResult[]> {
         continue;
       }
 
+      // Nearly everyone "replaced" between two snapshots taken hours apart is
+      // never real churn — it means the ids changed (different hash salt, or
+      // WhatsApp switching the group from phone ids to @lid). Rebuild the
+      // baseline quietly instead of recording a mass join + mass leave.
+      const activeHashes = new Set(active.map((m) => m.memberHash));
+      const overlap = [...current].filter((h) => activeHashes.has(h)).length;
+      if (!isBaseline && active.length >= 3 && overlap <= 0.2 * Math.min(active.length, current.size)) {
+        await prisma.waMember.deleteMany({ where: { destinationGroupId: g.id, leftAt: null } });
+        for (const memberHash of current) {
+          await prisma.waMember.upsert({
+            where: { destinationGroupId_memberHash: { destinationGroupId: g.id, memberHash } },
+            update: { leftAt: null },
+            create: { destinationGroupId: g.id, memberHash, joinedAt: null, joinCount: 0 },
+          });
+        }
+        await prisma.waGroupSnapshot.create({ data: { destinationGroupId: g.id, memberCount: current.size, createdAt: now } });
+        results.push({ group: g.name, members: current.size, baseline: true, skipped: 'identificadores mudaram — base refeita sem registrar entradas/saídas' });
+        continue;
+      }
+
       let joins = 0;
       let leaves = 0;
       if (isBaseline) {
