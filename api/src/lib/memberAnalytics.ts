@@ -2,7 +2,7 @@
  * Pure calculations behind the WhatsApp group analytics page — no database
  * access here, so the math can be tested on plain arrays.
  */
-import { brtDayStart, brtDayLabel, toBrt } from './time';
+import { brtDayStart, brtDayLabel, brtHourLabel, toBrt } from './time';
 
 export interface MemberEventRow {
   destinationGroupId: string;
@@ -64,7 +64,9 @@ export interface Cohort {
  * at the member's next exit in the same group. Retention at Dk counts only
  * joins at least k days old — younger ones can't be judged yet.
  */
-export function cohorts(events: MemberEventRow[], now: Date, days: number): Cohort[] {
+export function cohorts(events: MemberEventRow[], now: Date, days: number, rangeEnd: Date = now): Cohort[] {
+  // Blocks end at the selected range's last day; retention is judged as of now.
+  const ref = new Date(Math.min(rangeEnd.getTime(), now.getTime()) - 1);
   const sorted = [...events].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   const nextExit = new Map<number, Date | null>(); // index of JOIN → exit time
   const openJoin = new Map<string, number>(); // group|member → index of open JOIN
@@ -82,8 +84,8 @@ export function cohorts(events: MemberEventRow[], now: Date, days: number): Coho
   const blocks = Math.max(1, Math.ceil(days / 7));
   const out: Cohort[] = [];
   for (let b = 0; b < blocks; b++) {
-    const end = brtDayStart(b * 7 - 1, now); // exclusive: start of the day after the block
-    const start = brtDayStart(b * 7 + 6, now);
+    const end = brtDayStart(b * 7 - 1, ref); // exclusive: start of the day after the block
+    const start = brtDayStart(b * 7 + 6, ref);
     const joins = sorted
       .map((e, i) => ({ e, i }))
       .filter(({ e }) => e.type === 'JOIN' && e.createdAt >= start && e.createdAt < end);
@@ -111,57 +113,63 @@ export interface SeriesPoint {
 }
 
 /**
- * Daily series (BRT days, oldest first). Members per day are rebuilt
- * backwards from today's count using each day's net change; days before
- * tracking started have no member count.
+ * Series over [start, end) in Brasília time: one point per day, or per hour
+ * when the range is a single day. Member counts are rebuilt backwards from
+ * the count at `end` using each bucket's net change; buckets that ended
+ * before tracking started have no member count.
  */
-export function dailySeries(opts: {
-  now: Date;
-  days: number;
-  membersNow: number | null;
+export function rangeSeries(opts: {
+  start: Date;
+  end: Date;
+  bucket: 'day' | 'hour';
+  membersEnd: number | null;
   trackingSince: Date | null;
   events: MemberEventRow[];
   offers: Date[];
   clicks: Date[];
 }): SeriesPoint[] {
-  const { now, days, membersNow, trackingSince } = opts;
-  const points: SeriesPoint[] = [];
-  const dayStarts: Date[] = [];
-  for (let k = days - 1; k >= 0; k--) dayStarts.push(brtDayStart(k, now));
+  const { start, end, bucket, membersEnd, trackingSince } = opts;
+  const step = bucket === 'hour' ? 3600000 : DAY_MS;
+  const starts: Date[] = [];
+  for (let t = start.getTime(); t < end.getTime(); t += step) starts.push(new Date(t));
+  const n = starts.length;
 
-  const bucket = (d: Date) => {
-    for (let i = dayStarts.length - 1; i >= 0; i--) if (d >= dayStarts[i]) return i;
-    return -1;
+  const indexOf = (d: Date) => {
+    if (d < start || d >= end) return -1;
+    return Math.min(n - 1, Math.floor((d.getTime() - start.getTime()) / step));
   };
-  const joins = new Array(days).fill(0);
-  const exits = new Array(days).fill(0);
-  const offers = new Array(days).fill(0);
-  const clicks = new Array(days).fill(0);
+  const joins = new Array(n).fill(0);
+  const exits = new Array(n).fill(0);
+  const offers = new Array(n).fill(0);
+  const clicks = new Array(n).fill(0);
   for (const e of opts.events) {
-    const i = bucket(e.createdAt);
+    const i = indexOf(e.createdAt);
     if (i < 0) continue;
     if (e.type === 'JOIN') joins[i]++;
     else if (isExit(e.type)) exits[i]++;
   }
-  for (const d of opts.offers) { const i = bucket(d); if (i >= 0) offers[i]++; }
-  for (const d of opts.clicks) { const i = bucket(d); if (i >= 0) clicks[i]++; }
+  for (const d of opts.offers) { const i = indexOf(d); if (i >= 0) offers[i]++; }
+  for (const d of opts.clicks) { const i = indexOf(d); if (i >= 0) clicks[i]++; }
 
-  // End-of-day member counts, walking back from now.
-  const members: (number | null)[] = new Array(days).fill(null);
-  if (membersNow !== null) {
-    let running = membersNow;
-    for (let i = days - 1; i >= 0; i--) {
-      const dayEnd = i + 1 < days ? dayStarts[i + 1] : now;
-      if (trackingSince && dayEnd < trackingSince) break;
+  const members: (number | null)[] = new Array(n).fill(null);
+  if (membersEnd !== null) {
+    let running = membersEnd;
+    for (let i = n - 1; i >= 0; i--) {
+      const bucketEnd = i + 1 < n ? starts[i + 1] : end;
+      if (trackingSince && bucketEnd < trackingSince) break;
       members[i] = Math.max(0, running);
       running -= joins[i] - exits[i];
     }
   }
 
-  for (let i = 0; i < days; i++) {
-    points.push({ date: brtDayLabel(dayStarts[i]), members: members[i], joins: joins[i], exits: exits[i], offers: offers[i], clicks: clicks[i] });
-  }
-  return points;
+  return starts.map((t, i) => ({
+    date: bucket === 'hour' ? brtHourLabel(t) : brtDayLabel(t),
+    members: members[i],
+    joins: joins[i],
+    exits: exits[i],
+    offers: offers[i],
+    clicks: clicks[i],
+  }));
 }
 
 /** Counts per Brasília hour of day (0–23). */

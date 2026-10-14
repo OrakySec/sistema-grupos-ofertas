@@ -20,11 +20,35 @@ import GroupsHealthPanel from '../components/GroupsHealthPanel'
 
 type Tab = 'overview' | 'retention' | 'engagement' | 'health'
 
-const PERIODS: Array<[number, string]> = [
-  [7, '7 dias'],
-  [30, '30 dias'],
-  [90, '90 dias'],
+type PeriodKey = 'today' | 'yesterday' | '7' | '30' | '90' | 'custom'
+
+const PERIODS: Array<[PeriodKey, string]> = [
+  ['today', 'Hoje'],
+  ['yesterday', 'Ontem'],
+  ['7', '7 dias'],
+  ['30', '30 dias'],
+  ['90', '90 dias'],
+  ['custom', 'Período'],
 ]
+
+/** Today's date in Brasília as YYYY-MM-DD. */
+const brtToday = () => new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10)
+const shiftDay = (ymd: string, n: number) => new Date(Date.parse(ymd + 'T12:00:00Z') + n * 86400000).toISOString().slice(0, 10)
+const fmtDay = (ymd: string) => ymd.split('-').reverse().slice(0, 2).join('/')
+
+function periodQuery(key: PeriodKey, from: string, to: string): { days?: number; from?: string; to?: string } {
+  if (key === 'today') return { from: brtToday(), to: brtToday() }
+  if (key === 'yesterday') return { from: shiftDay(brtToday(), -1), to: shiftDay(brtToday(), -1) }
+  if (key === 'custom') return { from, to: to < from ? from : to }
+  return { days: Number(key) }
+}
+
+function periodLabel(key: PeriodKey, from: string, to: string): string {
+  if (key === 'today') return 'hoje'
+  if (key === 'yesterday') return 'ontem'
+  if (key === 'custom') return from === to ? `em ${fmtDay(from)}` : `de ${fmtDay(from)} a ${fmtDay(to)}`
+  return `em ${key} dias`
+}
 
 const fmtInt = (n: number | null | undefined) => (n === null || n === undefined ? '—' : n.toLocaleString('pt-BR'))
 const fmtPct = (n: number | null | undefined, digits = 0) =>
@@ -224,7 +248,9 @@ function CollectionStatus({ onChanged }: { onChanged: () => void }) {
 export default function Analytics() {
   const navigate = useNavigate()
   const [tab, setTab] = useState<Tab>('overview')
-  const [days, setDays] = useState(30)
+  const [period, setPeriod] = useState<PeriodKey>('30')
+  const [customFrom, setCustomFrom] = useState(() => shiftDay(brtToday(), -6))
+  const [customTo, setCustomTo] = useState(() => brtToday())
   const [groupId, setGroupId] = useState('')
   const [data, setData] = useState<WaAnalytics | null>(null)
   const [loading, setLoading] = useState(true)
@@ -234,13 +260,13 @@ export default function Analytics() {
     setLoading(true)
     setError('')
     try {
-      setData(await api.getWaAnalytics(days, groupId || undefined))
+      setData(await api.getWaAnalytics(periodQuery(period, customFrom, customTo), groupId || undefined))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao carregar analytics')
     } finally {
       setLoading(false)
     }
-  }, [days, groupId])
+  }, [period, customFrom, customTo, groupId])
 
   useEffect(() => {
     load()
@@ -265,10 +291,17 @@ export default function Analytics() {
             ))}
           </select>
           <div className="tabs">
-            {PERIODS.map(([d, label]) => (
-              <button key={d} className={`tab${days === d ? ' active' : ''}`} onClick={() => setDays(d)}>{label}</button>
+            {PERIODS.map(([key, label]) => (
+              <button key={key} className={`tab${period === key ? ' active' : ''}`} onClick={() => setPeriod(key)}>{label}</button>
             ))}
           </div>
+          {period === 'custom' && (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input className="input" type="date" value={customFrom} max={brtToday()} onChange={(e) => e.target.value && setCustomFrom(e.target.value)} style={{ width: 'auto', colorScheme: 'dark' }} aria-label="De" />
+              <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>até</span>
+              <input className="input" type="date" value={customTo} min={customFrom} max={brtToday()} onChange={(e) => e.target.value && setCustomTo(e.target.value)} style={{ width: 'auto', colorScheme: 'dark' }} aria-label="Até" />
+            </div>
+          )}
           <button className="btn btn-secondary" onClick={load} disabled={loading} title="Atualizar">
             {loading ? <span className="spinner spinner-sm" /> : <Icon name="refresh" />}
           </button>
@@ -315,15 +348,15 @@ export default function Analytics() {
       ) : tab === 'overview' ? (
         <>
           <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))' }}>
-            <Kpi label="Membros" value={fmtInt(t.membersNow)} hint={t.membersStart !== null ? `${fmtInt(t.membersStart)} no início do período` : undefined} color="#8b7bff" icon="users" />
-            <Kpi label="Entraram" value={fmtInt(t.joins)} hint={`em ${days} dias`} color="#22c983" icon="trendUp" />
+            <Kpi label={data.endsNow ? 'Membros' : 'Membros no fim do período'} value={fmtInt(t.membersNow)} hint={t.membersStart !== null ? `${fmtInt(t.membersStart)} no início do período` : undefined} color="#8b7bff" icon="users" />
+            <Kpi label="Entraram" value={fmtInt(t.joins)} hint={periodLabel(period, customFrom, customTo)} color="#22c983" icon="trendUp" />
             <Kpi label="Saíram" value={fmtInt(t.leaves + t.kicks)} hint={t.kicks ? `${fmtInt(t.kicks)} removidos por admin` : 'saíram por conta própria'} color="#f2555a" icon="logout" />
             <Kpi label="Crescimento líquido" value={`${t.net > 0 ? '+' : ''}${fmtInt(t.net)}`} hint={t.churnPct !== null ? `${fmtPct(t.churnPct, 1)} de saída no período` : undefined} color="#4ea8ff" icon="activity" />
             <Kpi label="Retenção" value={fmtPct(t.retentionPct, 1)} hint="continuam no grupo" color="#f5a524" icon="shield" />
           </div>
 
           <div style={{ marginBottom: 16 }}>
-            <Panel title="Membros, entradas e saídas por dia" icon="trendUp" meta={data.trackingSince ? `coletando desde ${new Date(data.trackingSince).toLocaleDateString('pt-BR')}` : undefined}>
+            <Panel title={data.bucket === 'hour' ? 'Membros, entradas e saídas por hora' : 'Membros, entradas e saídas por dia'} icon="trendUp" meta={data.trackingSince ? `coletando desde ${new Date(data.trackingSince).toLocaleDateString('pt-BR')}` : undefined}>
               <div style={{ height: 300, marginLeft: -8 }}>
                 <ResponsiveContainer>
                   <ComposedChart data={data.series} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>

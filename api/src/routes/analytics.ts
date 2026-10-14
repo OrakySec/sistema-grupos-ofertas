@@ -1,7 +1,8 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { requireAuth } from '../middleware/auth';
 import prisma from '../lib/prisma';
-import { periodStats, cohorts, dailySeries, byHour, type MemberEventRow } from '../lib/memberAnalytics';
+import { periodStats, cohorts, rangeSeries, byHour, type MemberEventRow } from '../lib/memberAnalytics';
+import { brtDayStart, brtDateStart } from '../lib/time';
 import {
   getWebhookStatus,
   setupWebhook,
@@ -14,11 +15,28 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export const analyticsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   fastify.addHook('preHandler', requireAuth);
 
-  // GET /analytics/whatsapp?days=30&groupId=<destinationGroupId>
-  fastify.get<{ Querystring: { days?: string; groupId?: string } }>('/whatsapp', async (request) => {
-    const days = Math.min(Math.max(Number(request.query.days) || 30, 7), 90);
+  // GET /analytics/whatsapp?days=30 | ?from=YYYY-MM-DD&to=YYYY-MM-DD  (+ &groupId=<destinationGroupId>)
+  // Days are Brasília calendar days; "to" is inclusive. A single day is
+  // broken down by hour.
+  fastify.get<{ Querystring: { days?: string; from?: string; to?: string; groupId?: string } }>('/whatsapp', async (request, reply) => {
     const now = new Date();
-    const since = new Date(now.getTime() - days * DAY_MS);
+    let since: Date;
+    let until: Date;
+    if (request.query.from) {
+      const from = brtDateStart(request.query.from);
+      const to = brtDateStart(request.query.to || request.query.from);
+      if (!from || !to || to < from) return reply.code(400).send({ message: 'Período inválido' });
+      if (to.getTime() - from.getTime() > 366 * DAY_MS) return reply.code(400).send({ message: 'Período máximo: 1 ano' });
+      since = from;
+      until = new Date(Math.min(to.getTime() + DAY_MS, now.getTime()));
+      if (until <= since) return reply.code(400).send({ message: 'Período no futuro' });
+    } else {
+      const n = Math.min(Math.max(Number(request.query.days) || 30, 1), 366);
+      since = brtDayStart(n - 1, now);
+      until = now;
+    }
+    const days = Math.max(1, Math.ceil((until.getTime() - since.getTime()) / DAY_MS));
+    const bucket: 'day' | 'hour' = until.getTime() - since.getTime() <= DAY_MS ? 'hour' : 'day';
 
     const allGroups = await prisma.destinationGroup.findMany({
       where: { type: 'WHATSAPP' },
@@ -42,11 +60,11 @@ export const analyticsRoutes: FastifyPluginAsync = async (fastify: FastifyInstan
       prisma.waGroupSnapshot.groupBy({ by: ['destinationGroupId'], where: { destinationGroupId: { in: ids } }, _min: { createdAt: true } }),
       prisma.waMemberEvent.groupBy({ by: ['destinationGroupId'], where: { destinationGroupId: { in: ids } }, _min: { createdAt: true } }),
       prisma.deliveryLog.findMany({
-        where: { destinationGroupId: { in: ids }, status: 'SUCCESS', sentAt: { gte: since } },
+        where: { destinationGroupId: { in: ids }, status: 'SUCCESS', sentAt: { gte: since, lt: until } },
         select: { destinationGroupId: true, sentAt: true },
       }),
       prisma.shortUrlClick.findMany({
-        where: { destinationGroupId: { in: ids }, kind: 'HUMAN', createdAt: { gte: since } },
+        where: { destinationGroupId: { in: ids }, kind: 'HUMAN', createdAt: { gte: since, lt: until } },
         select: { destinationGroupId: true, createdAt: true },
       }),
       prisma.waMember.groupBy({ by: ['destinationGroupId'], where: { destinationGroupId: { in: ids }, leftAt: null }, _count: { _all: true } }),
@@ -81,9 +99,21 @@ export const analyticsRoutes: FastifyPluginAsync = async (fastify: FastifyInstan
       return candidates.length ? new Date(Math.min(...candidates.map((d) => d.getTime()))) : null;
     };
 
+    // Member count at the end of the range = today's count minus whatever
+    // changed after the range ended.
+    const inRange = (events as MemberEventRow[]).filter((e) => e.createdAt < until);
+    const netAfterRange = (id: string) =>
+      events
+        .filter((e) => e.destinationGroupId === id && e.createdAt >= until)
+        .reduce((acc, e) => acc + (e.type === 'JOIN' ? 1 : -1), 0);
+    const membersAtEndOf = (id: string): number | null => {
+      const nowCount = membersNowOf(id);
+      return nowCount === null ? null : Math.max(0, nowCount - netAfterRange(id));
+    };
+
     const groups = scope.map((g) => {
-      const ev = events.filter((e) => e.destinationGroupId === g.id) as MemberEventRow[];
-      const membersNow = membersNowOf(g.id);
+      const ev = inRange.filter((e) => e.destinationGroupId === g.id);
+      const membersNow = membersAtEndOf(g.id);
       const stats = periodStats(ev, membersNow);
       const offersSent = deliveries.filter((d) => d.destinationGroupId === g.id).length;
       const groupClicks = clicks.filter((c) => c.destinationGroupId === g.id).length;
@@ -107,7 +137,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (fastify: FastifyInstan
     const membersNowTotal = known.length ? known.reduce((a, g) => a + (g.membersNow ?? 0), 0) : null;
     const trackingStarts = groups.map((g) => g.trackingSince).filter(Boolean) as Date[];
     const trackingSince = trackingStarts.length ? new Date(Math.min(...trackingStarts.map((d) => d.getTime()))) : null;
-    const allEvents = events as MemberEventRow[];
+    const allEvents = inRange;
     const totalStats = periodStats(allEvents, membersNowTotal);
     const totalOffers = deliveries.length;
     const totalClicks = clicks.length;
@@ -115,6 +145,10 @@ export const analyticsRoutes: FastifyPluginAsync = async (fastify: FastifyInstan
     return {
       generatedAt: now.toISOString(),
       days,
+      from: since.toISOString(),
+      to: until.toISOString(),
+      bucket,
+      endsNow: until.getTime() >= now.getTime() - 60000,
       trackingSince,
       groupOptions: allGroups.map((g) => ({ id: g.id, name: g.name })),
       totals: {
@@ -126,16 +160,18 @@ export const analyticsRoutes: FastifyPluginAsync = async (fastify: FastifyInstan
         clicksPerOffer: totalOffers ? totalClicks / totalOffers : null,
         exitsPer100Offers: totalOffers ? ((totalStats.leaves + totalStats.kicks) / totalOffers) * 100 : null,
       },
-      series: dailySeries({
-        now,
-        days,
-        membersNow: membersNowTotal,
+      series: rangeSeries({
+        start: since,
+        end: until,
+        bucket,
+        membersEnd: membersNowTotal,
         trackingSince,
         events: allEvents,
         offers: deliveries.map((d) => d.sentAt),
         clicks: clicks.map((c) => c.createdAt),
       }),
-      cohorts: cohorts(allEvents, now, days),
+      // Cohorts judge retention up to now, so they get every event, not just the range.
+      cohorts: cohorts(events as MemberEventRow[], now, Math.max(days, 7), until),
       joinsByHour: byHour(allEvents.filter((e) => e.type === 'JOIN').map((e) => e.createdAt)),
       exitsByHour: byHour(allEvents.filter((e) => e.type !== 'JOIN').map((e) => e.createdAt)),
       clicksByHour: byHour(clicks.map((c) => c.createdAt)),

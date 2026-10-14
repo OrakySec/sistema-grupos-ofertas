@@ -42,3 +42,11 @@ export function brtMonthLabel(date: Date): string {
   const b = toBrt(date);
   return `${pad2(b.getUTCMonth() + 1)}/${b.getUTCFullYear()}`;
 }
+
+/** The instant a Brasília calendar day ("YYYY-MM-DD") starts, or null if malformed. */
+export function brtDateStart(ymd: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+  if (!m) return null;
+  const t = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) - BRT_OFFSET_MS;
+  return Number.isNaN(t) ? null : new Date(t);
+}

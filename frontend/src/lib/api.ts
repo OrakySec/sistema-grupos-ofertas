@@ -226,6 +226,10 @@ export interface WaGroupAnalytics extends WaPeriodStats {
 export interface WaAnalytics {
   generatedAt: string
   days: number
+  from: string
+  to: string
+  bucket: 'day' | 'hour'
+  endsNow: boolean
   trackingSince: string | null
   groupOptions: Array<{ id: string; name: string }>
   totals: WaPeriodStats
@@ -755,8 +759,15 @@ class ApiClient {
     return this.request('PUT', '/hunter/coupons/settings', { enabled })
   }
 
-  async getWaAnalytics(days = 30, groupId?: string): Promise<WaAnalytics> {
-    const qs = new URLSearchParams({ days: String(days) })
+  /** period: { days } for the last N days, or { from, to } as YYYY-MM-DD (Brasília days, inclusive). */
+  async getWaAnalytics(period: { days?: number; from?: string; to?: string }, groupId?: string): Promise<WaAnalytics> {
+    const qs = new URLSearchParams()
+    if (period.from) {
+      qs.set('from', period.from)
+      qs.set('to', period.to ?? period.from)
+    } else {
+      qs.set('days', String(period.days ?? 30))
+    }
     if (groupId) qs.set('groupId', groupId)
     return this.request('GET', `/analytics/whatsapp?${qs.toString()}`)
   }
