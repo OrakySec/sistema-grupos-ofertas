@@ -147,7 +147,9 @@ export const healthRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
                 : 'Todos os destinos vinculados estão desativados',
             );
           }
-          if (silentHours === null) {
+          if (g.kind !== 'TELEGRAM') {
+            // A niche's automatic Shopee search posts on its own schedule — silence is normal.
+          } else if (silentHours === null) {
             level = worst(level, 'critical');
             issues.push('Nenhuma oferta registrada — o listener pode não ter acesso a esse grupo (obs.: ofertas enviadas/rejeitadas somem do histórico após 7 dias)');
           } else if (silentHours >= silentCritHours) {

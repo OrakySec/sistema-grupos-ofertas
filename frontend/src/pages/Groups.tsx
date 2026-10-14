@@ -7,6 +7,7 @@ import api, {
   type Niche,
 } from '../lib/api'
 import Modal from '../components/Modal'
+import { useNavigate } from 'react-router-dom'
 import Toggle from '../components/Toggle'
 import { Skeleton } from '../components/LoadingSkeleton'
 import { useToast } from '../lib/toast'
@@ -1112,6 +1113,7 @@ function DestGroupModal({ isOpen, editing, onClose, onSaved }: DestGroupModalPro
 /* ─── Main Groups Page ───────────────────── */
 export default function Groups() {
   const { addToast } = useToast()
+  const navigate = useNavigate()
   const [sourceGroups, setSourceGroups] = useState<SourceGroup[]>([])
   const [destGroups, setDestGroups] = useState<DestinationGroup[]>([])
   const [niches, setNiches] = useState<Niche[]>([])
@@ -1143,7 +1145,8 @@ export default function Groups() {
         api.getDestinationGroups(),
         api.getNiches(),
       ])
-      setSourceGroups(src)
+      // The virtual source behind a niche's Shopee search is managed in Busca Shopee, not here.
+      setSourceGroups(src.filter((g) => (g.kind ?? 'TELEGRAM') === 'TELEGRAM'))
       setDestGroups(dest)
       setNiches(nch)
       setLoadingNiches(false)
@@ -1403,6 +1406,13 @@ export default function Groups() {
                           title="Configurar nicho (mockup, rodapé, link ML)"
                         >
                           ⚙️
+                        </button>
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => navigate(`/shopee?niche=${n.id}`)}
+                          title="Busca automática de produtos na Shopee para este nicho"
+                        >
+                          🔎 Busca Shopee
                         </button>
                         <button
                           className="icon-btn danger"

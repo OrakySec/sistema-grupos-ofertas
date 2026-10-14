@@ -7,6 +7,7 @@ endpoints so the main API can drive the Telegram authentication flow.
 """
 
 import asyncio
+import re
 import os
 import sys
 import mimetypes
@@ -315,6 +316,29 @@ async def fetch_source_groups(session: aiohttp.ClientSession) -> tuple[dict[int,
 
 
 
+_COUPON_HINT_RE = re.compile(r"cupo[mn]|c[oó]digo|esgot|acabou|encerrad", re.IGNORECASE)
+_SHOPEE_HINT_RE = re.compile(r"shopee|shope\.ee", re.IGNORECASE)
+
+
+async def forward_coupon_message(session: aiohttp.ClientSession, text: str, source_uuid: str) -> None:
+    """
+    Shopee messages that talk about coupons go to the API, which extracts and
+    tracks the coupons (api/src/lib/coupons.ts). Fire-and-forget: a failure
+    here must never affect the offer itself.
+    """
+    try:
+        async with session.post(
+            f"{INTERNAL_API_URL}/coupons/internal",
+            json={"text": text[:4000], "sourceGroupId": source_uuid},
+            headers=_internal_headers(),
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status != 200:
+                logger.debug(f"[coupons] API returned {resp.status}")
+    except Exception as exc:
+        logger.debug(f"[coupons] forward failed: {exc}")
+
+
 async def post_offer(session: aiohttp.ClientSession, payload: dict) -> None:
     """POST /offers/internal to the internal API."""
     url = f"{INTERNAL_API_URL}/offers/internal"
@@ -443,6 +467,8 @@ async def _make_message_handler(http_session: aiohttp.ClientSession):
 
             # ── STEP 4: URL detection ─────────────────────────────────────────────
             _raw = text or media_caption or ""
+            if _raw and _COUPON_HINT_RE.search(_raw) and _SHOPEE_HINT_RE.search(_raw):
+                asyncio.create_task(forward_coupon_message(http_session, _raw, uuid))
             _has_url = "http://" in _raw or "https://" in _raw
             processing_events.append({
                 "ts":     _ts(),
@@ -1099,6 +1125,32 @@ async def route_ml_session_upload(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=500)
 
 
+async def route_hunter_image(request: web.Request) -> web.Response:
+    """
+    POST /hunter/image { image_url, template: {template_path, box, corner_radius} | null, name }
+    → { path } relative to MEDIA_BASE_PATH. Used by the API worker's automatic
+    Shopee search, which has the photo URL but not the mockup composer.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+    image_url = body.get("image_url")
+    if not image_url:
+        return web.json_response({"error": "image_url is required"}, status=400)
+    name = _sanitize_filename(str(body.get("name") or "produto"))[:80]
+    http_session: aiohttp.ClientSession = request.app["http_session"]
+    image_bytes, error = await mockup_composer.generate_offer_image(
+        image_url, http_session, template_override=body.get("template"), image_url_override=image_url,
+    )
+    if not image_bytes:
+        return web.json_response({"error": error or "Falha ao montar a imagem"}, status=502)
+    out_dir = Path(MEDIA_BASE_PATH) / "hunter"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / f"{name}.jpg").write_bytes(image_bytes)
+    return web.json_response({"path": f"hunter/{name}.jpg"})
+
+
 async def route_shopee_test(request: web.Request) -> web.Response:
     """POST /shopee/test → { ok, message } — checks the Shopee Affiliate API credentials live."""
     http_session: aiohttp.ClientSession = request.app["http_session"]
@@ -1201,6 +1253,7 @@ def build_app() -> web.Application:
     app.router.add_post("/ml-session/upload", route_ml_session_upload)
     app.router.add_get("/ml-session/status", route_ml_session_status)
     app.router.add_post("/shopee/test", route_shopee_test)
+    app.router.add_post("/hunter/image", route_hunter_image)
 
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)

@@ -1,7 +1,9 @@
 import { Worker, Job } from 'bullmq';
 import redis from './lib/redis';
 import prisma from './lib/prisma';
-import { addSendOfferJob, scheduleLinkMonitor, scheduleSilentGroupCheck, scheduleMemberSnapshot } from './lib/queue';
+import { addSendOfferJob, scheduleLinkMonitor, scheduleSilentGroupCheck, scheduleMemberSnapshot, scheduleShopeeHunter } from './lib/queue';
+import { hunterTick } from './lib/shopeeHunter';
+import { expireCoupons } from './lib/coupons';
 import { tagShortLinks } from './lib/linkTagging';
 import { snapshotWhatsAppGroups } from './lib/memberTracking';
 import { TelegramService } from './services/telegram.service';
@@ -425,7 +427,9 @@ async function handleCheckSilentGroups(): Promise<void> {
   if (!alertNumber) return;
 
   const [groups, lastOffers, alertRows] = await Promise.all([
-    prisma.sourceGroup.findMany({ where: { isActive: true }, select: { id: true, name: true, createdAt: true } }),
+    // Only real Telegram channels can "go silent" — a niche's Shopee search
+    // posts on its own schedule and must never trigger this alert.
+    prisma.sourceGroup.findMany({ where: { isActive: true, kind: 'TELEGRAM' }, select: { id: true, name: true, createdAt: true } }),
     prisma.offer.groupBy({ by: ['sourceGroupId'], _max: { createdAt: true } }),
     prisma.setting.findMany({ where: { key: { startsWith: 'silent_alert_' } } }),
   ]);
@@ -515,6 +519,10 @@ const linkMonitorWorker = new Worker(
       await handleCheckSilentGroups();
     } else if (job.name === 'check-invite-link') {
       await handleCheckInviteLink();
+    } else if (job.name === 'shopee-hunter-tick') {
+      await expireCoupons();
+      const results = await hunterTick();
+      if (results.length) console.log('[Worker] Shopee search:', JSON.stringify(results));
     } else if (job.name === 'snapshot-wa-members') {
       const results = await snapshotWhatsAppGroups();
       console.log('[Worker] WhatsApp member snapshot:', JSON.stringify(results));
@@ -547,6 +555,10 @@ scheduleSilentGroupCheck().catch((err) => {
 
 scheduleMemberSnapshot().catch((err) => {
   console.error('[Worker] Failed to schedule WhatsApp member snapshot job:', err);
+});
+
+scheduleShopeeHunter().catch((err) => {
+  console.error('[Worker] Failed to schedule Shopee search job:', err);
 });
 
 // Graceful shutdown

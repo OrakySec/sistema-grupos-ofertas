@@ -114,3 +114,17 @@ export async function scheduleMemberSnapshot(): Promise<void> {
     },
   );
 }
+
+const SHOPEE_HUNTER_TICK_MS = 10 * 60 * 1000; // 10 minutes
+
+/**
+ * Recurring tick of the automatic Shopee search: runs each niche's search
+ * when it's due and releases one offer per niche when a sending slot opens.
+ */
+export async function scheduleShopeeHunter(): Promise<void> {
+  await linkMonitorQueue.add(
+    'shopee-hunter-tick',
+    {},
+    { jobId: 'shopee-hunter-tick-repeat', repeat: { every: SHOPEE_HUNTER_TICK_MS } },
+  );
+}

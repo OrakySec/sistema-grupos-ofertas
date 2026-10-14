@@ -41,7 +41,8 @@ export const nichesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
   fastify.get('/', async (_request, reply) => {
     const niches = await prisma.niche.findMany({
       orderBy: { createdAt: 'desc' },
-      include: { _count: { select: { sourceGroups: true } } },
+      // Only real Telegram channels — not the niche's virtual Shopee search source.
+      include: { _count: { select: { sourceGroups: { where: { kind: 'TELEGRAM' } } } } },
     });
     return reply.send(
       niches.map((n) => ({ ...n, sourceGroupCount: n._count.sourceGroups, _count: undefined })),

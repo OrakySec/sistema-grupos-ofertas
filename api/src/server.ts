@@ -16,6 +16,8 @@ import { clicksRoutes } from './routes/clicks';
 import { publicRoutes } from './routes/public';
 import { healthRoutes, unidentifiedLinksRoutes } from './routes/health';
 import { analyticsRoutes } from './routes/analytics';
+import { hunterRoutes } from './routes/hunter';
+import { recordCouponMessage } from './lib/coupons';
 import {
   getWebhookSecret,
   isParticipantsEvent,
@@ -151,6 +153,22 @@ async function buildApp() {
     return reply.send({ ok: true });
   });
 
+  // Coupon mentions forwarded by the telegram-listener (requires X-Internal-Key).
+  server.post('/coupons/internal', async (request, reply) => {
+    const internalKey = request.headers['x-internal-key'];
+    if (internalKey !== JWT_SECRET && internalKey !== INTERNAL_TOKEN) {
+      return reply.status(401).send({ error: 'Unauthorized' });
+    }
+    const { text, sourceGroupId, sourceName } = (request.body ?? {}) as { text?: string; sourceGroupId?: string; sourceName?: string };
+    if (!text) return reply.status(400).send({ error: 'Missing text' });
+    try {
+      return reply.send(await recordCouponMessage(text, { id: sourceGroupId, name: sourceName }));
+    } catch (err) {
+      server.log.error({ err }, 'Failed to record coupon message');
+      return reply.status(500).send({ error: 'Internal server error' });
+    }
+  });
+
   // Internal shorten route (requires X-Internal-Key)
   server.post('/s/internal', async (request, reply) => {
     const internalKey = request.headers['x-internal-key'];
@@ -261,6 +279,7 @@ async function buildApp() {
   await server.register(healthRoutes, { prefix: '/health' });
   await server.register(unidentifiedLinksRoutes, { prefix: '/health' });
   await server.register(analyticsRoutes, { prefix: '/analytics' });
+  await server.register(hunterRoutes, { prefix: '/hunter' });
 
   return server;
 }

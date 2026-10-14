@@ -125,6 +125,8 @@ export interface Niche {
 
 export interface SourceGroup {
   id: string
+  // TELEGRAM = real channel; SHOPEE = virtual source of a niche's automatic search
+  kind?: 'TELEGRAM' | 'SHOPEE'
   name: string
   username?: string | null
   telegramId: string
@@ -254,6 +256,77 @@ export interface WaSnapshotResult {
   baseline?: boolean
   skipped?: string
   error?: string
+}
+
+// ── Automatic Shopee search ──────────────────
+export type HunterMode = 'OFF' | 'PREVIEW' | 'APPROVAL' | 'AUTO' | 'AUTO_BEST'
+
+export interface ShopeeHunterConfig {
+  id: string
+  nicheId: string
+  sourceGroupId: string
+  mode: HunterMode
+  keywords: string
+  forbiddenWords: string
+  minPrice: number | null
+  maxPrice: number | null
+  minRating: number
+  minSales: number
+  minCommissionPct: number
+  minDiscountPct: number
+  minScore: number
+  autoMinScore: number
+  officialOnly: boolean
+  intervalHours: number
+  dailyLimit: number
+  minIntervalMin: number
+  quietStart: number
+  quietEnd: number
+  useCoupons: boolean
+  lastRunAt: string | null
+  lastRunSummary: { at: string; keywords: number; found: number; passed: number; newCandidates: number; rejected: Record<string, number>; errors: string[] } | null
+}
+
+export interface HunterCandidate {
+  id: string
+  keyword: string
+  price: number
+  originalPrice: number | null
+  discountPct: number | null
+  discountSource: 'HISTORY' | 'ANNOUNCED'
+  score: number
+  scoreDetail: Record<string, number> | null
+  status: 'PREVIEW' | 'READY' | 'QUEUED' | 'SENT' | 'EXPIRED'
+  offerId: string | null
+  createdAt: string
+  product?: { name: string; imageUrl: string | null; productLink: string | null; ratingStar: number | null; sales: number | null; commissionPct: number | null; shopName: string | null; isOfficial: boolean }
+}
+
+export interface HunterListItem {
+  nicheId: string
+  nicheName: string
+  mode: HunterMode
+  keywords: number
+  lastRunAt: string | null
+  last24h: { preview: number; ready: number; queued: number; sent: number }
+}
+
+export interface Coupon {
+  id: string
+  code: string
+  discountType: 'FIXED' | 'PERCENT'
+  value: number
+  maxDiscount: number | null
+  minSpend: number | null
+  validUntil: string | null
+  status: 'ACTIVE' | 'EXPIRED' | 'EXHAUSTED'
+  endReason: string | null
+  sourceCount: number
+  mentions: number
+  usedCount: number
+  sample: string | null
+  firstSeenAt: string
+  lastSeenAt: string
 }
 
 export interface WhatsAppGroup {
@@ -648,6 +721,38 @@ class ApiClient {
 
   async removeStripDomain(domain: string): Promise<{ success: boolean; domains: string[] }> {
     return this.request('DELETE', `/settings/strip-domain?domain=${encodeURIComponent(domain)}`)
+  }
+
+  async getHunters(): Promise<HunterListItem[]> {
+    return this.request('GET', '/hunter')
+  }
+
+  async getHunter(nicheId: string): Promise<{ hunter: ShopeeHunterConfig; niche: { id: string; name: string }; destinationIds: string[]; candidates: HunterCandidate[] }> {
+    return this.request('GET', `/hunter/${nicheId}`)
+  }
+
+  async saveHunter(nicheId: string, data: Partial<ShopeeHunterConfig> & { destinationIds?: string[] }): Promise<ShopeeHunterConfig> {
+    return this.request('PUT', `/hunter/${nicheId}`, data)
+  }
+
+  async runHunter(nicheId: string): Promise<NonNullable<ShopeeHunterConfig['lastRunSummary']>> {
+    return this.request('POST', `/hunter/${nicheId}/run`, {})
+  }
+
+  async sendHunterCandidate(candidateId: string): Promise<{ offerId: string }> {
+    return this.request('POST', `/hunter/candidates/${candidateId}/send`, {})
+  }
+
+  async testHunterSearch(keyword: string): Promise<{ ok: boolean; message?: string; count?: number; fields?: string[]; products?: Array<{ name: string; priceMin: number; priceMax: number; discountPct: number | null; rating: number | null; sales: number | null; commissionPct: number | null; imageUrl: string | null; isOfficial: boolean }> }> {
+    return this.request('POST', '/hunter/test-search', { keyword })
+  }
+
+  async getCoupons(): Promise<{ enabled: boolean; coupons: Coupon[] }> {
+    return this.request('GET', '/hunter/coupons/list')
+  }
+
+  async setCouponsEnabled(enabled: boolean): Promise<{ enabled: boolean }> {
+    return this.request('PUT', '/hunter/coupons/settings', { enabled })
   }
 
   async getWaAnalytics(days = 30, groupId?: string): Promise<WaAnalytics> {

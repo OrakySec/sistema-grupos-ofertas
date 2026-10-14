@@ -48,8 +48,12 @@ export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
   // include: { niche: true } — both the panel (niche assignment dropdown) and
   // the telegram-listener (per-message mockup/footer/ML-link overrides) read
   // the nested niche off this same response, no separate call needed.
-  fastify.get('/source', async (_request, reply) => {
+  fastify.get('/source', async (request, reply) => {
+    // The telegram-listener (internal key) must only see real Telegram
+    // channels — never the virtual SHOPEE sources behind automatic search.
+    const fromListener = request.headers['x-internal-key'] === 'sistema-grupos-ofertas-internal-token-fallback-key-2026';
     const groups = await prisma.sourceGroup.findMany({
+      where: fromListener ? { kind: 'TELEGRAM' } : undefined,
       orderBy: { createdAt: 'desc' },
       include: { niche: true },
     });

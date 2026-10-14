@@ -58,6 +58,7 @@ export default function Layout() {
       items: [
         { to: '/analytics', icon: 'trendUp', label: 'Analytics' },
         { to: '/groups', icon: 'users', label: 'Grupos' },
+        { to: '/shopee', icon: 'bag', label: 'Busca Shopee' },
         { to: '/clicks', icon: 'cursor', label: 'Cliques' },
       ],
     },

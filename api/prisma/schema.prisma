@@ -37,6 +37,10 @@ enum DeliveryStatus {
 
 model SourceGroup {
   id         String   @id @default(cuid())
+  // TELEGRAM = a real channel the listener reads. SHOPEE = the virtual source
+  // behind a niche's automatic Shopee search (no Telegram chat behind it; it
+  // exists so its offers reuse destinations, footer, health and analytics).
+  kind       String   @default("TELEGRAM")
   telegramId BigInt   @unique
   name       String
   username   String?
@@ -51,6 +55,7 @@ model SourceGroup {
 
   offers       Offer[]
   destinations SourceGroupDestination[]
+  shopeeHunter ShopeeHunter?
 }
 
 model Niche {
@@ -73,6 +78,7 @@ model Niche {
   createdAt          DateTime @default(now())
 
   sourceGroups SourceGroup[]
+  shopeeHunter ShopeeHunter?
 }
 
 model DestinationGroup {
@@ -234,4 +240,130 @@ model WaGroupSnapshot {
   destinationGroup DestinationGroup @relation(fields: [destinationGroupId], references: [id], onDelete: Cascade)
 
   @@index([destinationGroupId, createdAt])
+}
+
+// ── Automatic Shopee product search (per niche) ─────────────────────────────
+
+model ShopeeHunter {
+  id            String @id @default(cuid())
+  nicheId       String @unique
+  sourceGroupId String @unique // the niche's virtual SHOPEE source group
+
+  // OFF | PREVIEW (find, never send) | APPROVAL (to the approval queue) |
+  // AUTO (send) | AUTO_BEST (send when score >= autoMinScore, else queue)
+  mode String @default("OFF")
+
+  keywords         String  @default("") @db.Text // one per line
+  forbiddenWords   String  @default("") @db.Text // one per line
+  minPrice         Float?
+  maxPrice         Float?
+  minRating        Float   @default(4.5)
+  minSales         Int     @default(100)
+  minCommissionPct Float   @default(0)
+  minDiscountPct   Float   @default(15)
+  minScore         Int     @default(60)
+  autoMinScore     Int     @default(80)
+  officialOnly     Boolean @default(false)
+
+  intervalHours  Int @default(3) // how often to search
+  dailyLimit     Int @default(12) // offers per day (sent or queued)
+  minIntervalMin Int @default(20) // minutes between two offers
+  quietStart     Int @default(23) // Brasília hour, no sending from…
+  quietEnd       Int @default(7) // …until this hour
+
+  useCoupons Boolean @default(true) // only matters while coupons are on globally
+
+  lastRunAt      DateTime?
+  lastRunSummary Json?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  niche       Niche             @relation(fields: [nicheId], references: [id], onDelete: Cascade)
+  sourceGroup SourceGroup       @relation(fields: [sourceGroupId], references: [id], onDelete: Cascade)
+  candidates  HunterCandidate[]
+}
+
+model ShopeeProduct {
+  id              String   @id @default(cuid())
+  itemId          BigInt
+  shopId          BigInt
+  name            String
+  imageUrl        String?  @db.Text
+  productLink     String?  @db.Text
+  offerLink       String?  @db.Text
+  shopName        String?
+  isOfficial      Boolean  @default(false)
+  ratingStar      Float?
+  sales           Int?
+  commissionPct   Float?
+  lastPrice       Float
+  lastPriceMax    Float?
+  lastDiscountPct Float?
+  lastSeenAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  prices     ShopeePricePoint[]
+  candidates HunterCandidate[]
+
+  @@unique([shopId, itemId])
+}
+
+model ShopeePricePoint {
+  id          String   @id @default(cuid())
+  productId   String
+  price       Float
+  discountPct Float?
+  createdAt   DateTime @default(now())
+
+  product ShopeeProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, createdAt])
+}
+
+model HunterCandidate {
+  id             String    @id @default(cuid())
+  hunterId       String
+  productId      String
+  keyword        String
+  price          Float
+  originalPrice  Float?
+  discountPct    Float? // effective discount used for the decision
+  discountSource String // HISTORY (vs our own price history) | ANNOUNCED (Shopee's own %)
+  score          Int
+  scoreDetail    Json?
+  // PREVIEW | READY (waiting for a sending slot) | QUEUED (in the approval
+  // queue) | SENT | EXPIRED (got stale before a slot opened)
+  status         String
+  offerId        String?
+  createdAt      DateTime  @default(now())
+  decidedAt      DateTime?
+
+  hunter  ShopeeHunter  @relation(fields: [hunterId], references: [id], onDelete: Cascade)
+  product ShopeeProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([hunterId, status, createdAt])
+  @@index([productId, createdAt])
+}
+
+// Shopee coupons learned from the monitored Telegram channels (lib/coupons.ts)
+model Coupon {
+  id           String    @id @default(cuid())
+  code         String    @unique
+  discountType String // FIXED | PERCENT
+  value        Float
+  maxDiscount  Float?
+  minSpend     Float?
+  validUntil   DateTime?
+  status       String    @default("ACTIVE") // ACTIVE | EXPIRED | EXHAUSTED
+  endReason    String?
+  endedAt      DateTime?
+  sources      Json? // last channels that posted it: [{ id, name, at }]
+  sourceCount  Int       @default(1)
+  mentions     Int       @default(1)
+  usedCount    Int       @default(0)
+  sample       String?   @db.Text
+  firstSeenAt  DateTime  @default(now())
+  lastSeenAt   DateTime  @default(now())
+
+  @@index([status])
 }
