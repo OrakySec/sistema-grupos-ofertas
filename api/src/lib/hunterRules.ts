@@ -13,7 +13,6 @@ export interface HunterFilters {
   minCommissionPct: number;
   minDiscountPct: number;
   officialOnly: boolean;
-  requireKeywordInTitle: boolean;
 }
 
 /** Splits a textarea (one per line, commas also accepted) into clean terms. */
@@ -32,27 +31,7 @@ const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCa
 
 const tokens = (s: string) => fold(s).split(/[^a-z0-9]+/).filter(Boolean);
 
-// Never a "deal" for a promo group, whatever the niche: used/refurbished
-// goods and the "30000 jogos" retro sticks (pirated ROMs).
-const ALWAYS_BLOCKED: Array<[RegExp, string]> = [
-  [/\b(usad[oa]s?|semi[\s-]?nov[oa]s?|seminov[oa]s?|recondicionad[oa]s?|vitrine|mostruario|com defeito|retirada de pecas)\b/, 'usado / recondicionado'],
-  [/\b\d{1,3}(\.\d{3})+\s*jogos\b|\b\d{4,}\s*jogos\b|game stick|jogos retro/, 'console com jogos piratas'],
-];
-
 const STOP = new Set(['de', 'da', 'do', 'das', 'dos', 'para', 'pra', 'com', 'sem', 'e', 'o', 'a', 'os', 'as', 'em', 'no', 'na', 'p', 'kit']);
-
-/**
- * Is the keyword what the product IS? Every significant keyword word must
- * show up among the title's first words — "Controle para Xbox Sem Fio" is a
- * controller, "Projetor HY300 … TV Box Xbox PS5" is not. Plurals count
- * ("controles" matches "controle").
- */
-export function keywordInTitle(name: string, keyword: string, firstWords = 8): boolean {
-  const head = tokens(name).filter((t) => !STOP.has(t)).slice(0, firstWords);
-  const wanted = tokens(keyword).filter((t) => !STOP.has(t));
-  if (wanted.length === 0) return true;
-  return wanted.every((k) => head.some((t) => t === k || (t.startsWith(k) && t.length - k.length <= 2)));
-}
 
 /** Same product from different shops → same signature (first significant title words). */
 export function productSignature(name: string): string {
@@ -60,12 +39,10 @@ export function productSignature(name: string): string {
 }
 
 /** null = passes; otherwise the (Portuguese) reason it was dropped. */
-export function rejectReason(p: ShopeeProductOffer, f: HunterFilters, keyword = ''): string | null {
+export function rejectReason(p: ShopeeProductOffer, f: HunterFilters): string | null {
   const name = fold(p.name);
   const bad = f.forbiddenWords.find((w) => name.includes(fold(w)));
   if (bad) return `palavra proibida "${bad}"`;
-  for (const [re, why] of ALWAYS_BLOCKED) if (re.test(name)) return why;
-  if (f.requireKeywordInTitle && keyword && !keywordInTitle(p.name, keyword)) return 'fora do assunto (palavra-chave não está no começo do título)';
   if (f.minPrice !== null && p.priceMin < f.minPrice) return 'preço abaixo da faixa';
   if (f.maxPrice !== null && p.priceMin > f.maxPrice) return 'preço acima da faixa';
   if ((p.rating ?? 0) < f.minRating) return 'avaliação baixa';

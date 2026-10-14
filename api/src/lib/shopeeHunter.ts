@@ -67,7 +67,6 @@ function filtersOf(h: Hunter): HunterFilters {
     minCommissionPct: h.minCommissionPct,
     minDiscountPct: h.minDiscountPct,
     officialOnly: h.officialOnly,
-    requireKeywordInTitle: h.requireKeywordInTitle,
   };
 }
 
@@ -144,7 +143,7 @@ export async function runHunter(hunterId: string): Promise<RunSummary> {
       summary.found++;
 
       const product = await upsertProduct(p);
-      const why = rejectReason(p, filters, keyword);
+      const why = rejectReason(p, filters);
       if (why) { reject(why); continue; }
 
       const history = historyStats(

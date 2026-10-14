@@ -253,21 +253,17 @@ model ShopeeHunter {
   // AUTO (send) | AUTO_BEST (send when score >= autoMinScore, else queue)
   mode String @default("OFF")
 
-  keywords              String  @default("") @db.Text // one per line
-  forbiddenWords        String  @default("") @db.Text // one per line
-  minPrice              Float?
-  maxPrice              Float?
-  minRating             Float   @default(4.5)
-  minSales              Int     @default(100)
-  minCommissionPct      Float   @default(0)
-  minDiscountPct        Float   @default(15)
-  minScore              Int     @default(60)
-  autoMinScore          Int     @default(80)
-  officialOnly          Boolean @default(false)
-  // The keyword must be what the product IS (early in the title), not a
-  // "compatible with X" mention at the end: stops projectors, TVs and docks
-  // from matching "Xbox" or "PS5".
-  requireKeywordInTitle Boolean @default(true)
+  keywords         String  @default("") @db.Text // one per line
+  forbiddenWords   String  @default("") @db.Text // one per line
+  minPrice         Float?
+  maxPrice         Float?
+  minRating        Float   @default(4.5)
+  minSales         Int     @default(100)
+  minCommissionPct Float   @default(0)
+  minDiscountPct   Float   @default(15)
+  minScore         Int     @default(60)
+  autoMinScore     Int     @default(80)
+  officialOnly     Boolean @default(false)
 
   intervalHours  Int @default(3) // how often to search
   dailyLimit     Int @default(12) // offers per day (sent or queued)
