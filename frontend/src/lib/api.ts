@@ -281,6 +281,7 @@ export interface ShopeeHunterConfig {
   minScore: number
   autoMinScore: number
   officialOnly: boolean
+  requireKeywordInTitle: boolean
   intervalHours: number
   dailyLimit: number
   minIntervalMin: number

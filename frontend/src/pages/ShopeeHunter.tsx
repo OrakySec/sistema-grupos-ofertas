@@ -212,7 +212,18 @@ function NicheEditor({ nicheId, destinations, onSaved }: { nicheId: string; dest
           {cfg.mode === 'AUTO_BEST' && <NumField label="Nota p/ enviar sozinha" value={cfg.autoMinScore} onChange={(v) => set('autoMinScore', v ?? 0)} />}
         </div>
         <div className="panel-body" style={{ paddingTop: 0 }}>
-          <Toggle checked={cfg.officialOnly} onChange={(v) => set('officialOnly', v)} label="Só lojas oficiais (Shopee Mall)" />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <Toggle
+              checked={cfg.requireKeywordInTitle}
+              onChange={(v) => set('requireKeywordInTitle', v)}
+              label="Palavra-chave no começo do título (evita projetores, TVs e acessórios que só citam “compatível com Xbox/PS5”)"
+            />
+            <Toggle checked={cfg.officialOnly} onChange={(v) => set('officialOnly', v)} label="Só lojas oficiais (Shopee Mall)" />
+            <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+              Sempre bloqueados, em qualquer nicho: produtos usados/seminovos/recondicionados e consoles com “milhares de jogos” (piratas).
+              Descontos anunciados acima de 65% só valem depois que o histórico de preço confirmar.
+            </div>
+          </div>
         </div>
       </section>
 

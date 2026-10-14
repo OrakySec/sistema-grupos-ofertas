@@ -13,6 +13,7 @@ export interface HunterFilters {
   minCommissionPct: number;
   minDiscountPct: number;
   officialOnly: boolean;
+  requireKeywordInTitle: boolean;
 }
 
 /** Splits a textarea (one per line, commas also accepted) into clean terms. */
@@ -29,11 +30,42 @@ export function parseTerms(text: string | null | undefined): string[] {
 
 const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
+const tokens = (s: string) => fold(s).split(/[^a-z0-9]+/).filter(Boolean);
+
+// Never a "deal" for a promo group, whatever the niche: used/refurbished
+// goods and the "30000 jogos" retro sticks (pirated ROMs).
+const ALWAYS_BLOCKED: Array<[RegExp, string]> = [
+  [/\b(usad[oa]s?|semi[\s-]?nov[oa]s?|seminov[oa]s?|recondicionad[oa]s?|vitrine|mostruario|com defeito|retirada de pecas)\b/, 'usado / recondicionado'],
+  [/\b\d{1,3}(\.\d{3})+\s*jogos\b|\b\d{4,}\s*jogos\b|game stick|jogos retro/, 'console com jogos piratas'],
+];
+
+const STOP = new Set(['de', 'da', 'do', 'das', 'dos', 'para', 'pra', 'com', 'sem', 'e', 'o', 'a', 'os', 'as', 'em', 'no', 'na', 'p', 'kit']);
+
+/**
+ * Is the keyword what the product IS? Every significant keyword word must
+ * show up among the title's first words — "Controle para Xbox Sem Fio" is a
+ * controller, "Projetor HY300 … TV Box Xbox PS5" is not. Plurals count
+ * ("controles" matches "controle").
+ */
+export function keywordInTitle(name: string, keyword: string, firstWords = 8): boolean {
+  const head = tokens(name).filter((t) => !STOP.has(t)).slice(0, firstWords);
+  const wanted = tokens(keyword).filter((t) => !STOP.has(t));
+  if (wanted.length === 0) return true;
+  return wanted.every((k) => head.some((t) => t === k || (t.startsWith(k) && t.length - k.length <= 2)));
+}
+
+/** Same product from different shops → same signature (first significant title words). */
+export function productSignature(name: string): string {
+  return tokens(cleanTitle(name, 200)).filter((t) => !STOP.has(t)).slice(0, 5).join(' ');
+}
+
 /** null = passes; otherwise the (Portuguese) reason it was dropped. */
-export function rejectReason(p: ShopeeProductOffer, f: HunterFilters): string | null {
+export function rejectReason(p: ShopeeProductOffer, f: HunterFilters, keyword = ''): string | null {
   const name = fold(p.name);
   const bad = f.forbiddenWords.find((w) => name.includes(fold(w)));
   if (bad) return `palavra proibida "${bad}"`;
+  for (const [re, why] of ALWAYS_BLOCKED) if (re.test(name)) return why;
+  if (f.requireKeywordInTitle && keyword && !keywordInTitle(p.name, keyword)) return 'fora do assunto (palavra-chave não está no começo do título)';
   if (f.minPrice !== null && p.priceMin < f.minPrice) return 'preço abaixo da faixa';
   if (f.maxPrice !== null && p.priceMin > f.maxPrice) return 'preço acima da faixa';
   if ((p.rating ?? 0) < f.minRating) return 'avaliação baixa';
@@ -69,6 +101,8 @@ export const historyIsReliable = (h: HistoryStats) => h.points >= 3 && h.spanDay
 
 export interface ScoreResult {
   score: number;
+  /** Announced discount too big to believe without our own price history. */
+  suspicious: boolean;
   discountPct: number | null;
   discountSource: 'HISTORY' | 'ANNOUNCED';
   originalPrice: number | null;
@@ -76,6 +110,7 @@ export interface ScoreResult {
 }
 
 const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
+export const MAX_BELIEVABLE_DISCOUNT = 65;
 
 /**
  * 0–100. With reliable history, the drop below our own median price weighs
@@ -88,6 +123,7 @@ export function scoreProduct(p: ShopeeProductOffer, h: HistoryStats): ScoreResul
   let discountPct: number | null = null;
   let discountSource: 'HISTORY' | 'ANNOUNCED' = 'ANNOUNCED';
   let originalPrice: number | null = null;
+  let suspicious = false;
 
   if (historyIsReliable(h)) {
     discountSource = 'HISTORY';
@@ -99,7 +135,10 @@ export function scoreProduct(p: ShopeeProductOffer, h: HistoryStats): ScoreResul
   } else if (p.discountPct) {
     discountPct = p.discountPct;
     originalPrice = p.priceMin / (1 - p.discountPct / 100);
-    parts.desconto = Math.round(clamp01(p.discountPct / 60) * 35);
+    // Above ~65% off, a "from" price is almost always inflated ("de R$ 808
+    // por R$ 185"). Without our own history to confirm it, it earns nothing.
+    if (p.discountPct > MAX_BELIEVABLE_DISCOUNT) suspicious = true;
+    else parts.desconto = Math.round(clamp01(p.discountPct / 50) * 35);
   }
 
   parts.avaliacao = Math.round(clamp01(((p.rating ?? 0) - 4.0) / 1.0) * 15);
@@ -107,7 +146,7 @@ export function scoreProduct(p: ShopeeProductOffer, h: HistoryStats): ScoreResul
   parts.comissao = Math.round(clamp01((p.commissionPct ?? 0) / 15) * 15);
 
   const score = Math.min(100, Object.values(parts).reduce((a, b) => a + b, 0));
-  return { score, discountPct, discountSource, originalPrice, parts };
+  return { score, suspicious, discountPct, discountSource, originalPrice, parts };
 }
 
 // ── Title & text ────────────────────────────────────────────────────────────

@@ -88,6 +88,7 @@ export const hunterRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
         ...(b.minScore !== undefined && { minScore: int(b.minScore, 60, 0, 100) }),
         ...(b.autoMinScore !== undefined && { autoMinScore: int(b.autoMinScore, 80, 0, 100) }),
         ...(b.officialOnly !== undefined && { officialOnly: !!b.officialOnly }),
+        ...(b.requireKeywordInTitle !== undefined && { requireKeywordInTitle: !!b.requireKeywordInTitle }),
         ...(b.intervalHours !== undefined && { intervalHours: int(b.intervalHours, 3, 1, 48) }),
         ...(b.dailyLimit !== undefined && { dailyLimit: int(b.dailyLimit, 12, 0, 200) }),
         ...(b.minIntervalMin !== undefined && { minIntervalMin: int(b.minIntervalMin, 20, 0, 1440) }),

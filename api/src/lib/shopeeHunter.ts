@@ -27,7 +27,9 @@ import {
   scoreProduct,
   buildOfferText,
   inQuietHours,
+  productSignature,
   type HunterFilters,
+  type ScoreResult,
 } from './hunterRules';
 
 const LISTENER_URL = process.env.TELEGRAM_LISTENER_URL ?? 'http://telegram-listener:8080';
@@ -65,6 +67,7 @@ function filtersOf(h: Hunter): HunterFilters {
     minCommissionPct: h.minCommissionPct,
     minDiscountPct: h.minDiscountPct,
     officialOnly: h.officialOnly,
+    requireKeywordInTitle: h.requireKeywordInTitle,
   };
 }
 
@@ -117,6 +120,12 @@ export async function runHunter(hunterId: string): Promise<RunSummary> {
   const reject = (r: string) => (summary.rejected[r] = (summary.rejected[r] ?? 0) + 1);
   const seen = new Set<string>();
   const status = hunter.mode === 'PREVIEW' ? 'PREVIEW' : 'READY';
+  type Passing = { productId: string; p: ShopeeProductOffer; keyword: string; s: ScoreResult; signature: string };
+  const passing: Passing[] = [];
+
+  // Every run re-evaluates from scratch, so the list always reflects the
+  // current filters (waiting deals that still qualify come right back).
+  await prisma.hunterCandidate.deleteMany({ where: { hunterId, status: { in: ['PREVIEW', 'READY'] } } });
 
   for (const keyword of keywords) {
     let products: ShopeeProductOffer[] = [];
@@ -135,7 +144,7 @@ export async function runHunter(hunterId: string): Promise<RunSummary> {
       summary.found++;
 
       const product = await upsertProduct(p);
-      const why = rejectReason(p, filters);
+      const why = rejectReason(p, filters, keyword);
       if (why) { reject(why); continue; }
 
       const history = historyStats(
@@ -145,39 +154,57 @@ export async function runHunter(hunterId: string): Promise<RunSummary> {
         }),
       );
       const s = scoreProduct(p, history);
+      if (s.suspicious) { reject('desconto anunciado suspeito (acima de 65%)'); continue; }
       if ((s.discountPct ?? 0) < filters.minDiscountPct) { reject('desconto pequeno'); continue; }
       if (s.score < hunter.minScore) { reject('nota baixa'); continue; }
 
-      // Don't repeat a product sent recently, unless it got clearly cheaper.
-      const lastSent = await prisma.hunterCandidate.findFirst({
-        where: { productId: product.id, status: { in: ['QUEUED', 'SENT'] }, decidedAt: { gte: new Date(Date.now() - REPEAT_DAYS * DAY_MS) } },
-        orderBy: { decidedAt: 'desc' },
-      });
-      if (lastSent && p.priceMin > lastSent.price * REPEAT_PRICE_DROP) { reject('enviado nos últimos 7 dias'); continue; }
+      passing.push({ productId: product.id, p, keyword, s, signature: productSignature(p.name) });
+    }
+    await new Promise((r) => setTimeout(r, 400)); // be gentle with the API
+  }
 
-      summary.passed++;
-      const fields = {
+  // The same product is often listed by many shops — keep only the cheapest.
+  const bySignature = new Map<string, Passing>();
+  for (const item of passing) {
+    const prev = bySignature.get(item.signature);
+    if (!prev || item.p.priceMin < prev.p.priceMin || (item.p.priceMin === prev.p.priceMin && item.s.score > prev.s.score)) {
+      if (prev) reject('mesmo produto de outra loja (mais caro)');
+      bySignature.set(item.signature, item);
+    } else {
+      reject('mesmo produto de outra loja (mais caro)');
+    }
+  }
+
+  for (const { productId, p, keyword, s, signature } of bySignature.values()) {
+    // Don't repeat a product (or the same product from another shop) sent
+    // recently, unless it got clearly cheaper.
+    const lastSent = await prisma.hunterCandidate.findFirst({
+      where: {
+        OR: [{ productId }, { signature }],
+        status: { in: ['QUEUED', 'SENT'] },
+        decidedAt: { gte: new Date(Date.now() - REPEAT_DAYS * DAY_MS) },
+      },
+      orderBy: { decidedAt: 'desc' },
+    });
+    if (lastSent && p.priceMin > lastSent.price * REPEAT_PRICE_DROP) { reject('enviado nos últimos 7 dias'); continue; }
+
+    summary.passed++;
+    await prisma.hunterCandidate.create({
+      data: {
+        hunterId,
+        productId,
         keyword,
+        signature,
         price: p.priceMin,
         originalPrice: s.originalPrice,
         discountPct: s.discountPct,
         discountSource: s.discountSource,
         score: s.score,
         scoreDetail: s.parts,
-        createdAt: new Date(),
-      };
-      // Same product still waiting in this niche → refresh it instead of duplicating.
-      const open = await prisma.hunterCandidate.findFirst({
-        where: { hunterId, productId: product.id, status: { in: ['PREVIEW', 'READY'] } },
-      });
-      if (open) {
-        await prisma.hunterCandidate.update({ where: { id: open.id }, data: { ...fields, status } });
-      } else {
-        await prisma.hunterCandidate.create({ data: { ...fields, hunterId, productId: product.id, status } });
-        summary.newCandidates++;
-      }
-    }
-    await new Promise((r) => setTimeout(r, 400)); // be gentle with the API
+        status,
+      },
+    });
+    summary.newCandidates++;
   }
 
   await prisma.shopeeHunter.update({
