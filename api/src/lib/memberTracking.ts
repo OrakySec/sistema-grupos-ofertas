@@ -16,14 +16,27 @@ import { createHash, randomBytes } from 'crypto';
 import prisma from './prisma';
 import { WhatsAppService } from '../services/whatsapp.service';
 
-const HASH_SALT = process.env.JWT_SECRET ?? 'changeme-jwt-secret';
+// The salt lives in the database, not in an env var: the webhook is handled
+// by the API and the snapshot by the worker, and both must hash the same
+// member to the same value (the worker has no JWT_SECRET).
+const SALT_KEY = 'member_hash_salt';
+let saltCache: string | null = null;
+export async function getHashSalt(): Promise<string> {
+  if (saltCache) return saltCache;
+  const row = await prisma.setting.findUnique({ where: { key: SALT_KEY } });
+  if (row?.value) return (saltCache = row.value);
+  const fresh = randomBytes(24).toString('hex');
+  // upsert with an empty update: if another process created it first, keep theirs
+  const saved = await prisma.setting.upsert({ where: { key: SALT_KEY }, update: {}, create: { key: SALT_KEY, value: fresh } });
+  return (saltCache = saved.value);
+}
 export const WEBHOOK_EVENT = 'GROUP_PARTICIPANTS_UPDATE';
 export const WEBHOOK_TOKEN_HEADER = 'x-ofertas-webhook-token';
 const SECRET_KEY = 'evolution_webhook_secret';
 const LAST_EVENT_KEY = 'wa_webhook_last_event_at';
 
-export function hashMember(jid: string): string {
-  return createHash('sha256').update(`${HASH_SALT}|wa|${jid.trim().toLowerCase()}`).digest('hex').slice(0, 32);
+export function hashMember(jid: string, salt: string): string {
+  return createHash('sha256').update(`${salt}|wa|${jid.trim().toLowerCase()}`).digest('hex').slice(0, 32);
 }
 
 /** Participants arrive as JID strings or (newer Baileys) objects with an id. */
@@ -92,10 +105,11 @@ export async function recordParticipantsUpdate(data: any): Promise<{ applied: nu
   if (!dest) return { applied: 0, ignored: 'grupo não cadastrado' };
 
   const author = participantIds([data?.author])[0] ?? '';
+  const salt = await getHashSalt();
   const now = new Date();
   let applied = 0;
   for (const jid of participantIds(data?.participants)) {
-    const memberHash = hashMember(jid);
+    const memberHash = hashMember(jid, salt);
     if (action === 'add') {
       if (await applyJoin(dest.id, memberHash, now, 'WEBHOOK')) applied++;
     } else {
@@ -128,12 +142,13 @@ export async function snapshotWhatsAppGroups(): Promise<SnapshotResult[]> {
   const whatsapp = new WhatsAppService();
   const groups = await prisma.destinationGroup.findMany({ where: { type: 'WHATSAPP', isActive: true } });
   const results: SnapshotResult[] = [];
+  const salt = await getHashSalt();
 
   for (const g of groups) {
     try {
       const ids = await whatsapp.getGroupParticipantIds(g.chatId);
       const now = new Date();
-      const current = new Set(ids.map(hashMember));
+      const current = new Set(ids.map((id) => hashMember(id, salt)));
       const isBaseline = (await prisma.waGroupSnapshot.count({ where: { destinationGroupId: g.id } })) === 0;
       const active = await prisma.waMember.findMany({
         where: { destinationGroupId: g.id, leftAt: null },
