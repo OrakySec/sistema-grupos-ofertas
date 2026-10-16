@@ -333,6 +333,76 @@ export interface Coupon {
   lastSeenAt: string
 }
 
+// ── Paid traffic (Meta Ads + Shopee sales) ───
+export type AdLevel = 'CAMPAIGN' | 'ADSET' | 'AD'
+
+export interface AdMetrics {
+  spend: number
+  impressions: number
+  clicks: number
+  linkClicks: number
+  realClicks: number
+  cpcLink: number | null
+  ctr: number | null
+  orders: number
+  gmv: number
+  commissionPending: number
+  commissionConfirmed: number
+  commissionCancelled: number
+  profitProjected: number
+  profitConfirmed: number
+  roas: number | null
+  cpa: number | null
+}
+
+export interface MetaRule {
+  id: string
+  entityId: string
+  level: AdLevel
+  enabled: boolean
+  maxCpc: number
+  days: number
+  mode: 'CONSECUTIVE' | 'AVERAGE'
+  minSpend: number
+  action: 'NOTIFY' | 'PAUSE'
+  lastFiredAt: string | null
+  lastCheck: { at: string; breach?: boolean; reason?: string; skipped?: string } | null
+}
+
+export interface AdRow {
+  id: string
+  level: AdLevel
+  name: string
+  status: string
+  campaignId: string | null
+  adsetId: string | null
+  children: number
+  links?: number
+  metrics: AdMetrics
+  rule: MetaRule | null
+}
+
+export interface AdsConfig {
+  tokenSet: boolean
+  accounts: string
+  version: string
+  lastMetaSync: { at: string; results: Array<{ account: string; campaigns?: number; adsets?: number; ads?: number; insightRows?: number; error?: string }> } | null
+  lastShopeeSync: { at: string; nodes: number; saved: number; error?: string } | null
+  ruleDefaults: { maxCpc: number; days: number; mode: 'CONSECUTIVE' | 'AVERAGE'; minSpend: number; action: 'NOTIFY' | 'PAUSE' }
+}
+
+export interface AdLinkItem {
+  id: string
+  code: string
+  label: string | null
+  metaAdId: string | null
+  adName: string | null
+  productUrl: string
+  shopeeLink: string
+  finalLink: string
+  createdAt: string
+}
+
 export interface WhatsAppGroup {
   id: string
   name: string
@@ -725,6 +795,65 @@ class ApiClient {
 
   async removeStripDomain(domain: string): Promise<{ success: boolean; domains: string[] }> {
     return this.request('DELETE', `/settings/strip-domain?domain=${encodeURIComponent(domain)}`)
+  }
+
+  // ── Paid traffic ──
+  async getAdsConfig(): Promise<AdsConfig> {
+    return this.request('GET', '/ads/config')
+  }
+
+  async saveAdsConfig(data: { token?: string; accounts?: string; version?: string; ruleDefaults?: AdsConfig['ruleDefaults'] }): Promise<{ ok: boolean }> {
+    return this.request('PUT', '/ads/config', data)
+  }
+
+  async testAds(): Promise<{ ok: boolean; message: string }> {
+    return this.request('POST', '/ads/test', {})
+  }
+
+  async syncAds(): Promise<{ meta: Array<{ account: string; error?: string }>; shopee: { nodes: number; saved: number; error?: string } }> {
+    return this.request('POST', '/ads/sync', {})
+  }
+
+  async runAdRules(): Promise<{ results: Array<{ entity: string; result: string }> }> {
+    return this.request('POST', '/ads/rules/run', {})
+  }
+
+  async getAdsOverview(q: { level: AdLevel; parentId?: string; from: string; to: string }): Promise<{ level: AdLevel; from: string; to: string; rows: AdRow[]; totals: AdMetrics }> {
+    const qs = new URLSearchParams({ level: q.level, from: q.from, to: q.to })
+    if (q.parentId) qs.set('parentId', q.parentId)
+    return this.request('GET', `/ads/overview?${qs.toString()}`)
+  }
+
+  async saveAdRule(entityId: string, data: Partial<MetaRule>): Promise<MetaRule> {
+    return this.request('PUT', `/ads/rules/${entityId}`, data)
+  }
+
+  async getAdActions(): Promise<Array<{ id: string; entityId: string; level: AdLevel; name: string; action: string; success: boolean; detail: string; createdAt: string }>> {
+    return this.request('GET', '/ads/actions')
+  }
+
+  async getAdSales(from: string, to: string): Promise<{ rows: Array<{ subCode: string; label: string; source: string; orders: number; gmv: number; pending: number; confirmed: number; cancelled: number }> }> {
+    return this.request('GET', `/ads/sales?from=${from}&to=${to}`)
+  }
+
+  async getAdLinks(): Promise<AdLinkItem[]> {
+    return this.request('GET', '/ads/links')
+  }
+
+  async createAdLink(data: { productUrl: string; metaAdId?: string | null; label?: string; viaOurLink?: boolean }): Promise<AdLinkItem> {
+    return this.request('POST', '/ads/links', data)
+  }
+
+  async updateAdLink(id: string, data: { metaAdId?: string | null; label?: string }): Promise<AdLinkItem> {
+    return this.request('PATCH', `/ads/links/${id}`, data)
+  }
+
+  async getAdsList(): Promise<Array<{ id: string; name: string; status: string; campaign: string }>> {
+    return this.request('GET', '/ads/ads-list')
+  }
+
+  async getAdsToday(): Promise<{ today: string }> {
+    return this.request('GET', '/ads/today')
   }
 
   async getHunters(): Promise<HunterListItem[]> {

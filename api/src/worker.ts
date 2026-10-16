@@ -4,6 +4,10 @@ import prisma from './lib/prisma';
 import { addSendOfferJob, scheduleLinkMonitor, scheduleSilentGroupCheck, scheduleMemberSnapshot, scheduleShopeeHunter } from './lib/queue';
 import { hunterTick } from './lib/shopeeHunter';
 import { expireCoupons } from './lib/coupons';
+import { scheduleAdsSync } from './lib/queue';
+import { metaConfig, syncMeta } from './lib/metaAds';
+import { syncShopeeConversions } from './lib/shopeeConversions';
+import { runAdRules } from './lib/adRules';
 import { tagShortLinks } from './lib/linkTagging';
 import { snapshotWhatsAppGroups } from './lib/memberTracking';
 import { TelegramService } from './services/telegram.service';
@@ -519,6 +523,13 @@ const linkMonitorWorker = new Worker(
       await handleCheckSilentGroups();
     } else if (job.name === 'check-invite-link') {
       await handleCheckInviteLink();
+    } else if (job.name === 'ads-sync') {
+      // Meta delivery + Shopee sales, then the monitoring rules on fresh numbers.
+      if (await metaConfig()) console.log('[Worker] Meta sync:', JSON.stringify(await syncMeta(7)));
+      const shopeeCreds = await prisma.setting.count({ where: { key: { in: ['shopee_app_id', 'shopee_app_secret'] }, value: { not: '' } } });
+      if (shopeeCreds === 2) console.log('[Worker] Shopee sales sync:', JSON.stringify(await syncShopeeConversions(30)));
+      const ruleResults = await runAdRules();
+      if (ruleResults.length) console.log('[Worker] Ad rules:', JSON.stringify(ruleResults));
     } else if (job.name === 'shopee-hunter-tick') {
       await expireCoupons();
       const results = await hunterTick();
@@ -559,6 +570,10 @@ scheduleMemberSnapshot().catch((err) => {
 
 scheduleShopeeHunter().catch((err) => {
   console.error('[Worker] Failed to schedule Shopee search job:', err);
+});
+
+scheduleAdsSync().catch((err) => {
+  console.error('[Worker] Failed to schedule ads sync job:', err);
 });
 
 // Graceful shutdown

@@ -128,3 +128,10 @@ export async function scheduleShopeeHunter(): Promise<void> {
     { jobId: 'shopee-hunter-tick-repeat', repeat: { every: SHOPEE_HUNTER_TICK_MS } },
   );
 }
+
+const ADS_SYNC_MS = 60 * 60 * 1000; // hourly
+
+/** Meta Ads delivery + Shopee sales sync, followed by the ad monitoring rules. */
+export async function scheduleAdsSync(): Promise<void> {
+  await linkMonitorQueue.add('ads-sync', {}, { jobId: 'ads-sync-repeat', repeat: { every: ADS_SYNC_MS } });
+}

@@ -17,6 +17,7 @@ import { publicRoutes } from './routes/public';
 import { healthRoutes, unidentifiedLinksRoutes } from './routes/health';
 import { analyticsRoutes } from './routes/analytics';
 import { hunterRoutes } from './routes/hunter';
+import { adsRoutes } from './routes/ads';
 import { recordCouponMessage } from './lib/coupons';
 import {
   getWebhookSecret,
@@ -280,6 +281,7 @@ async function buildApp() {
   await server.register(unidentifiedLinksRoutes, { prefix: '/health' });
   await server.register(analyticsRoutes, { prefix: '/analytics' });
   await server.register(hunterRoutes, { prefix: '/hunter' });
+  await server.register(adsRoutes, { prefix: '/ads' });
 
   return server;
 }

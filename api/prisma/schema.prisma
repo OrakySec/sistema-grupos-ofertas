@@ -370,3 +370,108 @@ model Coupon {
 
   @@index([status])
 }
+
+// ── Paid traffic: Meta Ads + Shopee sales ───────────────────────────────────
+
+// Campaigns, ad sets and ads imported from the Meta ad accounts.
+model MetaEntity {
+  id         String   @id // Meta's own id
+  level      String // CAMPAIGN | ADSET | AD
+  accountId  String // act_…
+  name       String
+  campaignId String?
+  adsetId    String?
+  status     String // Meta effective_status (ACTIVE, PAUSED, …)
+  updatedAt  DateTime @updatedAt
+
+  @@index([level, accountId])
+  @@index([campaignId])
+  @@index([adsetId])
+}
+
+// Daily delivery per AD (ad sets / campaigns are sums of their ads).
+// date = YYYY-MM-DD in the ad account's own time zone.
+model MetaAdDaily {
+  id          String  @id @default(cuid())
+  adId        String
+  adsetId     String?
+  campaignId  String?
+  date        String
+  spend       Float
+  impressions Int
+  clicks      Int
+  linkClicks  Int // inline_link_clicks — what the CPC rules use
+
+  @@unique([adId, date])
+  @@index([date])
+  @@index([campaignId, date])
+  @@index([adsetId, date])
+}
+
+// One affiliate link per ad: the code travels as the Shopee sub-ID and
+// comes back in the conversion report (Shopee glues sub-IDs together, so a
+// single unique code per ad is the reliable way to attribute a sale).
+model AdLink {
+  id         String   @id @default(cuid())
+  code       String   @unique // lowercase alnum, e.g. "m7k2q9x"
+  label      String?
+  metaAdId   String?
+  productUrl String   @db.Text
+  shopeeLink String   @db.Text // Shopee short link carrying the code
+  finalLink  String   @db.Text // what goes into the ad (ours or Shopee's)
+  createdAt  DateTime @default(now())
+
+  @@index([metaAdId])
+}
+
+// Shopee affiliate conversions (conversionReport), re-synced while pending.
+model ShopeeConversion {
+  id                  String    @id // conversionId
+  purchaseTime        DateTime
+  clickTime           DateTime?
+  utmContent          String?
+  subCode             String? // normalized utmContent (lowercase alnum)
+  orders              Int       @default(0)
+  items               Int       @default(0)
+  gmv                 Float     @default(0)
+  commissionPending   Float     @default(0)
+  commissionConfirmed Float     @default(0)
+  commissionCancelled Float     @default(0)
+  status              String // PENDING | COMPLETED | CANCELLED | MIXED | UNPAID
+  fraud               Boolean   @default(false)
+  raw                 Json?
+  updatedAt           DateTime  @updatedAt
+
+  @@index([purchaseTime])
+  @@index([subCode, purchaseTime])
+}
+
+// Monitoring rule on one campaign / ad set / ad.
+model MetaRule {
+  id          String    @id @default(cuid())
+  entityId    String    @unique
+  level       String // CAMPAIGN | ADSET | AD
+  enabled     Boolean   @default(false)
+  maxCpc      Float     @default(0.5) // cost per LINK click, from Meta
+  days        Int       @default(2)
+  mode        String    @default("CONSECUTIVE") // CONSECUTIVE | AVERAGE
+  minSpend    Float     @default(10) // a day only counts with at least this spent
+  action      String    @default("NOTIFY") // NOTIFY | PAUSE
+  lastFiredAt DateTime?
+  lastCheck   Json?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model MetaRuleAction {
+  id        String   @id @default(cuid())
+  entityId  String
+  level     String
+  name      String
+  action    String // NOTIFY | PAUSE
+  success   Boolean
+  detail    String   @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}

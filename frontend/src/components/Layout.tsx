@@ -59,6 +59,7 @@ export default function Layout() {
         { to: '/analytics', icon: 'trendUp', label: 'Analytics' },
         { to: '/groups', icon: 'users', label: 'Grupos' },
         { to: '/shopee', icon: 'bag', label: 'Busca Shopee' },
+        { to: '/ads', icon: 'target', label: 'Tráfego pago' },
         { to: '/clicks', icon: 'cursor', label: 'Cliques' },
       ],
     },
