@@ -20,6 +20,34 @@ function newCode() {
   return 'm' + Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('');
 }
 
+const fold = (t: string) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+/** Name filter terms ("shopee, trafego direto") saved by the user. */
+async function campaignFilterTerms(): Promise<string[]> {
+  const row = await prisma.setting.findUnique({ where: { key: 'ads_campaign_filter' } });
+  return (row?.value ?? '').split(',').map((t) => fold(t.trim())).filter(Boolean);
+}
+
+/**
+ * Which campaigns the page shows: the user's explicit choice wins; for
+ * campaigns never chosen, the name filter decides (no filter = shown).
+ */
+export function isCampaignShown(c: { name: string; shown: boolean | null }, terms: string[]): boolean {
+  if (c.shown === true) return true;
+  if (c.shown === false) return false;
+  if (terms.length === 0) return true;
+  const name = fold(c.name);
+  return terms.some((t) => name.includes(t));
+}
+
+async function shownCampaignIds(): Promise<Set<string>> {
+  const [campaigns, terms] = await Promise.all([
+    prisma.metaEntity.findMany({ where: { level: 'CAMPAIGN' }, select: { id: true, name: true, shown: true } }),
+    campaignFilterTerms(),
+  ]);
+  return new Set(campaigns.filter((c) => isCampaignShown(c, terms)).map((c) => c.id));
+}
+
 export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   fastify.addHook('preHandler', requireAuth);
 
@@ -93,6 +121,33 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
   // POST /ads/rules/run — evaluate the monitoring rules right now
   fastify.post('/rules/run', async () => ({ results: await runAdRules() }));
 
+  // ── Which campaigns appear on the page ─────────────────────────────────
+
+  fastify.get('/campaigns-visibility', async () => {
+    const [campaigns, row] = await Promise.all([
+      prisma.metaEntity.findMany({ where: { level: 'CAMPAIGN' }, orderBy: { name: 'asc' }, select: { id: true, name: true, status: true, shown: true } }),
+      prisma.setting.findUnique({ where: { key: 'ads_campaign_filter' } }),
+    ]);
+    const terms = (row?.value ?? '').split(',').map((t) => fold(t.trim())).filter(Boolean);
+    return {
+      filter: row?.value ?? '',
+      campaigns: campaigns.map((c) => ({ ...c, visible: isCampaignShown(c, terms) })),
+    };
+  });
+
+  // PUT { filter?: "shopee, trafego direto", shown?: { <campaignId>: true | false | null } }
+  fastify.put<{ Body: { filter?: string; shown?: Record<string, boolean | null> } }>('/campaigns-visibility', async (request) => {
+    const b = request.body ?? {};
+    if (b.filter !== undefined) {
+      const value = String(b.filter);
+      await prisma.setting.upsert({ where: { key: 'ads_campaign_filter' }, update: { value }, create: { key: 'ads_campaign_filter', value } });
+    }
+    for (const [id, shown] of Object.entries(b.shown ?? {})) {
+      await prisma.metaEntity.updateMany({ where: { id, level: 'CAMPAIGN' }, data: { shown: shown === null ? null : !!shown } });
+    }
+    return { ok: true };
+  });
+
   // ── Overview: one level at a time, optionally inside a parent ────────────
 
   fastify.get<{ Querystring: { level?: string; parentId?: string; from?: string; to?: string } }>('/overview', async (request, reply) => {
@@ -105,12 +160,15 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
 
     const parentFilter =
       !parentId ? {} : level === 'ADSET' ? { campaignId: parentId } : level === 'AD' ? { OR: [{ adsetId: parentId }, { campaignId: parentId }] } : {};
-    const [entities, daily, rules, links] = await Promise.all([
+    const shownIds = await shownCampaignIds();
+    const [allEntities, daily, rules, links] = await Promise.all([
       prisma.metaEntity.findMany({ where: { level, ...parentFilter }, orderBy: { name: 'asc' } }),
       prisma.metaAdDaily.findMany({ where: { date: { gte: from, lte: to } } }),
       prisma.metaRule.findMany(),
       prisma.adLink.findMany({ where: { metaAdId: { not: null } } }),
     ]);
+
+    const entities = allEntities.filter((e) => shownIds.has(level === 'CAMPAIGN' ? e.id : e.campaignId ?? ''));
 
     // Sales: conversions whose sub-code belongs to an ad's link.
     const ads = await prisma.metaEntity.findMany({ where: { level: 'AD' }, select: { id: true, campaignId: true, adsetId: true } });
@@ -313,7 +371,8 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
 
   // Ads to pick from when tying a link to an ad.
   fastify.get('/ads-list', async () => {
-    const ads = await prisma.metaEntity.findMany({ where: { level: 'AD' }, orderBy: { name: 'asc' } });
+    const shownIds = await shownCampaignIds();
+    const ads = (await prisma.metaEntity.findMany({ where: { level: 'AD' }, orderBy: { name: 'asc' } })).filter((a) => shownIds.has(a.campaignId ?? ''));
     const campaigns = await prisma.metaEntity.findMany({ where: { level: 'CAMPAIGN' } });
     const cname = new Map(campaigns.map((c) => [c.id, c.name]));
     return ads.map((a) => ({ id: a.id, name: a.name, status: a.status, campaign: a.campaignId ? cname.get(a.campaignId) ?? '' : '' }));

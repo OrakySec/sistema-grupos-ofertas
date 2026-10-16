@@ -382,6 +382,9 @@ model MetaEntity {
   campaignId String?
   adsetId    String?
   status     String // Meta effective_status (ACTIVE, PAUSED, …)
+  // Campaign shown on the Tráfego pago page? null = not decided by the user
+  // (then the name filter decides). Not touched by the Meta sync.
+  shown      Boolean?
   updatedAt  DateTime @updatedAt
 
   @@index([level, accountId])

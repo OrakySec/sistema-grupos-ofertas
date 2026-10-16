@@ -828,6 +828,14 @@ class ApiClient {
     return this.request('POST', '/ads/rules/run', {})
   }
 
+  async getCampaignVisibility(): Promise<{ filter: string; campaigns: Array<{ id: string; name: string; status: string; shown: boolean | null; visible: boolean }> }> {
+    return this.request('GET', '/ads/campaigns-visibility')
+  }
+
+  async saveCampaignVisibility(data: { filter?: string; shown?: Record<string, boolean | null> }): Promise<{ ok: boolean }> {
+    return this.request('PUT', '/ads/campaigns-visibility', data)
+  }
+
   async getAdsOverview(q: { level: AdLevel; parentId?: string; from: string; to: string }): Promise<{ level: AdLevel; from: string; to: string; rows: AdRow[]; totals: AdMetrics }> {
     const qs = new URLSearchParams({ level: q.level, from: q.from, to: q.to })
     if (q.parentId) qs.set('parentId', q.parentId)

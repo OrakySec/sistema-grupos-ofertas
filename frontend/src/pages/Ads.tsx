@@ -138,6 +138,97 @@ function MetricsCells({ m }: { m: AdMetrics }) {
   )
 }
 
+function CampaignPicker({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const { addToast } = useToast()
+  const [filter, setFilter] = useState('')
+  const [rows, setRows] = useState<Array<{ id: string; name: string; status: string; shown: boolean | null; visible: boolean }> | null>(null)
+  const [choice, setChoice] = useState<Record<string, boolean | null>>({})
+  const [search, setSearch] = useState('')
+  const [saving, setSaving] = useState(false)
+  useEffect(() => {
+    api.getCampaignVisibility().then((d) => {
+      setFilter(d.filter)
+      setRows(d.campaigns)
+      setChoice(Object.fromEntries(d.campaigns.map((c) => [c.id, c.shown])))
+    }).catch(() => setRows([]))
+  }, [])
+
+  const fold = (t: string) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  const terms = filter.split(',').map((t) => fold(t.trim())).filter(Boolean)
+  const effective = (c: { id: string; name: string }) => {
+    const v = choice[c.id]
+    if (v === true || v === false) return v
+    return terms.length === 0 || terms.some((t) => fold(c.name).includes(t))
+  }
+  const visibleCount = (rows ?? []).filter(effective).length
+  const shownRows = (rows ?? []).filter((c) => !search || fold(c.name).includes(fold(search)))
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      await api.saveCampaignVisibility({ filter, shown: choice })
+      addToast('Campanhas atualizadas', 'success')
+      onSaved()
+      onClose()
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : 'Erro ao salvar', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Modal
+      isOpen
+      onClose={onClose}
+      title="Escolher campanhas"
+      width={640}
+      footer={
+        <>
+          <span style={{ marginRight: 'auto', fontSize: '0.8rem', color: 'var(--text-muted)' }}>{visibleCount} de {rows?.length ?? 0} aparecendo</span>
+          <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" onClick={save} disabled={saving || !rows}>{saving ? <span className="spinner spinner-sm" /> : <Icon name="check" />} Salvar</button>
+        </>
+      }
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div className="form-group" style={{ marginBottom: 0 }}>
+          <label className="label">Mostrar automaticamente campanhas com este texto no nome</label>
+          <input className="input" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="ex.: SHOPEE, TRAFEGO DIRETO  (vazio = mostrar todas)" />
+          <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: 6 }}>
+            Separe por vírgula. Vale também para campanhas novas. A escolha manual abaixo tem prioridade sobre o filtro.
+          </div>
+        </div>
+        <input className="input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Procurar na lista…" />
+        {!rows ? <Skeleton height={160} /> : rows.length === 0 ? (
+          <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Nenhuma campanha sincronizada ainda.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 360, overflowY: 'auto' }}>
+            {shownRows.map((c) => {
+              const v = choice[c.id]
+              const on = effective(c)
+              return (
+                <div key={c.id} className="list-row" style={{ padding: '8px 4px' }}>
+                  <input type="checkbox" checked={on} onChange={(e) => setChoice({ ...choice, [c.id]: e.target.checked })} style={{ accentColor: 'var(--accent-primary)' }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="truncate" style={{ fontSize: '0.85rem', color: on ? 'var(--text-primary)' : 'var(--text-muted)' }}>{c.name}</div>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                      {c.status === 'ACTIVE' ? 'ativa' : c.status.toLowerCase().replace(/_/g, ' ')} · {v === null || v === undefined ? 'pelo filtro' : 'escolha manual'}
+                    </div>
+                  </div>
+                  {(v === true || v === false) && (
+                    <button className="btn btn-ghost btn-sm" onClick={() => setChoice({ ...choice, [c.id]: null })} title="Voltar a seguir o filtro por nome">usar filtro</button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </Modal>
+  )
+}
+
 function CampaignsTab({ from, to, config, reloadKey }: { from: string; to: string; config: AdsConfig; reloadKey: number }) {
   const { addToast } = useToast()
   const [level, setLevel] = useState<AdLevel>('CAMPAIGN')
@@ -145,6 +236,7 @@ function CampaignsTab({ from, to, config, reloadKey }: { from: string; to: strin
   const [data, setData] = useState<Awaited<ReturnType<typeof api.getAdsOverview>> | null>(null)
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<AdRow | null>(null)
+  const [picking, setPicking] = useState(false)
   const parent = trail[trail.length - 1]
 
   const load = useCallback(async () => {
@@ -187,6 +279,9 @@ function CampaignsTab({ from, to, config, reloadKey }: { from: string; to: strin
             <button key={l} className={`tab${level === l && trail.length === 0 ? ' active' : ''}`} onClick={() => goLevel(l)}>{LEVEL_LABEL[l]}</button>
           ))}
         </div>
+        <button className="btn btn-secondary btn-sm" onClick={() => setPicking(true)} title="Escolher quais campanhas aparecem aqui">
+          <Icon name="target" /> Escolher campanhas
+        </button>
         {trail.length > 0 && (
           <div className="breadcrumb" style={{ fontSize: '0.82rem' }}>
             <button className="btn btn-ghost btn-sm" onClick={() => goLevel('CAMPAIGN')}>Todas</button>
@@ -208,7 +303,7 @@ function CampaignsTab({ from, to, config, reloadKey }: { from: string; to: strin
         <div className="empty-state">
           <span className="empty-state-icon"><Icon name="target" size={24} /></span>
           <span className="empty-state-title">Nada por aqui ainda</span>
-          <span className="empty-state-desc">Configure o token da Meta na aba Configuração e clique em "Sincronizar agora".</span>
+          <span className="empty-state-desc">Configure o token da Meta na aba Configuração e clique em "Sincronizar agora". Se já sincronizou, confira em "Escolher campanhas" quais estão aparecendo.</span>
         </div>
       ) : (
         <div className="table-wrapper">
@@ -268,6 +363,7 @@ function CampaignsTab({ from, to, config, reloadKey }: { from: string; to: strin
         Para as vendas aparecerem num anúncio, ele precisa usar um link criado na aba <strong>Links de anúncio</strong>.
       </div>
       {editing && <RuleModal row={editing} defaults={config.ruleDefaults} onClose={() => setEditing(null)} onSaved={load} />}
+      {picking && <CampaignPicker onClose={() => setPicking(false)} onSaved={load} />}
     </div>
   )
 }
