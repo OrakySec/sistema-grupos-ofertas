@@ -677,7 +677,15 @@ export default function Ads() {
 
       {config && (
         <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: 14, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-          <span>Meta: {config.tokenSet ? `sincronizado ${ago(config.lastMetaSync?.at)}` : 'não configurada'}{config.lastMetaSync?.results?.find((r) => r.error) ? ' · com erro' : ''}</span>
+          <span>
+            Meta: {config.tokenSet ? `sincronizado ${ago(config.lastMetaSync?.at)}` : 'token não configurado'}
+            {config.tokenSet && !config.accounts && ' · falta a conta de anúncio (aba Configuração)'}
+            {config.lastMetaSync?.results?.map((r) => (
+              <span key={r.account} style={{ color: r.error ? '#ff8a8e' : 'var(--text-secondary)' }}>
+                {' · '}{r.account}: {r.error ? `erro — ${r.error}` : `${r.campaigns ?? 0} campanhas, ${r.adsets ?? 0} conjuntos, ${r.ads ?? 0} anúncios`}
+              </span>
+            ))}
+          </span>
           <span>Vendas Shopee: {config.lastShopeeSync ? `sincronizado ${ago(config.lastShopeeSync.at)}${config.lastShopeeSync.error ? ` · erro: ${config.lastShopeeSync.error}` : ''}` : 'ainda não sincronizado'}</span>
           <span>Atualiza sozinho a cada hora; as regras rodam logo depois.</span>
         </div>
