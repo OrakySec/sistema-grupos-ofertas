@@ -19,6 +19,7 @@ import { analyticsRoutes } from './routes/analytics';
 import { hunterRoutes } from './routes/hunter';
 import { adsRoutes } from './routes/ads';
 import { recordCouponMessage } from './lib/coupons';
+import { parseCookies, resolveFbc, resolveFbp, sendViewContent, COOKIE_MAX_AGE_S } from './lib/metaCapi';
 import {
   getWebhookSecret,
   isParticipantsEvent,
@@ -46,6 +47,21 @@ async function destinationIdForSeq(seq: number): Promise<string | null> {
     groupSeqCache = { at: Date.now(), map: new Map(rows.map((r) => [r.seq, r.id])) };
   }
   return groupSeqCache.map.get(seq) ?? null;
+}
+
+// Short code → the ad link it belongs to (only ad links fire the Shopee pixel).
+let adLinkCache: { at: number; map: Map<string, { code: string; label: string | null; productUrl: string }> } = { at: 0, map: new Map() };
+async function adLinkForShortCode(code: string) {
+  if (Date.now() - adLinkCache.at > 60_000) {
+    const links = await prisma.adLink.findMany({ select: { code: true, label: true, productUrl: true, finalLink: true } });
+    const map = new Map<string, { code: string; label: string | null; productUrl: string }>();
+    for (const l of links) {
+      const m = /\/s\/([A-Za-z0-9]+)/.exec(l.finalLink);
+      if (m) map.set(m[1], { code: l.code, label: l.label, productUrl: l.productUrl });
+    }
+    adLinkCache = { at: Date.now(), map };
+  }
+  return adLinkCache.map.get(code) ?? null;
 }
 
 const server = Fastify({
@@ -110,6 +126,22 @@ async function buildApp() {
         // Salted hash: lets us spot the same visitor twice without storing the IP.
         const ipHash = createHash('sha256').update(`${request.ip}|${JWT_SECRET}`).digest('hex').slice(0, 16);
 
+        // Ad traffic: first-party _fbc/_fbp cookies (fbc from the ?fbclid Meta
+        // appends to the ad URL) for the server-side ViewContent below.
+        const adLink = await adLinkForShortCode(code).catch(() => null);
+        let pixel: { fbc: string | null; fbp: string } | null = null;
+        if (adLink) {
+          const cookies = parseCookies(request.headers.cookie);
+          const fbclid = (request.query as { fbclid?: string })?.fbclid;
+          const fbc = resolveFbc(cookies._fbc, fbclid);
+          const { fbp } = resolveFbp(cookies._fbp);
+          const cookieAttrs = `Path=/; Max-Age=${COOKIE_MAX_AGE_S}; Secure; SameSite=Lax`;
+          const setCookies = [`_fbp=${fbp}; ${cookieAttrs}`];
+          if (fbc) setCookies.push(`_fbc=${fbc}; ${cookieAttrs}`);
+          reply.header('Set-Cookie', setCookies);
+          pixel = { fbc, fbp };
+        }
+
         (async () => {
           const destinationGroupId = Number.isInteger(groupSeq) && groupSeq > 0 ? await destinationIdForSeq(groupSeq) : null;
           let finalKind: string = kind;
@@ -122,9 +154,25 @@ async function buildApp() {
             });
             if (repeat) finalKind = 'DUPLICATE';
           }
-          await prisma.shortUrlClick.create({ data: { code, kind: finalKind, agent, userAgent, ipHash, destinationGroupId } });
+          const click = await prisma.shortUrlClick.create({ data: { code, kind: finalKind, agent, userAgent, ipHash, destinationGroupId } });
           if (finalKind === 'HUMAN') {
             await prisma.shortUrl.update({ where: { code }, data: { clicks: { increment: 1 } } });
+          }
+          // Real people only — link previews, bots and double taps never count.
+          if (finalKind === 'HUMAN' && adLink && pixel) {
+            const domain = (await prisma.setting.findUnique({ where: { key: 'shortener_domain' } }))?.value || 'https://ofertas.ykaromarques.com';
+            await sendViewContent({
+              eventId: click.id,
+              eventTimeS: Math.floor(Date.now() / 1000),
+              sourceUrl: `${domain.replace(/\/$/, '')}/s/${code}`,
+              ip: request.ip,
+              userAgent: userAgent ?? '',
+              fbc: pixel.fbc,
+              fbp: pixel.fbp,
+              productUrl: adLink.productUrl,
+              productName: adLink.label,
+              adCode: adLink.code,
+            });
           }
         })().catch((err) => server.log.error({ err }, `Failed to track click for code ${code}`));
 

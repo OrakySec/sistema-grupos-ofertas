@@ -389,6 +389,12 @@ export interface AdsConfig {
   lastMetaSync: { at: string; results: Array<{ account: string; campaigns?: number; adsets?: number; ads?: number; insightRows?: number; error?: string }> } | null
   lastShopeeSync: { at: string; nodes: number; saved: number; error?: string } | null
   ruleDefaults: { maxCpc: number; days: number; mode: 'CONSECUTIVE' | 'AVERAGE'; minSpend: number; action: 'NOTIFY' | 'PAUSE' }
+  pixel: {
+    pixelId: string
+    tokenSet: boolean
+    testCode: string
+    stats: { day: string; sent: number; failed: number; last?: { at: string; ok: boolean; detail: string; fbc: boolean } } | null
+  }
 }
 
 export interface AdLinkItem {
@@ -802,8 +808,12 @@ class ApiClient {
     return this.request('GET', '/ads/config')
   }
 
-  async saveAdsConfig(data: { token?: string; accounts?: string; version?: string; ruleDefaults?: AdsConfig['ruleDefaults'] }): Promise<{ ok: boolean }> {
+  async saveAdsConfig(data: { token?: string; accounts?: string; version?: string; ruleDefaults?: AdsConfig['ruleDefaults']; pixelId?: string; pixelToken?: string; testCode?: string }): Promise<{ ok: boolean }> {
     return this.request('PUT', '/ads/config', data)
+  }
+
+  async testShopeePixel(): Promise<{ ok: boolean; detail: string }> {
+    return this.request('POST', '/ads/pixel/test', {})
   }
 
   async testAds(): Promise<{ ok: boolean; message: string }> {

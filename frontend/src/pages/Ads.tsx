@@ -438,7 +438,27 @@ function ConfigTab({ config, onSaved }: { config: AdsConfig; onSaved: () => void
   const [token, setToken] = useState(config.tokenSet ? '***' : '')
   const [accounts, setAccounts] = useState(config.accounts)
   const [defaults, setDefaults] = useState(config.ruleDefaults)
-  const [busy, setBusy] = useState<'save' | 'test' | null>(null)
+  const [pixelId, setPixelId] = useState(config.pixel.pixelId)
+  const [pixelToken, setPixelToken] = useState(config.pixel.tokenSet ? '***' : '')
+  const [testCode, setTestCode] = useState(config.pixel.testCode)
+  const [busy, setBusy] = useState<'save' | 'test' | 'pixel' | 'pixelTest' | null>(null)
+  const savePixel = async (thenTest: boolean) => {
+    setBusy(thenTest ? 'pixelTest' : 'pixel')
+    try {
+      await api.saveAdsConfig({ pixelId, pixelToken, testCode })
+      if (thenTest) {
+        const r = await api.testShopeePixel()
+        addToast(r.ok ? `Evento de teste: ${r.detail}` : `Falhou: ${r.detail}`, r.ok ? 'success' : 'error')
+      } else {
+        addToast('Pixel salvo', 'success')
+      }
+      onSaved()
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : 'Erro', 'error')
+    } finally {
+      setBusy(null)
+    }
+  }
   const save = async () => {
     setBusy('save')
     try {
@@ -481,6 +501,44 @@ function ConfigTab({ config, onSaved }: { config: AdsConfig; onSaved: () => void
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button className="btn btn-secondary" onClick={test} disabled={busy !== null}>{busy === 'test' ? <span className="spinner spinner-sm" /> : <Icon name="activity" />} Testar conexão</button>
           <button className="btn btn-primary" onClick={save} disabled={busy !== null}>{busy === 'save' ? <span className="spinner spinner-sm" /> : <Icon name="check" />} Salvar</button>
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-section-header">
+          <div className="settings-section-title"><span className="icon-chip"><Icon name="zap" /></span>Pixel do tráfego Shopee</div>
+          <div className="settings-section-desc">
+            Cada clique de pessoa real num link de anúncio envia um <strong>ViewContent</strong> pelo servidor (API de Conversões), com fbc, fbp,
+            IP, navegador, ID externo e o produto. Robôs, prévias de link e cliques repetidos não contam.
+          </div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="label">ID do pixel</label>
+            <input className="input font-mono" value={pixelId} onChange={(e) => setPixelId(e.target.value)} placeholder="1234567890123456" />
+          </div>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="label">Token da API de Conversões</label>
+            <input className="input font-mono" type="password" autoComplete="new-password" value={pixelToken} onChange={(e) => setPixelToken(e.target.value)} placeholder="EAAB…" />
+          </div>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="label">Código de teste (opcional)</label>
+            <input className="input font-mono" value={testCode} onChange={(e) => setTestCode(e.target.value)} placeholder="TEST12345" />
+          </div>
+        </div>
+        <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: 10, lineHeight: 1.5 }}>
+          Com o código de teste preenchido, os eventos aparecem em Gerenciador de Eventos → Eventos de teste. <strong>Apague o código</strong> quando
+          terminar de testar, senão os eventos reais não contam para as campanhas.
+          {config.pixel.stats && (
+            <div style={{ marginTop: 6, color: 'var(--text-secondary)' }}>
+              Hoje: {config.pixel.stats.sent} enviados · {config.pixel.stats.failed} com erro
+              {config.pixel.stats.last && <> · último {ago(config.pixel.stats.last.at)}: {config.pixel.stats.last.detail}{config.pixel.stats.last.ok && !config.pixel.stats.last.fbc ? ' (sem fbc — clique não veio de anúncio)' : ''}</>}
+            </div>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+          <button className="btn btn-secondary" onClick={() => savePixel(true)} disabled={busy !== null || !pixelId}>{busy === 'pixelTest' ? <span className="spinner spinner-sm" /> : <Icon name="send" />} Salvar e enviar evento de teste</button>
+          <button className="btn btn-primary" onClick={() => savePixel(false)} disabled={busy !== null}>{busy === 'pixel' ? <span className="spinner spinner-sm" /> : <Icon name="check" />} Salvar</button>
         </div>
       </section>
 

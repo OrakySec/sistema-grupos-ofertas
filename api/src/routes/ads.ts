@@ -8,6 +8,7 @@ import { syncShopeeConversions } from '../lib/shopeeConversions';
 import { runAdRules } from '../lib/adRules';
 import { generateShortLink } from '../lib/shopeeApi';
 import { createShortUrl } from '../lib/shortener';
+import { sendViewContent } from '../lib/metaCapi';
 
 const LEVELS = ['CAMPAIGN', 'ADSET', 'AD'] as const;
 const DAY_MS = 86400000;
@@ -26,7 +27,7 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
 
   fastify.get('/config', async () => {
     const rows = await prisma.setting.findMany({
-      where: { key: { in: ['meta_ads_token', 'meta_ad_account_ids', 'meta_api_version', 'meta_last_sync', 'shopee_sales_last_sync', 'meta_rule_defaults'] } },
+      where: { key: { in: ['meta_ads_token', 'meta_ad_account_ids', 'meta_api_version', 'meta_last_sync', 'shopee_sales_last_sync', 'meta_rule_defaults', 'meta_shopee_pixel_id', 'meta_shopee_capi_token', 'meta_shopee_test_code', 'meta_shopee_capi_stats'] } },
     });
     const m = Object.fromEntries(rows.map((r) => [r.key, r.value]));
     const parse = (v?: string) => { try { return v ? JSON.parse(v) : null; } catch { return null; } };
@@ -37,17 +38,44 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
       lastMetaSync: parse(m.meta_last_sync),
       lastShopeeSync: parse(m.shopee_sales_last_sync),
       ruleDefaults: parse(m.meta_rule_defaults) ?? { maxCpc: 0.5, days: 2, mode: 'CONSECUTIVE', minSpend: 10, action: 'NOTIFY' },
+      pixel: {
+        pixelId: m.meta_shopee_pixel_id ?? '',
+        tokenSet: !!m.meta_shopee_capi_token,
+        testCode: m.meta_shopee_test_code ?? '',
+        stats: parse(m.meta_shopee_capi_stats),
+      },
     };
   });
 
-  fastify.put<{ Body: { token?: string; accounts?: string; version?: string; ruleDefaults?: any } }>('/config', async (request) => {
+  fastify.put<{ Body: { token?: string; accounts?: string; version?: string; ruleDefaults?: any; pixelId?: string; pixelToken?: string; testCode?: string } }>('/config', async (request) => {
     const b = request.body ?? {};
     const set = (key: string, value: string) => prisma.setting.upsert({ where: { key }, update: { value }, create: { key, value } });
     if (b.token && b.token !== '***') await set('meta_ads_token', b.token.trim());
     if (b.accounts !== undefined) await set('meta_ad_account_ids', String(b.accounts).trim());
     if (b.version !== undefined) await set('meta_api_version', String(b.version).trim());
     if (b.ruleDefaults) await set('meta_rule_defaults', JSON.stringify(b.ruleDefaults));
+    if (b.pixelId !== undefined) await set('meta_shopee_pixel_id', String(b.pixelId).replace(/[^0-9]/g, ''));
+    if (b.pixelToken && b.pixelToken !== '***') await set('meta_shopee_capi_token', b.pixelToken.trim());
+    if (b.testCode !== undefined) await set('meta_shopee_test_code', String(b.testCode).trim());
     return { ok: true };
+  });
+
+  // POST /ads/pixel/test: one ViewContent with sample data (shows up in
+  // Events Manager > Test events when a test code is set).
+  fastify.post('/pixel/test', async (request) => {
+    const now = Date.now();
+    return sendViewContent({
+      eventId: `teste-${now}`,
+      eventTimeS: Math.floor(now / 1000),
+      sourceUrl: 'https://ofertas.ykaromarques.com/s/teste',
+      ip: request.ip,
+      userAgent: String(request.headers['user-agent'] ?? 'Mozilla/5.0'),
+      fbc: `fb.1.${now}.teste-fbclid-ofertas-manager`,
+      fbp: `fb.1.${now}.1234567890`,
+      productUrl: 'https://shopee.com.br/product/1/2',
+      productName: 'Evento de teste',
+      adCode: 'teste',
+    });
   });
 
   fastify.post('/test', async () => testMeta());
