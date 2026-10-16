@@ -186,7 +186,7 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
       if (m) shortCodes.set(m[1], l.metaAdId as string);
     }
     const clicks = shortCodes.size
-      ? await prisma.shortUrlClick.groupBy({ by: ['code'], where: { code: { in: [...shortCodes.keys()] }, kind: 'HUMAN', createdAt: { gte: start, lt: end } }, _count: { _all: true } })
+      ? await prisma.shortUrlClick.groupBy({ by: ['code'], where: { code: { in: [...shortCodes.keys()] }, kind: 'HUMAN', fromAd: true, createdAt: { gte: start, lt: end } }, _count: { _all: true } })
       : [];
 
     const keyOf = (adId: string, campaignId: string | null, adsetId: string | null) =>
@@ -357,6 +357,15 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
     return prisma.adLink.create({
       data: { code, label: request.body?.label?.trim() || null, metaAdId: request.body?.metaAdId || null, productUrl, shopeeLink, finalLink },
     });
+  });
+
+  // GET /ads/links/:id/clicks — latest requests to that link (who opened it)
+  fastify.get<{ Params: { id: string } }>('/links/:id/clicks', async (request, reply) => {
+    const link = await prisma.adLink.findUnique({ where: { id: request.params.id } });
+    const m = link ? /\/s\/([A-Za-z0-9]+)/.exec(link.finalLink) : null;
+    if (!link || !m) return reply.code(404).send({ message: 'Link não encontrado ou sem o nosso encurtador' });
+    const rows = await prisma.shortUrlClick.findMany({ where: { code: m[1] }, orderBy: { createdAt: 'desc' }, take: 50 });
+    return rows.map((r) => ({ at: r.createdAt, kind: r.kind, agent: r.agent, fromAd: r.fromAd, userAgent: r.userAgent }));
   });
 
   fastify.patch<{ Params: { id: string }; Body: { metaAdId?: string | null; label?: string } }>('/links/:id', async (request) =>

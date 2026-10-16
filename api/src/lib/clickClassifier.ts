@@ -29,7 +29,7 @@ export interface ClickClassification {
 const KNOWN_FETCHERS: Array<[RegExp, string]> = [
   [/^whatsapp\//i, 'WhatsApp (prévia)'],
   [/telegrambot/i, 'Telegram (prévia)'],
-  [/facebookexternalhit|facebot/i, 'Facebook/Meta (prévia)'],
+  [/facebookexternalhit|facebot|meta-externalagent|meta-externalfetcher|facebookcatalog/i, 'Facebook/Meta (prévia)'],
   [/twitterbot/i, 'X/Twitter (prévia)'],
   [/slackbot|slack-imgproxy/i, 'Slack (prévia)'],
   [/discordbot/i, 'Discord (prévia)'],

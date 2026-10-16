@@ -114,6 +114,9 @@ async function buildApp() {
   server.get('/s/:code', async (request, reply) => {
     const { code } = request.params as { code: string };
     const groupSeq = Number((request.query as { g?: string })?.g);
+    // Meta appends ?fbclid to every ad click; its ad review crawlers and manual tests don't carry one.
+    const fbclidParam = (request.query as { fbclid?: string })?.fbclid;
+    const fromAd = typeof fbclidParam === 'string' && fbclidParam.length >= 10;
     try {
       const shortUrl = await prisma.shortUrl.findUnique({
         where: { code },
@@ -154,12 +157,13 @@ async function buildApp() {
             });
             if (repeat) finalKind = 'DUPLICATE';
           }
-          const click = await prisma.shortUrlClick.create({ data: { code, kind: finalKind, agent, userAgent, ipHash, destinationGroupId } });
+          const click = await prisma.shortUrlClick.create({ data: { code, kind: finalKind, agent, userAgent, ipHash, destinationGroupId, fromAd } });
           if (finalKind === 'HUMAN') {
             await prisma.shortUrl.update({ where: { code }, data: { clicks: { increment: 1 } } });
           }
-          // Real people only — link previews, bots and double taps never count.
-          if (finalKind === 'HUMAN' && adLink && pixel) {
+          // Real ad clicks only: link previews, bots, double taps, Meta's ad review
+          // and manual tests (no fbclid) never reach the pixel.
+          if (finalKind === 'HUMAN' && fromAd && adLink && pixel) {
             const domain = (await prisma.setting.findUnique({ where: { key: 'shortener_domain' } }))?.value || 'https://ofertas.ykaromarques.com';
             await sendViewContent({
               eventId: click.id,

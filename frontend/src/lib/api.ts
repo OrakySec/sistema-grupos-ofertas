@@ -866,6 +866,10 @@ class ApiClient {
     return this.request('POST', '/ads/links', data)
   }
 
+  async getAdLinkClicks(id: string): Promise<Array<{ at: string; kind: string; agent: string | null; fromAd: boolean; userAgent: string | null }>> {
+    return this.request('GET', `/ads/links/${id}/clicks`)
+  }
+
   async updateAdLink(id: string, data: { metaAdId?: string | null; label?: string }): Promise<AdLinkItem> {
     return this.request('PATCH', `/ads/links/${id}`, data)
   }

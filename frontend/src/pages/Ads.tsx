@@ -122,7 +122,7 @@ function MetricsCells({ m }: { m: AdMetrics }) {
   return (
     <>
       <td className="tabular" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{brl(m.spend)}</td>
-      <td className="tabular" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{int(m.linkClicks)}{m.realClicks > 0 && <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{int(m.realClicks)} reais</div>}</td>
+      <td className="tabular" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{int(m.linkClicks)}{m.realClicks > 0 && <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }} title="Cliques que chegaram ao nosso link vindos do anúncio (com fbclid), sem robôs">{int(m.realClicks)} do anúncio</div>}</td>
       <td className="tabular" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{brl(m.cpcLink)}</td>
       <td className="tabular" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{int(m.orders)}</td>
       <td className="tabular" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
@@ -448,12 +448,50 @@ function SalesTab({ from, to, reloadKey }: { from: string; to: string; reloadKey
 
 // ── Ad links ────────────────────────────────────────────────────────────────
 
+function LinkClicksModal({ link, onClose }: { link: AdLinkItem; onClose: () => void }) {
+  const [rows, setRows] = useState<Awaited<ReturnType<typeof api.getAdLinkClicks>> | null>(null)
+  useEffect(() => { api.getAdLinkClicks(link.id).then(setRows).catch(() => setRows([])) }, [link.id])
+  const label = (r: { kind: string; fromAd: boolean; agent: string | null }) =>
+    r.kind !== 'HUMAN' ? <span className="badge">{r.agent ?? 'robô'}</span>
+      : r.fromAd ? <span className="badge badge-sent">Anúncio</span>
+      : <span className="badge badge-pending" title="Sem fbclid: revisão da Meta, teste manual ou link aberto fora do anúncio">Fora do anúncio</span>
+  return (
+    <Modal isOpen onClose={onClose} title={`Cliques · ${link.label || link.code}`} width={720}>
+      {!rows ? <Skeleton height={120} /> : rows.length === 0 ? (
+        <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Ninguém abriu este link ainda.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+            Só os marcados como <strong>Anúncio</strong> contam como clique e disparam o ViewContent. "Fora do anúncio" são aberturas sem o
+            fbclid da Meta — normalmente a revisão do anúncio pela própria Meta ou testes seus.
+          </div>
+          <div className="table-wrapper">
+            <table>
+              <thead><tr><th>Quando</th><th>Tipo</th><th>Navegador</th></tr></thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={i}>
+                    <td className="tabular" style={{ whiteSpace: 'nowrap' }}>{new Date(r.at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })}</td>
+                    <td>{label(r)}</td>
+                    <td className="mono" style={{ fontSize: '0.7rem', wordBreak: 'break-all' }}>{r.userAgent ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </Modal>
+  )
+}
+
 function LinksTab() {
   const { addToast } = useToast()
   const [links, setLinks] = useState<AdLinkItem[] | null>(null)
   const [ads, setAds] = useState<Array<{ id: string; name: string; status: string; campaign: string }>>([])
   const [form, setForm] = useState({ productUrl: '', metaAdId: '', label: '', viaOurLink: true })
   const [busy, setBusy] = useState(false)
+  const [viewing, setViewing] = useState<AdLinkItem | null>(null)
   const load = useCallback(() => {
     api.getAdLinks().then(setLinks).catch(() => setLinks([]))
     api.getAdsList().then(setAds).catch(() => {})
@@ -532,12 +570,16 @@ function LinksTab() {
                   </select>
                 </td>
                 <td className="mono">{l.code}</td>
-                <td>{new Date(l.createdAt).toLocaleDateString('pt-BR')}</td>
+                <td>
+                  {new Date(l.createdAt).toLocaleDateString('pt-BR')}
+                  <div><button className="btn btn-ghost btn-sm" style={{ paddingLeft: 0 }} onClick={() => setViewing(l)}><Icon name="cursor" /> Ver cliques</button></div>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {viewing && <LinkClicksModal link={viewing} onClose={() => setViewing(null)} />}
     </div>
   )
 }

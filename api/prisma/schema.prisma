@@ -184,6 +184,9 @@ model ShortUrlClick {
   agent              String? // short label, e.g. "WhatsApp", "Telegram", "Navegador"
   userAgent          String? @db.Text
   ipHash             String? // salted hash — never the raw IP
+  // Arrived with Meta's ?fbclid — i.e. a real ad click. Meta's ad review and
+  // manual tests open the link without it.
+  fromAd             Boolean @default(false)
 
   shortUrl ShortUrl @relation(fields: [code], references: [code], onDelete: Cascade)
 
