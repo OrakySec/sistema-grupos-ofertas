@@ -274,11 +274,52 @@ function CampaignsTab({ from, to, config, reloadKey }: { from: string; to: strin
 
 // ── Sales by sub-ID ─────────────────────────────────────────────────────────
 
+function RawSales({ reloadKey }: { reloadKey: number }) {
+  const [data, setData] = useState<Awaited<ReturnType<typeof api.getAdSalesRaw>> | null>(null)
+  const [open, setOpen] = useState(false)
+  useEffect(() => { if (open) api.getAdSalesRaw().then(setData).catch(() => setData({ lastSync: null, rows: [] })) }, [open, reloadKey])
+  const fmt = (v: string | null) => (v ? new Date(v).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—')
+  return (
+    <section className="panel">
+      <button className="panel-header" style={{ width: '100%', textAlign: 'left' }} onClick={() => setOpen(!open)}>
+        <div className="panel-title"><Icon name="activity" size={16} style={{ color: 'var(--text-accent)' }} />Dados brutos das últimas vendas</div>
+        <span className="panel-meta">{open ? 'fechar' : 'conferir o que a Shopee devolve (ex.: horário do clique)'}</span>
+      </button>
+      {open && (
+        !data ? <div className="panel-body"><Skeleton height={80} /></div> : data.rows.length === 0 ? (
+          <div className="panel-body" style={{ fontSize: '0.84rem', color: 'var(--text-muted)' }}>
+            Nenhuma venda importada ainda.{data.lastSync?.error ? ` Último erro da sincronização: ${data.lastSync.error}` : ''}
+          </div>
+        ) : (
+          <div className="table-wrapper" style={{ border: 'none', borderRadius: 0, boxShadow: 'none' }}>
+            <table>
+              <thead><tr><th>Compra</th><th>Clique (clickTime)</th><th>Sub-ID</th><th>Status</th><th>Campos recebidos</th></tr></thead>
+              <tbody>
+                {data.rows.map((r) => (
+                  <tr key={r.id}>
+                    <td className="tabular">{fmt(r.purchaseTime)}</td>
+                    <td className="tabular">{r.clickTime ? fmt(r.clickTime) : <span style={{ color: '#ff8a8e' }}>vazio{r.rawClickTime !== null ? ` (${JSON.stringify(r.rawClickTime)})` : ''}</span>}</td>
+                    <td className="mono">{r.utmContent || '—'}</td>
+                    <td>{r.status}</td>
+                    <td style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{r.fields.join(', ')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+    </section>
+  )
+}
+
 function SalesTab({ from, to, reloadKey }: { from: string; to: string; reloadKey: number }) {
   const [rows, setRows] = useState<Awaited<ReturnType<typeof api.getAdSales>>['rows'] | null>(null)
   useEffect(() => { setRows(null); api.getAdSales(from, to).then((d) => setRows(d.rows)).catch(() => setRows([])) }, [from, to, reloadKey])
   if (!rows) return <Skeleton height={260} borderRadius={14} />
   return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <RawSales reloadKey={reloadKey} />
     <div className="table-wrapper">
       <table>
         <thead>
@@ -304,6 +345,7 @@ function SalesTab({ from, to, reloadKey }: { from: string; to: string; reloadKey
           ))}
         </tbody>
       </table>
+    </div>
     </div>
   )
 }

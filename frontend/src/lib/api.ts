@@ -846,6 +846,10 @@ class ApiClient {
     return this.request('GET', `/ads/sales?from=${from}&to=${to}`)
   }
 
+  async getAdSalesRaw(): Promise<{ lastSync: { at: string; error?: string } | null; rows: Array<{ id: string; purchaseTime: string; clickTime: string | null; rawClickTime: unknown; utmContent: string | null; status: string; fields: string[] }> }> {
+    return this.request('GET', '/ads/sales/raw')
+  }
+
   async getAdLinks(): Promise<AdLinkItem[]> {
     return this.request('GET', '/ads/links')
   }

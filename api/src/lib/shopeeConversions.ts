@@ -14,6 +14,10 @@ const MAX_PAGES = 200;
 
 const FULL_FIELDS = `conversionId purchaseTime clickTime utmContent totalCommission netCommission
   orders { orderId orderStatus items { qty itemPrice actualAmount itemTotalCommission fraudStatus } }`;
+// Keeps clickTime (needed to match a sale to the ad click) even if the
+// per-item commission field is not available on this account.
+const MID_FIELDS = `conversionId purchaseTime clickTime utmContent totalCommission netCommission
+  orders { orderId orderStatus items { qty itemPrice actualAmount fraudStatus } }`;
 const MIN_FIELDS = `conversionId purchaseTime utmContent totalCommission netCommission
   orders { orderId orderStatus items { qty itemPrice actualAmount fraudStatus } }`;
 
@@ -79,7 +83,9 @@ export function summarizeConversion(node: any) {
 export async function syncShopeeConversions(days = 30): Promise<{ nodes: number; saved: number; error?: string }> {
   const end = Math.floor(Date.now() / 1000);
   const start = end - days * 86400;
-  let fields = FULL_FIELDS;
+  const fieldSets = [FULL_FIELDS, MID_FIELDS, MIN_FIELDS];
+  let fieldIdx = 0;
+  let fields = fieldSets[0];
   let scrollId: string | null = null;
   let saved = 0;
   let total = 0;
@@ -91,8 +97,8 @@ export async function syncShopeeConversions(days = 30): Promise<{ nodes: number;
       try {
         data = await shopeeGraphql(query(fields, start, end, scrollId));
       } catch (err) {
-        if (page === 0 && fields === FULL_FIELDS && /cannot query field|unknown field|field/i.test(String(err))) {
-          fields = MIN_FIELDS; // the richer schema isn't available on this account — retry plain
+        if (page === 0 && fieldIdx < fieldSets.length - 1 && /cannot query field|unknown field|field/i.test(String(err))) {
+          fields = fieldSets[++fieldIdx]; // a field isn't available on this account — retry with fewer
           page = -1;
           continue;
         }

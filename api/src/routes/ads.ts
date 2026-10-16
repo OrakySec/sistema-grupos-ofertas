@@ -251,6 +251,28 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
     return { from, to, rows };
   });
 
+  // GET /ads/sales/raw — what Shopee actually returned for the latest sales
+  // (to check fields such as clickTime before relying on them).
+  fastify.get('/sales/raw', async () => {
+    const rows = await prisma.shopeeConversion.findMany({ orderBy: { purchaseTime: 'desc' }, take: 8 });
+    const last = await prisma.setting.findUnique({ where: { key: 'shopee_sales_last_sync' } });
+    return {
+      lastSync: last ? JSON.parse(last.value) : null,
+      rows: rows.map((r) => {
+        const raw = (r.raw ?? {}) as Record<string, unknown>;
+        return {
+          id: r.id,
+          purchaseTime: r.purchaseTime,
+          clickTime: r.clickTime,
+          rawClickTime: raw.clickTime ?? null,
+          utmContent: r.utmContent,
+          status: r.status,
+          fields: Object.keys(raw),
+        };
+      }),
+    };
+  });
+
   // ── Ad links ──────────────────────────────────────────────────────────────
 
   fastify.get('/links', async () => {
