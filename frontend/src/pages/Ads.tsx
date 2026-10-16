@@ -483,7 +483,19 @@ function ConfigTab({ config, onSaved }: { config: AdsConfig; onSaved: () => void
   const [pixelId, setPixelId] = useState(config.pixel.pixelId)
   const [pixelToken, setPixelToken] = useState(config.pixel.tokenSet ? '***' : '')
   const [testCode, setTestCode] = useState(config.pixel.testCode)
-  const [busy, setBusy] = useState<'save' | 'test' | 'pixel' | 'pixelTest' | null>(null)
+  const [busy, setBusy] = useState<'save' | 'test' | 'pixel' | 'pixelTest' | 'defaults' | null>(null)
+  const saveDefaults = async () => {
+    setBusy('defaults')
+    try {
+      await api.saveAdsConfig({ ruleDefaults: defaults })
+      addToast('Regra padrão salva', 'success')
+      onSaved()
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : 'Erro', 'error')
+    } finally {
+      setBusy(null)
+    }
+  }
   const savePixel = async (thenTest: boolean) => {
     setBusy(thenTest ? 'pixelTest' : 'pixel')
     try {
@@ -616,6 +628,11 @@ function ConfigTab({ config, onSaved }: { config: AdsConfig; onSaved: () => void
               <option value="PAUSE">Pausar e avisar</option>
             </select>
           </div>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+          <button className="btn btn-primary" onClick={saveDefaults} disabled={busy !== null}>
+            {busy === 'defaults' ? <span className="spinner spinner-sm" /> : <Icon name="check" />} Salvar regra padrão
+          </button>
         </div>
       </section>
     </div>
