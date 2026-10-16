@@ -134,7 +134,7 @@ export async function searchProducts(keyword: string, opts: { sortType?: number;
 /** Official affiliate short link; subIds show up in Shopee's conversion report. */
 export async function generateShortLink(originUrl: string, subIds: string[] = []): Promise<string> {
   const data = await shopeeGraphql<{ generateShortLink: { shortLink: string } }>(
-    `mutation Link($originUrl: String!, $subIds: [String]) {
+    `mutation Link($originUrl: String!, $subIds: [String!]) {
       generateShortLink(input: { originUrl: $originUrl, subIds: $subIds }) { shortLink }
     }`,
     { originUrl, subIds: subIds.slice(0, 5) },
