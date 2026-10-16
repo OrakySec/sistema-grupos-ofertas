@@ -367,7 +367,7 @@ function LinksTab() {
             <input className="input" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder="ex.: Fone JBL · vídeo 1" />
           </div>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'space-between', gridColumn: '1 / -1', flexWrap: 'wrap' }}>
-            <Toggle checked={form.viaOurLink} onChange={(v) => setForm({ ...form, viaOurLink: v })} label="Passar pelo nosso link (conta cliques reais e dispara o pixel)" />
+            <Toggle checked={form.viaOurLink} onChange={(v) => setForm({ ...form, viaOurLink: v })} label="Passar pelo nosso link (conta os cliques reais, sem robôs)" />
             <button className="btn btn-primary" onClick={create} disabled={busy || !form.productUrl}>{busy ? <span className="spinner spinner-sm" /> : <Icon name="link" />} Gerar link</button>
           </div>
         </div>
