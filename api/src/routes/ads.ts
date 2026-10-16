@@ -82,7 +82,10 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
 
   // POST /ads/sync — pull Meta + Shopee sales now (rules run in the worker every hour)
   fastify.post('/sync', async () => {
-    const meta = (await metaConfig()) ? await syncMeta(7) : [];
+    // Say clearly when Meta is skipped, instead of a silent "synced".
+    const meta = (await metaConfig())
+      ? await syncMeta(7)
+      : [{ account: '—', error: 'Token de acesso ou conta de anúncio não configurados (aba Configuração)' }];
     const shopee = await syncShopeeConversions(30);
     return { meta, shopee };
   });
