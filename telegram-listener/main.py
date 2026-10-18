@@ -21,7 +21,7 @@ import aiohttp
 from aiohttp import web
 from dotenv import load_dotenv
 from loguru import logger
-from telethon import TelegramClient, events
+from telethon import TelegramClient, events, utils as telethon_utils
 from telethon.errors import (
     SessionPasswordNeededError,
     PhoneCodeInvalidError,
@@ -33,6 +33,8 @@ from telethon.tl.types import (
     MessageMediaDocument,
     DocumentAttributeFilename,
     DocumentAttributeVideo,
+    Channel,
+    User,
 )
 from affiliate_converter import AffiliateConverter
 from shopee_api import ShopeeApi
@@ -1169,6 +1171,53 @@ async def route_shopee_test(request: web.Request) -> web.Response:
     return web.json_response({"ok": ok, "message": message})
 
 
+_TG_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{3,31}$")
+
+
+def _extract_tg_username(raw: str) -> Optional[str]:
+    """'@nome', 't.me/nome', 'https://t.me/nome/123', 'web.telegram.org/k/#@nome' → 'nome'."""
+    value = (raw or "").strip()
+    m = re.search(r"#@?([A-Za-z0-9_]+)$", value) or re.search(
+        r"(?:t\.me|telegram\.me|telegram\.dog)/(?:s/)?([A-Za-z0-9_]+)", value
+    )
+    candidate = m.group(1) if m else value.lstrip("@")
+    return candidate if _TG_USERNAME_RE.match(candidate) else None
+
+
+async def route_resolve(request: web.Request) -> web.Response:
+    """POST /resolve { query } → { ok, id, title, username, kind, member } — @username → numeric peer id."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    raw = str(body.get("query") or "")
+    if "/+" in raw or "joinchat" in raw:
+        return web.json_response({"ok": False, "message": "Link de convite privado não dá pra resolver. Entre no grupo com a conta do listener e use o ID numérico."})
+    username = _extract_tg_username(raw)
+    if not username:
+        return web.json_response({"ok": False, "message": f"\"{raw}\" não parece um @username do Telegram."})
+    if state.client is None or not state.authenticated:
+        return web.json_response({"ok": False, "message": "O listener do Telegram não está conectado. Conecte a conta em Configurações."})
+    try:
+        entity = await state.client.get_entity(username)
+    except (ValueError, RPCError) as exc:
+        logger.info(f"resolve @{username} falhou: {exc}")
+        return web.json_response({"ok": False, "message": f"Não encontrei @{username} no Telegram. Confira se o nome está certo e se o grupo/canal é público."})
+
+    if isinstance(entity, User):
+        return web.json_response({"ok": False, "message": f"@{username} é uma conta de usuário/bot, não um grupo ou canal."})
+    kind = "canal" if isinstance(entity, Channel) and entity.broadcast else "grupo"
+    return web.json_response({
+        "ok": True,
+        "id": str(telethon_utils.get_peer_id(entity)),
+        "title": getattr(entity, "title", None) or username,
+        "username": getattr(entity, "username", None) or username,
+        "kind": kind,
+        # Channel.left is True when the listener account hasn't joined — no updates arrive then.
+        "member": not bool(getattr(entity, "left", False)),
+    })
+
+
 async def route_ml_session_status(request: web.Request) -> web.Response:
     """GET /ml-session/status → { active: bool } — does a live check, not just a file-exists check."""
     session = ml_browser.get_session(ML_STORAGE_STATE_PATH)
@@ -1254,6 +1303,7 @@ def build_app() -> web.Application:
     app.router.add_get("/ml-session/status", route_ml_session_status)
     app.router.add_post("/shopee/test", route_shopee_test)
     app.router.add_post("/hunter/image", route_hunter_image)
+    app.router.add_post("/resolve", route_resolve)
 
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)

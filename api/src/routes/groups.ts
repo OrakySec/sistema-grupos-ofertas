@@ -1,6 +1,34 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import axios from 'axios';
 import { requireAuth } from '../middleware/auth';
 import prisma from '../lib/prisma';
+
+const TELEGRAM_LISTENER_URL = process.env.TELEGRAM_LISTENER_URL ?? 'http://telegram-listener:8080';
+
+type ResolvedTelegramId =
+  | { ok: true; id: bigint; username?: string; title?: string; member?: boolean; kind?: string }
+  | { ok: false; message: string };
+
+/**
+ * Accepts a numeric ID (-100…) or an @username / t.me link. Usernames are resolved to the
+ * numeric peer ID by the listener's Telethon account, since that's what incoming messages carry.
+ */
+async function resolveTelegramId(raw: string): Promise<ResolvedTelegramId> {
+  const value = raw.trim();
+  if (/^-?[0-9]+$/.test(value)) return { ok: true, id: BigInt(value) };
+  try {
+    const { data } = await axios.post(`${TELEGRAM_LISTENER_URL}/resolve`, { query: value }, { timeout: 20000 });
+    if (!data?.ok) return { ok: false, message: data?.message ?? 'Não consegui encontrar esse grupo no Telegram.' };
+    return { ok: true, id: BigInt(data.id), username: data.username, title: data.title, member: data.member, kind: data.kind };
+  } catch {
+    return { ok: false, message: 'Não consegui falar com o listener do Telegram para buscar o ID. Use o ID numérico (-100…) ou tente de novo.' };
+  }
+}
+
+function notMemberWarning(r: ResolvedTelegramId): string | undefined {
+  if (!r.ok || r.member !== false) return undefined;
+  return `A conta do Telegram conectada ao sistema ainda não participa desse ${r.kind ?? 'grupo'}. Entre nele com essa conta, senão as mensagens não chegam.`;
+}
 
 interface CreateSourceGroupBody {
   telegramId: string; // sent as string, parsed to BigInt
@@ -84,25 +112,27 @@ export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
     async (request, reply) => {
       const { telegramId, name, username } = request.body;
 
-      let telegramIdBig: bigint;
-      try {
-        telegramIdBig = BigInt(telegramId);
-      } catch {
-        return reply.code(400).send({ error: 'Invalid telegramId format' });
+      const resolved = await resolveTelegramId(telegramId);
+      if (!resolved.ok) {
+        return reply.code(400).send({ error: 'Invalid telegramId', message: resolved.message });
       }
+      const telegramIdBig = resolved.id;
 
       const existing = await prisma.sourceGroup.findUnique({
         where: { telegramId: telegramIdBig },
       });
       if (existing) {
-        return reply.code(409).send({ error: 'Source group with this telegramId already exists' });
+        return reply.code(409).send({
+          error: 'Source group with this telegramId already exists',
+          message: `Esse grupo já está cadastrado como "${existing.name}".`,
+        });
       }
 
       const group = await prisma.sourceGroup.create({
-        data: { telegramId: telegramIdBig, name, username },
+        data: { telegramId: telegramIdBig, name, username: username || (resolved.username ? `@${resolved.username}` : undefined) },
       });
 
-      return reply.code(201).send({ ...group, telegramId: group.telegramId.toString() });
+      return reply.code(201).send({ ...group, telegramId: group.telegramId.toString(), warning: notMemberWarning(resolved) });
     },
   );
 
@@ -145,13 +175,15 @@ export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
       }
 
       const data: Record<string, unknown> = { ...rest };
+      let warning: string | undefined;
       if (telegramId !== undefined) {
-        let telegramIdBig: bigint;
-        try {
-          telegramIdBig = BigInt(telegramId);
-        } catch {
-          return reply.code(400).send({ error: 'Invalid telegramId format' });
+        const resolved = await resolveTelegramId(telegramId);
+        if (!resolved.ok) {
+          return reply.code(400).send({ error: 'Invalid telegramId', message: resolved.message });
         }
+        const telegramIdBig = resolved.id;
+        warning = notMemberWarning(resolved);
+        if (resolved.username && !rest.username) data.username = `@${resolved.username}`;
         const conflict = await prisma.sourceGroup.findUnique({ where: { telegramId: telegramIdBig } });
         if (conflict && conflict.id !== id) {
           return reply.code(409).send({
@@ -167,7 +199,7 @@ export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
         data,
         include: { niche: true },
       });
-      return reply.send({ ...updated, telegramId: updated.telegramId.toString() });
+      return reply.send({ ...updated, telegramId: updated.telegramId.toString(), warning });
     },
   );
 

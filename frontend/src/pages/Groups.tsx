@@ -727,6 +727,7 @@ interface SourceGroupModalProps {
 function SourceGroupModal({ isOpen, editing, onClose, onSaved }: SourceGroupModalProps) {
   const [name, setName] = useState('')
   const [telegramId, setTelegramId] = useState('')
+  const [warning, setWarning] = useState('')
   const [username, setUsername] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -735,6 +736,7 @@ function SourceGroupModal({ isOpen, editing, onClose, onSaved }: SourceGroupModa
     if (isOpen) {
       setName(editing?.name ?? '')
       setTelegramId(editing?.telegramId ?? '')
+      setWarning('')
       setUsername(editing?.username ?? '')
       setError('')
     } else {
@@ -747,20 +749,29 @@ function SourceGroupModal({ isOpen, editing, onClose, onSaved }: SourceGroupModa
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (warning) {
+      onClose()
+      return
+    }
     if (!name || !telegramId) {
-      setError('Nome e Telegram ID são obrigatórios.')
+      setError('Nome e Telegram ID (ou @username) são obrigatórios.')
       return
     }
     setLoading(true)
     setError('')
     try {
-      if (editing) {
-        await api.updateSourceGroup(editing.id, { name, telegramId, username: username || undefined })
-      } else {
-        await api.createSourceGroup({ name, telegramId, username: username || undefined })
-      }
+      const saved = editing
+        ? await api.updateSourceGroup(editing.id, { name, telegramId, username: username || undefined })
+        : await api.createSourceGroup({ name, telegramId, username: username || undefined })
       onSaved()
-      onClose()
+      const w = (saved as { warning?: string } | undefined)?.warning
+      if (w) {
+        // Keep the modal open so the "join the group first" notice is actually read.
+        setWarning(w)
+        setTelegramId(String((saved as { telegramId?: string }).telegramId ?? telegramId))
+      } else {
+        onClose()
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao salvar.')
     } finally {
@@ -795,6 +806,11 @@ function SourceGroupModal({ isOpen, editing, onClose, onSaved }: SourceGroupModa
             {error}
           </div>
         )}
+        {warning && (
+          <div className="alert alert-warning" style={{ marginBottom: 16 }}>
+            Grupo salvo (ID {telegramId}). {warning}
+          </div>
+        )}
         <div className="form-group">
           <label className="label" htmlFor="sg-name">
             Nome
@@ -810,16 +826,19 @@ function SourceGroupModal({ isOpen, editing, onClose, onSaved }: SourceGroupModa
         </div>
         <div className="form-group">
           <label className="label" htmlFor="sg-tid">
-            Telegram ID (BigInt)
+            Telegram ID ou @username
           </label>
           <input
             id="sg-tid"
             className="input font-mono"
-            placeholder="-1001234567890"
+            placeholder="-1001234567890 ou @nome_do_canal"
             value={telegramId}
             onChange={(e) => setTelegramId(e.target.value)}
             required
           />
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 6 }}>
+            Pode colar o @ do canal ou o link t.me — o sistema busca o ID sozinho.
+          </div>
         </div>
         <div className="form-group">
           <label className="label" htmlFor="sg-user">
