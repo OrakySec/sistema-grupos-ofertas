@@ -409,13 +409,102 @@ function RawSales({ reloadKey }: { reloadKey: number }) {
   )
 }
 
+const SALE_STATUS: Record<string, [string, string]> = {
+  PENDING: ['Pendente', 'badge-pending'],
+  UNPAID: ['Não pago', 'badge-pending'],
+  COMPLETED: ['Concluída', 'badge-sent'],
+  CANCELLED: ['Cancelada', 'badge-failed'],
+  MIXED: ['Mista', ''],
+}
+
+function AllSales({ from, to, reloadKey }: { from: string; to: string; reloadKey: number }) {
+  const [data, setData] = useState<Awaited<ReturnType<typeof api.getAdSalesList>> | null>(null)
+  const [q, setQ] = useState('')
+  const [source, setSource] = useState('')
+  useEffect(() => { setData(null); api.getAdSalesList(from, to).then(setData).catch(() => setData({ truncated: false, rows: [] })) }, [from, to, reloadKey])
+  if (!data) return <Skeleton height={260} borderRadius={14} />
+  const term = q.trim().toLowerCase()
+  const rows = data.rows.filter((r) =>
+    (!source || r.source === source) &&
+    (!term || [r.utmContent, r.subCode, r.label, ...r.products, ...r.orderIds].some((v) => v && v.toLowerCase().includes(term))))
+  const sum = rows.reduce((a, r) => ({ gmv: a.gmv + r.gmv, pending: a.pending + r.pending, confirmed: a.confirmed + r.confirmed }), { gmv: 0, pending: 0, confirmed: 0 })
+  const sources = [...new Set(data.rows.map((r) => r.source))]
+  const fmt = (v: string) => new Date(v).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <input className="input" placeholder="Buscar sub-ID, produto ou nº do pedido" value={q} onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 320 }} />
+        <select className="select" value={source} onChange={(e) => setSource(e.target.value)} style={{ maxWidth: 200 }}>
+          <option value="">Todas as origens</option>
+          {sources.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+          {int(rows.length)} {rows.length === 1 ? 'venda' : 'vendas'} · vendido {brl(sum.gmv)} · comissão {brl(sum.pending + sum.confirmed)}
+          {data.truncated ? ' · mostrando as 2.000 mais recentes' : ''}
+        </span>
+      </div>
+      <div className="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Compra</th><th>Sub-ID</th><th>Origem</th><th>Produto</th>
+              <th style={{ textAlign: 'right' }}>Vendido</th><th style={{ textAlign: 'right' }}>Comissão</th><th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr><td colSpan={7} style={{ textAlign: 'center', padding: 28, color: 'var(--text-muted)' }}>Nenhuma venda {data.rows.length ? 'com esse filtro' : 'no período'}.</td></tr>
+            ) : rows.map((r) => {
+              const [label, cls] = SALE_STATUS[r.status] ?? [r.status, '']
+              const commission = r.status === 'CANCELLED' || r.fraud ? r.cancelled : r.pending + r.confirmed
+              return (
+                <tr key={r.id}>
+                  <td className="tabular" style={{ whiteSpace: 'nowrap' }}>
+                    {fmt(r.purchaseTime)}
+                    {r.clickTime && <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }} title="Horário do clique no link">clique {fmt(r.clickTime)}</div>}
+                  </td>
+                  <td className="mono" style={{ wordBreak: 'break-all' }}>{r.utmContent || '—'}</td>
+                  <td>{r.source}{r.label && <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{r.label}</div>}</td>
+                  <td style={{ fontSize: '0.8rem', maxWidth: 320 }}>
+                    {r.products.length ? r.products.join(' · ') : <span style={{ color: 'var(--text-muted)' }}>{int(r.items)} {r.items === 1 ? 'item' : 'itens'}</span>}
+                    {r.orderIds.length > 0 && <div className="mono" style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>pedido {r.orderIds.join(', ')}</div>}
+                  </td>
+                  <td className="tabular" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{brl(r.gmv)}</td>
+                  <td className="tabular" style={{ textAlign: 'right', whiteSpace: 'nowrap', color: r.status === 'COMPLETED' ? '#4fe0a4' : r.status === 'CANCELLED' || r.fraud ? 'var(--text-muted)' : undefined, textDecoration: r.status === 'CANCELLED' || r.fraud ? 'line-through' : undefined }}>{brl(commission)}</td>
+                  <td><span className={`badge ${cls}`}>{r.fraud ? 'Fraude' : label}</span></td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 function SalesTab({ from, to, reloadKey }: { from: string; to: string; reloadKey: number }) {
+  const [view, setView] = useState<'list' | 'grouped'>('list')
   const [rows, setRows] = useState<Awaited<ReturnType<typeof api.getAdSales>>['rows'] | null>(null)
-  useEffect(() => { setRows(null); api.getAdSales(from, to).then((d) => setRows(d.rows)).catch(() => setRows([])) }, [from, to, reloadKey])
-  if (!rows) return <Skeleton height={260} borderRadius={14} />
+  useEffect(() => { if (view !== 'grouped') return; setRows(null); api.getAdSales(from, to).then((d) => setRows(d.rows)).catch(() => setRows([])) }, [from, to, reloadKey, view])
+  const switcher = (
+    <div className="tabs" style={{ alignSelf: 'flex-start' }}>
+      <button className={`tab${view === 'list' ? ' active' : ''}`} onClick={() => setView('list')}>Todas as vendas</button>
+      <button className={`tab${view === 'grouped' ? ' active' : ''}`} onClick={() => setView('grouped')}>Por sub-ID</button>
+    </div>
+  )
+  if (view === 'list') {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {switcher}
+        <AllSales from={from} to={to} reloadKey={reloadKey} />
+        <RawSales reloadKey={reloadKey} />
+      </div>
+    )
+  }
+  if (!rows) return <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>{switcher}<Skeleton height={260} borderRadius={14} /></div>
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-    <RawSales reloadKey={reloadKey} />
+    {switcher}
     <div className="table-wrapper">
       <table>
         <thead>

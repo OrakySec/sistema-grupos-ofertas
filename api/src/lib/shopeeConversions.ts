@@ -12,6 +12,9 @@ import { shopeeGraphql } from './shopeeApi';
 const PAGE_DELAY_MS = 250;
 const MAX_PAGES = 200;
 
+// Same as FULL plus the product, for the per-sale list.
+const RICH_FIELDS = `conversionId purchaseTime clickTime utmContent totalCommission netCommission
+  orders { orderId orderStatus items { itemId itemName qty itemPrice actualAmount itemTotalCommission fraudStatus } }`;
 const FULL_FIELDS = `conversionId purchaseTime clickTime utmContent totalCommission netCommission
   orders { orderId orderStatus items { qty itemPrice actualAmount itemTotalCommission fraudStatus } }`;
 // Keeps clickTime (needed to match a sale to the ad click) even if the
@@ -83,7 +86,7 @@ export function summarizeConversion(node: any) {
 export async function syncShopeeConversions(days = 30): Promise<{ nodes: number; saved: number; error?: string }> {
   const end = Math.floor(Date.now() / 1000);
   const start = end - days * 86400;
-  const fieldSets = [FULL_FIELDS, MID_FIELDS, MIN_FIELDS];
+  const fieldSets = [RICH_FIELDS, FULL_FIELDS, MID_FIELDS, MIN_FIELDS];
   let fieldIdx = 0;
   let fields = fieldSets[0];
   let scrollId: string | null = null;

@@ -312,6 +312,56 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
     return { from, to, rows };
   });
 
+  // GET /ads/sales/list — every sale in the period, one row each, with its sub-ID.
+  fastify.get<{ Querystring: { from?: string; to?: string } }>('/sales/list', async (request, reply) => {
+    const today = accountToday(-3);
+    const to = request.query.to || today;
+    const from = request.query.from || shiftDate(to, -6);
+    const start = brtDateStart(from);
+    const endStart = brtDateStart(to);
+    if (!start || !endStart) return reply.code(400).send({ message: 'Período inválido' });
+    const LIMIT = 2000;
+    const [conversions, links] = await Promise.all([
+      prisma.shopeeConversion.findMany({
+        where: { purchaseTime: { gte: start, lt: new Date(endStart.getTime() + DAY_MS) } },
+        orderBy: { purchaseTime: 'desc' },
+        take: LIMIT + 1,
+      }),
+      prisma.adLink.findMany(),
+    ]);
+    const ads = await prisma.metaEntity.findMany({ where: { id: { in: links.map((l) => l.metaAdId).filter(Boolean) as string[] } } });
+    const adName = new Map(ads.map((a) => [a.id, a.name]));
+    const linkBy = new Map(links.map((l) => [l.code, l]));
+    const rows = conversions.slice(0, LIMIT).map((c) => {
+      const code = c.subCode ?? '';
+      const link = linkBy.get(code);
+      const raw = (c.raw ?? {}) as { orders?: Array<{ orderId?: unknown; items?: Array<{ itemName?: unknown; qty?: unknown }> }> };
+      const orders = Array.isArray(raw.orders) ? raw.orders : [];
+      const products = orders.flatMap((o) => (Array.isArray(o.items) ? o.items : []))
+        .map((it) => (it.itemName ? `${Number(it.qty) > 1 ? `${it.qty}× ` : ''}${it.itemName}` : null))
+        .filter(Boolean) as string[];
+      return {
+        id: c.id,
+        purchaseTime: c.purchaseTime,
+        clickTime: c.clickTime,
+        utmContent: c.utmContent,
+        subCode: code,
+        source: link ? 'Anúncio' : code.startsWith('busca') ? 'Busca Shopee' : code ? 'Outro sub-ID' : 'Sem sub-ID',
+        label: link ? link.label || (link.metaAdId ? adName.get(link.metaAdId) : null) || code : null,
+        orderIds: orders.map((o) => String(o.orderId ?? '')).filter(Boolean),
+        products,
+        items: c.items,
+        gmv: r2(c.gmv),
+        pending: r2(c.commissionPending),
+        confirmed: r2(c.commissionConfirmed),
+        cancelled: r2(c.commissionCancelled),
+        status: c.status,
+        fraud: c.fraud,
+      };
+    });
+    return { from, to, truncated: conversions.length > LIMIT, rows };
+  });
+
   // GET /ads/sales/raw — what Shopee actually returned for the latest sales
   // (to check fields such as clickTime before relying on them).
   fastify.get('/sales/raw', async () => {

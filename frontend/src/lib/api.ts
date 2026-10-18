@@ -8,6 +8,25 @@ const BASE_URL = (import.meta.env.VITE_API_URL as string) || '/api'
 // Carries the HTTP status alongside the message so callers can react to a
 // specific status (e.g. 409 "has history, confirm force-delete") instead of
 // only having the display text to work with.
+export interface ShopeeSale {
+  id: string
+  purchaseTime: string
+  clickTime: string | null
+  utmContent: string | null
+  subCode: string
+  source: string
+  label: string | null
+  orderIds: string[]
+  products: string[]
+  items: number
+  gmv: number
+  pending: number
+  confirmed: number
+  cancelled: number
+  status: string
+  fraud: boolean
+}
+
 export class ApiError extends Error {
   status: number
   constructor(message: string, status: number) {
@@ -563,7 +582,9 @@ class ApiClient {
     if (!res.ok) {
       const errMsg =
         (data as { message?: string })?.message ||
-        `Erro ${res.status}: ${res.statusText}`
+        (data as { error?: string })?.error ||
+        (typeof data === 'string' && data.trim() && data.length < 300 ? data : '') ||
+        `Erro ${res.status}${res.statusText ? `: ${res.statusText}` : ''}`
       throw new ApiError(errMsg, res.status)
     }
 
@@ -852,6 +873,10 @@ class ApiClient {
 
   async getAdSales(from: string, to: string): Promise<{ rows: Array<{ subCode: string; label: string; source: string; orders: number; gmv: number; pending: number; confirmed: number; cancelled: number }> }> {
     return this.request('GET', `/ads/sales?from=${from}&to=${to}`)
+  }
+
+  async getAdSalesList(from: string, to: string): Promise<{ truncated: boolean; rows: ShopeeSale[] }> {
+    return this.request('GET', `/ads/sales/list?from=${from}&to=${to}`)
   }
 
   async getAdSalesRaw(): Promise<{ lastSync: { at: string; error?: string } | null; rows: Array<{ id: string; purchaseTime: string; clickTime: string | null; rawClickTime: unknown; utmContent: string | null; status: string; fields: string[] }> }> {
