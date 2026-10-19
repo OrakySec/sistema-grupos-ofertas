@@ -20,6 +20,7 @@ import { hunterRoutes } from './routes/hunter';
 import { adsRoutes } from './routes/ads';
 import { recordCouponMessage } from './lib/coupons';
 import { parseCookies, resolveFbc, resolveFbp, sendViewContent, COOKIE_MAX_AGE_S } from './lib/metaCapi';
+import { recordAdClick } from './lib/metaPurchase';
 import {
   getWebhookSecret,
   isParticipantsEvent,
@@ -164,6 +165,9 @@ async function buildApp() {
           // Real ad clicks only: link previews, bots, double taps, Meta's ad review
           // and manual tests (no fbclid) never reach the pixel.
           if (finalKind === 'HUMAN' && fromAd && adLink && pixel) {
+            // Kept for the Purchase event once the sale shows up in Shopee's report.
+            await recordAdClick({ id: click.id, adCode: adLink.code, shortCode: code, fbc: pixel.fbc, fbp: pixel.fbp, ip: request.ip, userAgent: userAgent ?? null })
+              .catch((err) => server.log.error({ err }, 'Failed to store ad click'));
             const domain = (await prisma.setting.findUnique({ where: { key: 'shortener_domain' } }))?.value || 'https://ofertas.ykaromarques.com';
             await sendViewContent({
               eventId: click.id,

@@ -25,6 +25,7 @@ export interface ShopeeSale {
   cancelled: number
   status: string
   fraud: boolean
+  purchaseEvent: { status: 'SENT' | 'FAILED' | 'NO_MATCH' | 'TOO_OLD' | 'SKIPPED'; detail: string | null; at: string | null } | null
 }
 
 export class ApiError extends Error {

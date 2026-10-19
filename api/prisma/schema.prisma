@@ -432,24 +432,47 @@ model AdLink {
 
 // Shopee affiliate conversions (conversionReport), re-synced while pending.
 model ShopeeConversion {
-  id                  String    @id // conversionId
-  purchaseTime        DateTime
-  clickTime           DateTime?
-  utmContent          String?
-  subCode             String? // normalized utmContent (lowercase alnum)
-  orders              Int       @default(0)
-  items               Int       @default(0)
-  gmv                 Float     @default(0)
-  commissionPending   Float     @default(0)
-  commissionConfirmed Float     @default(0)
-  commissionCancelled Float     @default(0)
-  status              String // PENDING | COMPLETED | CANCELLED | MIXED | UNPAID
-  fraud               Boolean   @default(false)
-  raw                 Json?
-  updatedAt           DateTime  @updatedAt
+  id                    String    @id // conversionId
+  purchaseTime          DateTime
+  clickTime             DateTime?
+  utmContent            String?
+  subCode               String? // normalized utmContent (lowercase alnum)
+  orders                Int       @default(0)
+  items                 Int       @default(0)
+  gmv                   Float     @default(0)
+  commissionPending     Float     @default(0)
+  commissionConfirmed   Float     @default(0)
+  commissionCancelled   Float     @default(0)
+  status                String // PENDING | COMPLETED | CANCELLED | MIXED | UNPAID
+  fraud                 Boolean   @default(false)
+  raw                   Json?
+  // Meta Purchase event (lib/metaPurchase.ts): SENT | FAILED | NO_MATCH | TOO_OLD | SKIPPED
+  purchaseEventStatus   String?
+  purchaseEventDetail   String?
+  purchaseEventAt       DateTime?
+  purchaseEventAttempts Int       @default(0)
+  purchaseClickId       String?
+  updatedAt             DateTime  @updatedAt
 
   @@index([purchaseTime])
   @@index([subCode, purchaseTime])
+}
+
+// Browser data of a real ad click, kept so a later Shopee sale can be sent
+// to Meta as a Purchase from the same person. Raw IP on purpose (Meta needs
+// it); rows are deleted after 8 days (Meta only accepts 7-day-old events).
+model AdClick {
+  id        String   @id // = ShortUrlClick.id (also the ViewContent event_id)
+  adCode    String // AdLink.code = the Shopee sub-ID
+  shortCode String
+  createdAt DateTime @default(now())
+  fbc       String?
+  fbp       String
+  ip        String
+  userAgent String?  @db.Text
+
+  @@index([adCode, createdAt])
+  @@index([createdAt])
 }
 
 // Monitoring rule on one campaign / ad set / ad.

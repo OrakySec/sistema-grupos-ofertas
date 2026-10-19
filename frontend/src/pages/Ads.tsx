@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import api, { type AdLevel, type AdLinkItem, type AdMetrics, type AdRow, type AdsConfig, type MetaRule } from '../lib/api'
+import api, { type AdLevel, type AdLinkItem, type AdMetrics, type AdRow, type AdsConfig, type MetaRule, type ShopeeSale } from '../lib/api'
 import { useToast } from '../lib/toast'
 import Icon from '../components/Icon'
 import Modal from '../components/Modal'
@@ -417,6 +417,19 @@ const SALE_STATUS: Record<string, [string, string]> = {
   MIXED: ['Mista', ''],
 }
 
+const PURCHASE_TAG: Record<string, [string, string]> = {
+  SENT: ['Compra enviada à Meta', '#4fe0a4'],
+  FAILED: ['Meta recusou a compra', '#ff8a8e'],
+  NO_MATCH: ['Sem clique para enviar', 'var(--text-muted)'],
+  TOO_OLD: ['Antiga demais p/ Meta', 'var(--text-muted)'],
+  SKIPPED: ['Não enviada', 'var(--text-muted)'],
+}
+
+function PurchaseEventTag({ ev }: { ev: NonNullable<ShopeeSale['purchaseEvent']> }) {
+  const [text, color] = PURCHASE_TAG[ev.status] ?? [ev.status, 'var(--text-muted)']
+  return <div style={{ fontSize: '0.68rem', color, marginTop: 4, whiteSpace: 'nowrap', cursor: 'help' }} title={ev.detail ?? ''}>{text}</div>
+}
+
 function AllSales({ from, to, reloadKey }: { from: string; to: string; reloadKey: number }) {
   const [data, setData] = useState<Awaited<ReturnType<typeof api.getAdSalesList>> | null>(null)
   const [q, setQ] = useState('')
@@ -471,7 +484,10 @@ function AllSales({ from, to, reloadKey }: { from: string; to: string; reloadKey
                   </td>
                   <td className="tabular" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{brl(r.gmv)}</td>
                   <td className="tabular" style={{ textAlign: 'right', whiteSpace: 'nowrap', color: r.status === 'COMPLETED' ? '#4fe0a4' : r.status === 'CANCELLED' || r.fraud ? 'var(--text-muted)' : undefined, textDecoration: r.status === 'CANCELLED' || r.fraud ? 'line-through' : undefined }}>{brl(commission)}</td>
-                  <td><span className={`badge ${cls}`}>{r.fraud ? 'Fraude' : label}</span></td>
+                  <td>
+                    <span className={`badge ${cls}`}>{r.fraud ? 'Fraude' : label}</span>
+                    {r.purchaseEvent && <PurchaseEventTag ev={r.purchaseEvent} />}
+                  </td>
                 </tr>
               )
             })}

@@ -5,6 +5,7 @@ import prisma from '../lib/prisma';
 import { brtDateStart } from '../lib/time';
 import { metaConfig, syncMeta, testMeta, accountOffset, accountToday, shiftDate } from '../lib/metaAds';
 import { syncShopeeConversions } from '../lib/shopeeConversions';
+import { sendPendingPurchases } from '../lib/metaPurchase';
 import { runAdRules } from '../lib/adRules';
 import { generateShortLink } from '../lib/shopeeApi';
 import { createShortUrl } from '../lib/shortener';
@@ -115,7 +116,8 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
       ? await syncMeta(7)
       : [{ account: '—', error: 'Token de acesso ou conta de anúncio não configurados (aba Configuração)' }];
     const shopee = await syncShopeeConversions(30);
-    return { meta, shopee };
+    const purchases = shopee.error ? null : await sendPendingPurchases();
+    return { meta, shopee, purchases };
   });
 
   // POST /ads/rules/run — evaluate the monitoring rules right now
@@ -357,6 +359,7 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
         cancelled: r2(c.commissionCancelled),
         status: c.status,
         fraud: c.fraud,
+        purchaseEvent: c.purchaseEventStatus ? { status: c.purchaseEventStatus, detail: c.purchaseEventDetail, at: c.purchaseEventAt } : null,
       };
     });
     return { from, to, truncated: conversions.length > LIMIT, rows };

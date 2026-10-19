@@ -7,6 +7,7 @@ import { expireCoupons } from './lib/coupons';
 import { scheduleAdsSync } from './lib/queue';
 import { metaConfig, syncMeta } from './lib/metaAds';
 import { syncShopeeConversions } from './lib/shopeeConversions';
+import { sendPendingPurchases } from './lib/metaPurchase';
 import { runAdRules } from './lib/adRules';
 import { tagShortLinks } from './lib/linkTagging';
 import { snapshotWhatsAppGroups } from './lib/memberTracking';
@@ -527,7 +528,10 @@ const linkMonitorWorker = new Worker(
       // Meta delivery + Shopee sales, then the monitoring rules on fresh numbers.
       if (await metaConfig()) console.log('[Worker] Meta sync:', JSON.stringify(await syncMeta(7)));
       const shopeeCreds = await prisma.setting.count({ where: { key: { in: ['shopee_app_id', 'shopee_app_secret'] }, value: { not: '' } } });
-      if (shopeeCreds === 2) console.log('[Worker] Shopee sales sync:', JSON.stringify(await syncShopeeConversions(30)));
+      if (shopeeCreds === 2) {
+        console.log('[Worker] Shopee sales sync:', JSON.stringify(await syncShopeeConversions(30)));
+        console.log('[Worker] Meta Purchase events:', JSON.stringify(await sendPendingPurchases()));
+      }
       const ruleResults = await runAdRules();
       if (ruleResults.length) console.log('[Worker] Ad rules:', JSON.stringify(ruleResults));
     } else if (job.name === 'shopee-hunter-tick') {
