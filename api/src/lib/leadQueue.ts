@@ -13,6 +13,8 @@
  *   - privacy blocks a direct add → the group link goes in private (own daily limit)
  *   - automatic brake: N real failures in a row → the number's queue pauses
  *     and the owner is alerted
+ *   - anyone who ever left one of the account's groups is never added again
+ *     (lib/leadBlocks.ts)
  *
  * Evolution calls (v2): /chat/whatsappNumbers, /group/participants,
  * /group/updateParticipant (action "add"), /group/inviteCode, /message/sendText.
@@ -21,6 +23,7 @@ import prisma from './prisma';
 import { evo, getState } from './evolution';
 import { brtDayStart, toBrt } from './time';
 import { WhatsAppService } from '../services/whatsapp.service';
+import { findBlock } from './leadBlocks';
 
 export interface LeadSafety {
   dailyLimit: number;
@@ -364,6 +367,11 @@ async function processInstance(instanceId: string, now: Date): Promise<string | 
     if (sendErr) return finish('FAILED', `${why}; falhou ao mandar o convite: ${sendErr}`, target.id, { touched: true, failure: 'real' });
     return finish('INVITED', `${why} — link do grupo ${target.name} enviado no privado`, target.id, { touched: true });
   };
+
+  // Left (or was removed from) one of the account's groups before → never again.
+  if (await findBlock(lead.tenantId, lead.phone)) {
+    return finish('BLOCKED', 'Já saiu de um dos seus grupos antes — não é adicionado de novo', null, { touched: false });
+  }
 
   if (lead.status === 'INVITE_PENDING') {
     const g = lead.groupId ? await prisma.destinationGroup.findUnique({ where: { id: lead.groupId } }) : null;

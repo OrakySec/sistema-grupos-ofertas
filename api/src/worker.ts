@@ -6,6 +6,7 @@ import { hunterTick } from './lib/shopeeHunter';
 import { expireCoupons } from './lib/coupons';
 import { scheduleAdsSync, scheduleLeadsTick } from './lib/queue';
 import { leadsTick } from './lib/leadQueue';
+import { detectLeadLeaves } from './lib/leadBlocks';
 import { metaConfig, syncMeta } from './lib/metaAds';
 import { syncShopeeConversions } from './lib/shopeeConversions';
 import { sendPendingPurchases } from './lib/metaPurchase';
@@ -542,6 +543,9 @@ const linkMonitorWorker = new Worker(
     } else if (job.name === 'snapshot-wa-members') {
       const results = await snapshotWhatsAppGroups();
       console.log('[Worker] WhatsApp member snapshot:', JSON.stringify(results));
+      // Leads we added who are no longer in the group → never added again.
+      const leaves = await detectLeadLeaves();
+      if (leaves.length) console.log('[Worker] Lead leaves:', JSON.stringify(leaves));
     } else {
       console.warn(`[Worker] Unknown link-monitor job type: ${job.name}`);
     }

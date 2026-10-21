@@ -27,9 +27,10 @@ const STATUS: Record<LeadStatus, { label: string; cls: string; color: string }> 
   INVITE_PENDING: { label: 'Convite amanhã', cls: 'badge-pending', color: 'var(--accent-warning)' },
   ALREADY_MEMBER: { label: 'Já estava', cls: '', color: 'var(--text-muted)' },
   NO_WHATSAPP: { label: 'Sem WhatsApp', cls: '', color: 'var(--text-muted)' },
+  BLOCKED: { label: 'Saiu antes', cls: '', color: '#c9a0ff' },
   FAILED: { label: 'Falhou', cls: 'badge-failed', color: '#ff8a8e' },
 }
-const STATUS_ORDER: LeadStatus[] = ['QUEUED', 'ADDED', 'INVITED', 'INVITE_PENDING', 'ALREADY_MEMBER', 'NO_WHATSAPP', 'FAILED']
+const STATUS_ORDER: LeadStatus[] = ['QUEUED', 'ADDED', 'INVITED', 'INVITE_PENDING', 'ALREADY_MEMBER', 'NO_WHATSAPP', 'BLOCKED', 'FAILED']
 
 const WEEKDAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 
@@ -47,7 +48,16 @@ function FilePicker({ onText }: { onText: (t: string) => void }) {
 function ImportSummary({ r }: { r: LeadImportResult }) {
   return (
     <div className={`alert ${r.created ? 'alert-success' : 'alert-warning'}`} style={{ fontSize: '0.84rem', lineHeight: 1.6 }}>
+      {r.fromGroup && (
+        <div style={{ marginBottom: 4 }}>
+          Grupo "{r.fromGroup.group}": {int(r.fromGroup.total)} membros
+          {r.fromGroup.admins ? ` · ${int(r.fromGroup.admins)} admins ignorados` : ''}
+          {r.fromGroup.own ? ` · ${int(r.fromGroup.own)} números seus ignorados` : ''}
+          {r.fromGroup.hidden ? ` · ${int(r.fromGroup.hidden)} com o número oculto pelo WhatsApp (não dá para adicionar)` : ''}.
+        </div>
+      )}
       <strong>{int(r.created)}</strong> {r.created === 1 ? 'lead entrou' : 'leads entraram'} na fila.
+      {r.blocked ? ` ${int(r.blocked)} já saíram de um grupo seu antes e não serão adicionados.` : ''}
       {r.alreadyInCampaign ? ` ${int(r.alreadyInCampaign)} já estavam nesta lista.` : ''}
       {r.duplicates ? ` ${int(r.duplicates)} repetidos na colagem.` : ''}
       {r.invalid ? ` ${int(r.invalid)} linhas sem telefone válido${r.invalidSamples.length ? ` (ex.: ${r.invalidSamples.slice(0, 3).join(' · ')})` : ''}.` : ''}
@@ -55,11 +65,13 @@ function ImportSummary({ r }: { r: LeadImportResult }) {
   )
 }
 
-function ConsentBox({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+function ConsentBox({ checked, onChange, fromGroup = false }: { checked: boolean; onChange: (v: boolean) => void; fromGroup?: boolean }) {
   return (
     <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: '0.82rem', color: 'var(--text-secondary)', cursor: 'pointer', lineHeight: 1.5 }}>
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} style={{ marginTop: 3 }} />
-      Confirmo que essas pessoas se cadastraram na minha página e aceitaram entrar no grupo. (Adicionar quem não pediu gera denúncias — e denúncia é o que mais derruba número.)
+      {fromGroup
+        ? 'Confirmo que o grupo de origem é meu e assumo a responsabilidade por adicionar os membros dele em outros grupos. (Quem não escolheu entrar tende a denunciar — comece com poucos e acompanhe as saídas.)'
+        : 'Confirmo que essas pessoas se cadastraram na minha página e aceitaram entrar no grupo. (Adicionar quem não pediu gera denúncias — e denúncia é o que mais derruba número.)'}
     </label>
   )
 }
@@ -74,6 +86,8 @@ function NewCampaignModal({ onClose, onCreated }: { onClose: () => void; onCreat
   const [groupIds, setGroupIds] = useState<string[]>([])
   const [inviteFallback, setInviteFallback] = useState(true)
   const [phones, setPhones] = useState('')
+  const [source, setSource] = useState<'LIST' | 'GROUP'>('LIST')
+  const [sourceGroupId, setSourceGroupId] = useState('')
   const [consent, setConsent] = useState(false)
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<LeadImportResult | null>(null)
@@ -87,7 +101,7 @@ function NewCampaignModal({ onClose, onCreated }: { onClose: () => void; onCreat
   }, [addToast])
 
   const niche = opts?.niches.find((n) => n.id === nicheId)
-  const groupChoices = niche ? niche.groups : opts?.groups ?? []
+  const groupChoices = (niche ? niche.groups : opts?.groups ?? []).filter((g) => source !== 'GROUP' || g.id !== sourceGroupId)
   const toggleGroup = (id: string) => setGroupIds((g) => (g.includes(id) ? g.filter((x) => x !== id) : [...g, id]))
   const chosen = opts?.instances.find((i) => i.id === instanceId)
   const lines = phones.split(/\r?\n/).filter((l) => l.trim()).length
@@ -95,7 +109,10 @@ function NewCampaignModal({ onClose, onCreated }: { onClose: () => void; onCreat
   const save = async () => {
     setBusy(true)
     try {
-      const r = await api.createLeadCampaign({ name: name.trim(), nicheId: nicheId || null, instanceId, groupIds, inviteFallback, phones, consent })
+      const r = await api.createLeadCampaign({
+        name: name.trim(), nicheId: nicheId || null, instanceId, groupIds, inviteFallback, consent,
+        ...(source === 'GROUP' ? { sourceGroupId } : { phones }),
+      })
       setResult(r)
       onCreated()
     } catch (err) {
@@ -114,8 +131,8 @@ function NewCampaignModal({ onClose, onCreated }: { onClose: () => void; onCreat
       footer={result ? <button className="btn btn-primary" onClick={onClose}>Fechar</button> : (
         <>
           <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
-          <button className="btn btn-primary" onClick={save} disabled={busy || !consent || !name.trim() || !instanceId || !groupIds.length}>
-            {busy ? <span className="spinner spinner-sm" /> : <Icon name="userPlus" />} Criar e colocar na fila
+          <button className="btn btn-primary" onClick={save} disabled={busy || !consent || !name.trim() || !instanceId || !groupIds.length || (source === 'GROUP' && !sourceGroupId)}>
+            {busy ? <span className="spinner spinner-sm" /> : <Icon name="userPlus" />} {busy && source === 'GROUP' ? 'Lendo os membros…' : 'Criar e colocar na fila'}
           </button>
         </>
       )}
@@ -173,19 +190,41 @@ function NewCampaignModal({ onClose, onCreated }: { onClose: () => void; onCreat
 
           <Toggle checked={inviteFallback} onChange={setInviteFallback} label="Se a privacidade da pessoa não deixar adicionar, mandar o link do grupo no privado" />
 
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
-              <label className="label" style={{ margin: 0 }}>Telefones {lines ? <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>· {int(lines)} linhas</span> : null}</label>
-              <FilePicker onText={(t) => setPhones((p) => (p.trim() ? `${p.trim()}\n${t}` : t))} />
-            </div>
-            <textarea className="textarea mono" rows={7} value={phones} onChange={(e) => setPhones(e.target.value)}
-              placeholder={'Um por linha. Pode ter nome junto:\n(11) 91234-5678\nMaria Silva, 21987654321\nnome;telefone (CSV da sua página)'} />
-            <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: 6 }}>
-              Pode deixar vazio e mandar os leads depois, sozinhos, pelo link de webhook da lista.
+          <div>
+            <div className="label" style={{ marginBottom: 6 }}>De onde vêm os contatos</div>
+            <div className="tabs">
+              <button className={`tab${source === 'LIST' ? ' active' : ''}`} onClick={() => { setSource('LIST'); setConsent(false) }}><Icon name="inbox" size={15} /> Telefones / página de captura</button>
+              <button className={`tab${source === 'GROUP' ? ' active' : ''}`} onClick={() => { setSource('GROUP'); setConsent(false) }}><Icon name="users" size={15} /> Membros de um grupo meu</button>
             </div>
           </div>
 
-          <ConsentBox checked={consent} onChange={setConsent} />
+          {source === 'LIST' ? (
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+                <label className="label" style={{ margin: 0 }}>Telefones {lines ? <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>· {int(lines)} linhas</span> : null}</label>
+                <FilePicker onText={(t) => setPhones((p) => (p.trim() ? `${p.trim()}\n${t}` : t))} />
+              </div>
+              <textarea className="textarea mono" rows={7} value={phones} onChange={(e) => setPhones(e.target.value)}
+                placeholder={'Um por linha. Pode ter nome junto:\n(11) 91234-5678\nMaria Silva, 21987654321\nnome;telefone (CSV da sua página)'} />
+              <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: 6 }}>
+                Pode deixar vazio e mandar os leads depois, sozinhos, pelo link de webhook da lista.
+              </div>
+            </div>
+          ) : (
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="label">Grupo de origem</label>
+              <select className="select" value={sourceGroupId} onChange={(e) => { setSourceGroupId(e.target.value); setGroupIds((ids) => ids.filter((id) => id !== e.target.value)) }}>
+                <option value="">— escolha o grupo —</option>
+                {opts.groups.filter((g) => !groupIds.includes(g.id)).map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+              </select>
+              <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.5 }}>
+                O sistema lê os membros na hora de criar. Admins e os seus próprios números ficam de fora, e quem já saiu de algum grupo seu também.
+                Membros com o número oculto pelo WhatsApp não têm como ser adicionados.
+              </div>
+            </div>
+          )}
+
+          <ConsentBox checked={consent} onChange={setConsent} fromGroup={source === 'GROUP'} />
         </div>
       )}
     </Modal>
@@ -258,6 +297,7 @@ function LeadsListModal({ campaign, onClose }: { campaign: LeadCampaignItem; onC
           <select className="select" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1) }} style={{ maxWidth: 220 }}>
             <option value="">Todos ({int(campaign.total)})</option>
             {STATUS_ORDER.map((s) => <option key={s} value={s}>{STATUS[s].label} ({int(campaign.counts[s] ?? 0)})</option>)}
+            <option value="LEFT">Saíram depois de entrar ({int(campaign.left)})</option>
           </select>
         </div>
         {!data ? <Skeleton height={200} /> : (
@@ -270,7 +310,10 @@ function LeadsListModal({ campaign, onClose }: { campaign: LeadCampaignItem; onC
                 ) : data.rows.map((l) => (
                   <tr key={l.id}>
                     <td className="mono" style={{ whiteSpace: 'nowrap' }}>{fmtPhone(l.phone)}{l.name && <div style={{ fontFamily: 'inherit', fontSize: '0.72rem', color: 'var(--text-muted)' }}>{l.name}</div>}</td>
-                    <td><span className={`badge ${STATUS[l.status]?.cls ?? ''}`}>{STATUS[l.status]?.label ?? l.status}</span></td>
+                    <td>
+                      <span className={`badge ${STATUS[l.status]?.cls ?? ''}`}>{STATUS[l.status]?.label ?? l.status}</span>
+                      {l.leftAt && <div style={{ fontSize: '0.7rem', color: '#c9a0ff', marginTop: 3, whiteSpace: 'nowrap' }}>saiu {when(l.leftAt)} · bloqueado</div>}
+                    </td>
                     <td style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{l.detail ?? (l.group ? l.group : '—')}</td>
                     <td className="tabular" style={{ whiteSpace: 'nowrap', fontSize: '0.78rem' }}>{when(l.processedAt ?? l.createdAt)}</td>
                   </tr>
@@ -525,6 +568,11 @@ export default function Leads() {
                             {STATUS_ORDER.filter((s) => c.counts[s]).map((s) => (
                               <span key={s}><span style={{ color: STATUS[s].color }}>●</span> {STATUS[s].label} {int(c.counts[s])}</span>
                             ))}
+                            {c.left > 0 && (
+                              <span title="Entraram pelo sistema e depois saíram do grupo — nunca serão adicionados de novo" style={{ color: '#c9a0ff' }}>
+                                ↩ Saíram depois {int(c.left)} ({Math.round((c.left / Math.max(1, c.counts.ADDED + c.counts.INVITED)) * 100)}%)
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td>

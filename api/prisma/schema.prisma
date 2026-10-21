@@ -488,6 +488,22 @@ model Tenant {
   whatsappInstances WhatsAppInstance[]
   leadCampaigns     LeadCampaign[]
   leads             Lead[]
+  leadBlocks        LeadBlock[]
+}
+
+// People who left (or were removed from) one of the account's WhatsApp groups.
+// The lead queue never adds them to any group again.
+model LeadBlock {
+  id        String   @id @default(cuid())
+  tenantId  String
+  phone     String // digits as WhatsApp reports them (55DDD…)
+  reason    String // LEFT (left on their own) | REMOVED (removed by an admin)
+  groupId   String? // DestinationGroup they left
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, phone])
 }
 
 // A WhatsApp number connected by QR code (one Evolution instance each).
@@ -554,13 +570,15 @@ model Lead {
   name        String?
   // QUEUED | ADDED | INVITED | INVITE_PENDING (privacy blocked the add and the
   // day's invite quota was used — invited on a later day) | ALREADY_MEMBER |
-  // NO_WHATSAPP | FAILED
+  // NO_WHATSAPP | BLOCKED (left one of our groups before — see LeadBlock) | FAILED
   status      String    @default("QUEUED")
+  source      String    @default("LIST") // LIST (pasted/CSV) | INTAKE (webhook) | GROUP (members of one of the account's groups)
   groupId     String? // DestinationGroup it went to
   instanceId  String? // number that processed it (daily limits)
   detail      String?
   attempts    Int       @default(0)
   processedAt DateTime?
+  leftAt      DateTime? // left the group after we added them (→ LeadBlock)
   createdAt   DateTime  @default(now())
 
   tenant   Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)

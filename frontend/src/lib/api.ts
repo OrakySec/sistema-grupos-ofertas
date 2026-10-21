@@ -579,7 +579,7 @@ export interface LeadQueueStatus {
   lastResult: string | null
 }
 
-export type LeadStatus = 'QUEUED' | 'ADDED' | 'INVITED' | 'INVITE_PENDING' | 'ALREADY_MEMBER' | 'NO_WHATSAPP' | 'FAILED'
+export type LeadStatus = 'QUEUED' | 'ADDED' | 'INVITED' | 'INVITE_PENDING' | 'ALREADY_MEMBER' | 'NO_WHATSAPP' | 'BLOCKED' | 'FAILED'
 
 export interface LeadCampaignItem {
   id: string
@@ -592,16 +592,19 @@ export interface LeadCampaignItem {
   inviteFallback: boolean
   counts: Record<LeadStatus, number>
   total: number
+  left: number
   intakeUrl: string
   createdAt: string
 }
 
 export interface LeadImportResult {
   created: number
+  blocked?: number
   duplicates: number
   invalid: number
   invalidSamples: string[]
   alreadyInCampaign?: number
+  fromGroup?: { group: string; total: number; hidden: number; admins: number; own: number }
 }
 
 class ApiClient {
@@ -1023,7 +1026,7 @@ class ApiClient {
     return this.request('GET', '/leads/overview')
   }
 
-  async createLeadCampaign(data: { name: string; nicheId: string | null; instanceId: string; groupIds: string[]; inviteFallback: boolean; phones: string; consent: boolean }): Promise<LeadImportResult & { id: string }> {
+  async createLeadCampaign(data: { name: string; nicheId: string | null; instanceId: string; groupIds: string[]; inviteFallback: boolean; phones?: string; sourceGroupId?: string; consent: boolean }): Promise<LeadImportResult & { id: string }> {
     return this.request('POST', '/leads/campaigns', data)
   }
 
@@ -1045,7 +1048,7 @@ class ApiClient {
 
   async getCampaignLeads(id: string, params: { status?: string; q?: string; page?: number }): Promise<{
     total: number; page: number; pages: number
-    rows: Array<{ id: string; phone: string; name: string | null; status: LeadStatus; detail: string | null; group: string | null; processedAt: string | null; createdAt: string }>
+    rows: Array<{ id: string; phone: string; name: string | null; status: LeadStatus; source: 'LIST' | 'INTAKE' | 'GROUP'; detail: string | null; group: string | null; processedAt: string | null; leftAt: string | null; createdAt: string }>
   }> {
     const qs = new URLSearchParams()
     if (params.status) qs.set('status', params.status)

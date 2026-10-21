@@ -10,9 +10,21 @@ import { tenantIdOf } from '../lib/tenant';
 import { normalizePhoneBR } from '../lib/evolution';
 import { parseLeadLines, queueStatus } from '../lib/leadQueue';
 import { shortenerDomain } from '../lib/shortener';
+import { findBlock, membersForImport, samePhone } from '../lib/leadBlocks';
 
-const STATUSES = ['QUEUED', 'ADDED', 'INVITED', 'INVITE_PENDING', 'ALREADY_MEMBER', 'NO_WHATSAPP', 'FAILED'] as const;
+const STATUSES = ['QUEUED', 'ADDED', 'INVITED', 'INVITE_PENDING', 'ALREADY_MEMBER', 'NO_WHATSAPP', 'BLOCKED', 'FAILED'] as const;
 const MAX_IMPORT = 20000;
+
+/** Drops people who already left one of the account's groups (they're never re-added). */
+async function withoutBlocked<T extends { phone: string }>(tenantId: string, leads: T[]): Promise<{ keep: T[]; blocked: number }> {
+  if (!leads.length) return { keep: leads, blocked: 0 };
+  const blocks = await prisma.leadBlock.findMany({ where: { tenantId }, select: { phone: true } });
+  if (!blocks.length) return { keep: leads, blocked: 0 };
+  const byTail = new Map<string, string[]>();
+  for (const b of blocks) byTail.set(b.phone.slice(-8), [...(byTail.get(b.phone.slice(-8)) ?? []), b.phone]);
+  const keep = leads.filter((l) => !(byTail.get(l.phone.slice(-8)) ?? []).some((p) => samePhone(p, l.phone)));
+  return { keep, blocked: leads.length - keep.length };
+}
 
 async function intakeUrl(token: string) {
   return `${await shortenerDomain()}/api/leads/intake/${token}`;
@@ -63,11 +75,10 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       orderBy: { createdAt: 'desc' },
       include: { instance: { select: { id: true, label: true, connected: true, number: true } } },
     });
-    const counts = await prisma.lead.groupBy({
-      by: ['campaignId', 'status'],
-      where: { tenantId },
-      _count: { _all: true },
-    });
+    const [counts, leftCounts] = await Promise.all([
+      prisma.lead.groupBy({ by: ['campaignId', 'status'], where: { tenantId }, _count: { _all: true } }),
+      prisma.lead.groupBy({ by: ['campaignId'], where: { tenantId, leftAt: { not: null } }, _count: { _all: true } }),
+    ]);
     const groupNames = new Map(
       (await prisma.destinationGroup.findMany({ select: { id: true, name: true } })).map((g) => [g.id, g.name]),
     );
@@ -89,6 +100,7 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
           groups: groupIds.map((id) => ({ id, name: groupNames.get(id) ?? '(grupo removido)' })),
           instance: c.instance, inviteFallback: c.inviteFallback,
           counts: byStatus, total: Object.values(byStatus).reduce((a, b) => a + b, 0),
+          left: leftCounts.find((r) => r.campaignId === c.id)?._count._all ?? 0,
           intakeUrl: await intakeUrl(c.intakeToken), createdAt: c.createdAt,
         };
       })),
@@ -96,14 +108,15 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
     };
   });
 
-  // POST /leads/campaigns — new campaign + its leads
-  fastify.post<{ Body: { name?: string; nicheId?: string | null; instanceId?: string; groupIds?: string[]; inviteFallback?: boolean; phones?: string; consent?: boolean } }>(
+  // POST /leads/campaigns — new campaign + its leads, from a pasted list or
+  // from the members of one of the account's WhatsApp groups (sourceGroupId).
+  fastify.post<{ Body: { name?: string; nicheId?: string | null; instanceId?: string; groupIds?: string[]; inviteFallback?: boolean; phones?: string; sourceGroupId?: string; consent?: boolean } }>(
     '/campaigns',
     async (request, reply) => {
       const tenantId = tenantIdOf(request);
       const b = request.body ?? {};
       if (b.consent !== true) {
-        return reply.code(400).send({ message: 'Confirme que esses contatos se cadastraram na sua página e aceitaram entrar no grupo.' });
+        return reply.code(400).send({ message: 'Marque a confirmação antes de criar a lista.' });
       }
       const name = String(b.name ?? '').trim().slice(0, 80);
       if (!name) return reply.code(400).send({ message: 'Dê um nome para a lista (ex.: "Captura Casa outubro").' });
@@ -114,8 +127,23 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       const ordered = groupIds.filter((id) => valid.some((v) => v.id === id));
       if (!ordered.length) return reply.code(400).send({ message: 'Escolha pelo menos um grupo de WhatsApp de destino.' });
 
-      const parsed = parseLeadLines(String(b.phones ?? ''), normalizePhoneBR);
-      if (parsed.leads.length > MAX_IMPORT) return reply.code(400).send({ message: `Máximo de ${MAX_IMPORT} números por vez.` });
+      let source: 'LIST' | 'GROUP' = 'LIST';
+      let incoming: Array<{ phone: string; name: string | null }>;
+      let report: { duplicates: number; invalid: number; invalidSamples: string[]; fromGroup?: { group: string; total: number; hidden: number; admins: number; own: number } };
+      if (b.sourceGroupId) {
+        if (ordered.includes(b.sourceGroupId)) return reply.code(400).send({ message: 'O grupo de origem não pode ser também um dos destinos.' });
+        const m = await membersForImport(tenantId, b.sourceGroupId, instance.id);
+        if (!m.ok) return reply.code(502).send({ message: m.error });
+        source = 'GROUP';
+        incoming = m.phones.map((phone) => ({ phone, name: null }));
+        report = { duplicates: 0, invalid: 0, invalidSamples: [], fromGroup: { group: m.groupName, total: m.total, hidden: m.hidden, admins: m.admins, own: m.own } };
+      } else {
+        const parsed = parseLeadLines(String(b.phones ?? ''), normalizePhoneBR);
+        incoming = parsed.leads;
+        report = { duplicates: parsed.duplicates, invalid: parsed.invalid.length, invalidSamples: parsed.invalid.slice(0, 10) };
+      }
+      if (incoming.length > MAX_IMPORT) return reply.code(400).send({ message: `Máximo de ${MAX_IMPORT} números por vez.` });
+      const { keep, blocked } = await withoutBlocked(tenantId, incoming);
 
       const campaign = await prisma.leadCampaign.create({
         data: {
@@ -123,10 +151,10 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
           inviteFallback: b.inviteFallback !== false, intakeToken: randomBytes(18).toString('hex'),
         },
       });
-      const created = parsed.leads.length
-        ? (await prisma.lead.createMany({ data: parsed.leads.map((l) => ({ tenantId, campaignId: campaign.id, phone: l.phone, name: l.name })), skipDuplicates: true })).count
+      const created = keep.length
+        ? (await prisma.lead.createMany({ data: keep.map((l) => ({ tenantId, campaignId: campaign.id, phone: l.phone, name: l.name, source })), skipDuplicates: true })).count
         : 0;
-      return reply.code(201).send({ id: campaign.id, created, duplicates: parsed.duplicates, invalid: parsed.invalid.length, invalidSamples: parsed.invalid.slice(0, 10) });
+      return reply.code(201).send({ id: campaign.id, created, blocked, ...report });
     },
   );
 
@@ -139,11 +167,12 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
     if (request.body?.consent !== true) return reply.code(400).send({ message: 'Confirme que esses contatos se cadastraram e aceitaram entrar no grupo.' });
     const parsed = parseLeadLines(String(request.body?.phones ?? ''), normalizePhoneBR);
     if (parsed.leads.length > MAX_IMPORT) return reply.code(400).send({ message: `Máximo de ${MAX_IMPORT} números por vez.` });
+    const { keep, blocked } = await withoutBlocked(c.tenantId, parsed.leads);
     const before = await prisma.lead.count({ where: { campaignId: c.id } });
-    await prisma.lead.createMany({ data: parsed.leads.map((l) => ({ tenantId: c.tenantId, campaignId: c.id, phone: l.phone, name: l.name })), skipDuplicates: true });
+    await prisma.lead.createMany({ data: keep.map((l) => ({ tenantId: c.tenantId, campaignId: c.id, phone: l.phone, name: l.name })), skipDuplicates: true });
     const created = (await prisma.lead.count({ where: { campaignId: c.id } })) - before;
     if (created && c.status === 'DONE') await prisma.leadCampaign.update({ where: { id: c.id }, data: { status: 'ACTIVE' } });
-    return { created, alreadyInCampaign: parsed.leads.length - created, duplicates: parsed.duplicates, invalid: parsed.invalid.length, invalidSamples: parsed.invalid.slice(0, 10) };
+    return { created, blocked, alreadyInCampaign: keep.length - created, duplicates: parsed.duplicates, invalid: parsed.invalid.length, invalidSamples: parsed.invalid.slice(0, 10) };
   });
 
   // PATCH /leads/campaigns/:id { status?, name?, groupIds?, inviteFallback? }
@@ -198,6 +227,7 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
     const where = {
       campaignId: c.id,
       ...(STATUSES.includes(request.query.status as any) ? { status: request.query.status } : {}),
+      ...(request.query.status === 'LEFT' ? { leftAt: { not: null } } : {}),
       ...(q ? { phone: { contains: q } } : {}),
     };
     const [rows, total] = await Promise.all([
@@ -207,7 +237,7 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
     const groupNames = new Map((await prisma.destinationGroup.findMany({ select: { id: true, name: true } })).map((g) => [g.id, g.name]));
     return {
       total, page, pages: Math.max(1, Math.ceil(total / take)),
-      rows: rows.map((l) => ({ id: l.id, phone: l.phone, name: l.name, status: l.status, detail: l.detail, group: l.groupId ? groupNames.get(l.groupId) ?? null : null, processedAt: l.processedAt, createdAt: l.createdAt })),
+      rows: rows.map((l) => ({ id: l.id, phone: l.phone, name: l.name, status: l.status, source: l.source, detail: l.detail, group: l.groupId ? groupNames.get(l.groupId) ?? null : null, processedAt: l.processedAt, leftAt: l.leftAt, createdAt: l.createdAt })),
     };
   });
 };
@@ -226,10 +256,12 @@ export const leadsIntakeRoutes: FastifyPluginAsync = async (fastify: FastifyInst
     if (!phone) return reply.code(400).send({ ok: false, message: 'Telefone inválido' });
     const rawName = b.nome ?? b.name ?? null;
     const name = rawName ? String(rawName).trim().slice(0, 80) || null : null;
+    // Someone who left one of the groups before is never re-added (answer ok anyway).
+    if (await findBlock(c.tenantId, phone)) return { ok: true };
     await prisma.lead.upsert({
       where: { campaignId_phone: { campaignId: c.id, phone } },
       update: name ? { name } : {},
-      create: { tenantId: c.tenantId, campaignId: c.id, phone, name },
+      create: { tenantId: c.tenantId, campaignId: c.id, phone, name, source: 'INTAKE' },
     });
     if (c.status === 'DONE') await prisma.leadCampaign.update({ where: { id: c.id }, data: { status: 'ACTIVE' } });
     return { ok: true };

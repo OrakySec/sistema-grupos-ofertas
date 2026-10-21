@@ -21,6 +21,7 @@ import { adsRoutes } from './routes/ads';
 import { whatsappRoutes } from './routes/whatsapp';
 import { leadsRoutes, leadsIntakeRoutes } from './routes/leads';
 import { isConnectionEvent, recordConnectionUpdate } from './lib/whatsappNumbers';
+import { recordLeavesFromWebhook } from './lib/leadBlocks';
 import { recordCouponMessage } from './lib/coupons';
 import { parseCookies, resolveFbc, resolveFbp, sendViewContent, COOKIE_MAX_AGE_S } from './lib/metaCapi';
 import { recordAdClick } from './lib/metaPurchase';
@@ -210,6 +211,9 @@ async function buildApp() {
       recordConnectionUpdate(body?.instance, body?.data)
         .catch((err) => server.log.error({ err }, 'Failed to record WhatsApp connection update'));
     } else if (isParticipantsEvent(body?.event)) {
+      // Whoever leaves one of our groups is never added again by the lead queue.
+      recordLeavesFromWebhook(body?.data)
+        .catch((err) => server.log.error({ err }, 'Failed to record lead leaves'));
       recordParticipantsUpdate(body?.data)
         .then((r) => server.log.info({ result: r }, 'WhatsApp participants update recorded'))
         .catch((err) => server.log.error({ err }, 'Failed to record WhatsApp participants update'));
