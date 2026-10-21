@@ -129,6 +129,23 @@ export async function scheduleShopeeHunter(): Promise<void> {
   );
 }
 
+// Lead adding has its own queue so a long job elsewhere (ads sync, Shopee
+// search) never delays it; each tick does at most one action per number.
+export const leadsQueue = new Queue('leads', {
+  connection,
+  defaultJobOptions: {
+    attempts: 1,
+    removeOnComplete: { count: 100, age: 60 * 60 * 24 },
+    removeOnFail: { count: 100, age: 60 * 60 * 24 * 3 },
+  },
+});
+
+const LEADS_TICK_MS = 30 * 1000;
+
+export async function scheduleLeadsTick(): Promise<void> {
+  await leadsQueue.add('leads-tick', {}, { jobId: 'leads-tick-repeat', repeat: { every: LEADS_TICK_MS } });
+}
+
 const ADS_SYNC_MS = 60 * 60 * 1000; // hourly
 
 /** Meta Ads delivery + Shopee sales sync, followed by the ad monitoring rules. */

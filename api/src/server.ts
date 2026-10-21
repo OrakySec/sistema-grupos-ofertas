@@ -18,6 +18,9 @@ import { healthRoutes, unidentifiedLinksRoutes } from './routes/health';
 import { analyticsRoutes } from './routes/analytics';
 import { hunterRoutes } from './routes/hunter';
 import { adsRoutes } from './routes/ads';
+import { whatsappRoutes } from './routes/whatsapp';
+import { leadsRoutes, leadsIntakeRoutes } from './routes/leads';
+import { isConnectionEvent, recordConnectionUpdate } from './lib/whatsappNumbers';
 import { recordCouponMessage } from './lib/coupons';
 import { parseCookies, resolveFbc, resolveFbp, sendViewContent, COOKIE_MAX_AGE_S } from './lib/metaCapi';
 import { recordAdClick } from './lib/metaPurchase';
@@ -201,8 +204,12 @@ async function buildApp() {
     if (!token || token !== (await getWebhookSecret())) {
       return reply.status(401).send({ error: 'Unauthorized' });
     }
-    const body = request.body as { event?: string; data?: unknown } | undefined;
-    if (isParticipantsEvent(body?.event)) {
+    const body = request.body as { event?: string; instance?: string; data?: unknown } | undefined;
+    if (isConnectionEvent(body?.event)) {
+      // A WhatsApp number connected by QR code came online / dropped.
+      recordConnectionUpdate(body?.instance, body?.data)
+        .catch((err) => server.log.error({ err }, 'Failed to record WhatsApp connection update'));
+    } else if (isParticipantsEvent(body?.event)) {
       recordParticipantsUpdate(body?.data)
         .then((r) => server.log.info({ result: r }, 'WhatsApp participants update recorded'))
         .catch((err) => server.log.error({ err }, 'Failed to record WhatsApp participants update'));
@@ -338,6 +345,10 @@ async function buildApp() {
   await server.register(analyticsRoutes, { prefix: '/analytics' });
   await server.register(hunterRoutes, { prefix: '/hunter' });
   await server.register(adsRoutes, { prefix: '/ads' });
+  await server.register(whatsappRoutes, { prefix: '/whatsapp' });
+  await server.register(leadsRoutes, { prefix: '/leads' });
+  // Public (no login): the capture page posts new leads here.
+  await server.register(leadsIntakeRoutes, { prefix: '/leads/intake' });
 
   return server;
 }

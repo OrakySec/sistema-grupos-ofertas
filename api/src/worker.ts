@@ -4,7 +4,8 @@ import prisma from './lib/prisma';
 import { addSendOfferJob, scheduleLinkMonitor, scheduleSilentGroupCheck, scheduleMemberSnapshot, scheduleShopeeHunter } from './lib/queue';
 import { hunterTick } from './lib/shopeeHunter';
 import { expireCoupons } from './lib/coupons';
-import { scheduleAdsSync } from './lib/queue';
+import { scheduleAdsSync, scheduleLeadsTick } from './lib/queue';
+import { leadsTick } from './lib/leadQueue';
 import { metaConfig, syncMeta } from './lib/metaAds';
 import { syncShopeeConversions } from './lib/shopeeConversions';
 import { sendPendingPurchases } from './lib/metaPurchase';
@@ -560,6 +561,25 @@ linkMonitorWorker.on('error', (err) => {
   console.error('[Worker] link-monitor worker error:', err);
 });
 
+// Lead adding: one tick every 30 s, at most one WhatsApp action per number
+// (the pacing itself lives in each number's safety settings).
+const leadsWorker = new Worker(
+  'leads',
+  async () => {
+    const results = await leadsTick();
+    if (results.length) console.log('[Worker] Leads:', JSON.stringify(results));
+  },
+  { connection: redis, concurrency: 1 },
+);
+
+leadsWorker.on('failed', (job, err) => {
+  console.error(`[Worker] Leads tick ${job?.id} failed:`, err.message);
+});
+
+scheduleLeadsTick().catch((err) => {
+  console.error('[Worker] Failed to schedule leads tick:', err);
+});
+
 scheduleLinkMonitor().catch((err) => {
   console.error('[Worker] Failed to schedule link-monitor repeatable job:', err);
 });
@@ -586,6 +606,7 @@ const shutdown = async (signal: string) => {
   try {
     await worker.close();
     await linkMonitorWorker.close();
+    await leadsWorker.close();
     await redis.quit();
     await prisma.$disconnect();
     console.log('[Worker] Shutdown complete');
@@ -599,4 +620,4 @@ const shutdown = async (signal: string) => {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-console.log('[Worker] Started and listening for jobs on queues: offers, link-monitor');
+console.log('[Worker] Started and listening for jobs on queues: offers, link-monitor, leads');

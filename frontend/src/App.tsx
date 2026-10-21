@@ -20,6 +20,8 @@ import Clicks from './pages/Clicks'
 import Analytics from './pages/Analytics'
 import ShopeeHunter from './pages/ShopeeHunter'
 import Ads from './pages/Ads'
+import WhatsApp from './pages/WhatsApp'
+import Leads from './pages/Leads'
 import Landing3D from './pages/Landing3D'
 import PublicNicheIndex from './pages/PublicNicheIndex'
 import PublicOffers from './pages/PublicOffers'
@@ -89,6 +91,8 @@ function AppRoutes() {
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/shopee" element={<ShopeeHunter />} />
           <Route path="/ads" element={<Ads />} />
+          <Route path="/leads" element={<Leads />} />
+          <Route path="/whatsapp" element={<WhatsApp />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/logs" element={<Logs />} />
         </Route>

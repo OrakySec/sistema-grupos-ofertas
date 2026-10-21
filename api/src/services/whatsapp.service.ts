@@ -3,6 +3,7 @@ import FormData from 'form-data';
 import fs from 'fs';
 import path from 'path';
 import prisma from '../lib/prisma';
+import { evoConfig } from '../lib/evolution';
 
 interface EvolutionGroup {
   id: string;
@@ -37,14 +38,14 @@ export class WhatsAppService {
     apiKey: string;
     instance: string;
   }> {
-    const [urlSetting, keySetting, instanceSetting] = await Promise.all([
-      prisma.setting.findUnique({ where: { key: 'evolution_api_url' } }),
-      prisma.setting.findUnique({ where: { key: 'evolution_api_key' } }),
+    const [cfg, instanceSetting] = await Promise.all([
+      // Platform credentials (EVOLUTION_API_URL/KEY env, falling back to the panel settings).
+      evoConfig(),
       prisma.setting.findUnique({ where: { key: 'evolution_instance' } }),
     ]);
 
-    const baseUrl = urlSetting?.value?.trim();
-    const apiKey = keySetting?.value?.trim();
+    const baseUrl = cfg?.url;
+    const apiKey = cfg?.key;
     const instance = instanceSetting?.value?.trim();
 
     if (!baseUrl) throw new Error('evolution_api_url is not configured in settings');

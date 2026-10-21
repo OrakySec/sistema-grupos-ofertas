@@ -530,6 +530,80 @@ export interface UnidentifiedLinks {
   domains: UnidentifiedLinkDomain[]
 }
 
+// ── WhatsApp numbers (QR code) & Leads ─────────────────────────────────────
+
+export interface WaNumber {
+  id: string
+  label: string
+  purpose: 'OFFERS' | 'LEADS'
+  name: string
+  connected: boolean
+  number: string | null
+  profileName: string | null
+  lastState: string | null
+  lastSeenAt: string | null
+  createdAt: string
+}
+
+export interface LeadSafety {
+  dailyLimit: number
+  minDelaySec: number
+  maxDelaySec: number
+  restEvery: number
+  restDays: number
+  startHour: number
+  endHour: number
+  weekdays: number[]
+  warmup: boolean
+  warmupStart: number
+  warmupStep: number
+  groupCap: number
+  inviteDailyLimit: number
+  inviteText: string
+  maxFailStreak: number
+}
+
+export interface LeadQueueStatus {
+  addsToday: number
+  invitesToday: number
+  limit: number
+  inviteLimit: number
+  queued: number
+  invitePending: number
+  nextAt: string | null
+  waitingFor: 'paused' | 'rest' | 'daily_limit' | 'window' | 'empty' | null
+  sinceRest: number
+  restEvery: number
+  paused: boolean
+  pausedReason: string | null
+  lastResult: string | null
+}
+
+export type LeadStatus = 'QUEUED' | 'ADDED' | 'INVITED' | 'INVITE_PENDING' | 'ALREADY_MEMBER' | 'NO_WHATSAPP' | 'FAILED'
+
+export interface LeadCampaignItem {
+  id: string
+  name: string
+  status: 'ACTIVE' | 'PAUSED' | 'DONE'
+  pausedReason: string | null
+  niche: string | null
+  groups: Array<{ id: string; name: string }>
+  instance: { id: string; label: string; connected: boolean; number: string | null }
+  inviteFallback: boolean
+  counts: Record<LeadStatus, number>
+  total: number
+  intakeUrl: string
+  createdAt: string
+}
+
+export interface LeadImportResult {
+  created: number
+  duplicates: number
+  invalid: number
+  invalidSamples: string[]
+  alreadyInCampaign?: number
+}
+
 class ApiClient {
   private baseUrl: string
 
@@ -878,6 +952,106 @@ class ApiClient {
 
   async getAdSalesList(from: string, to: string): Promise<{ truncated: boolean; rows: ShopeeSale[] }> {
     return this.request('GET', `/ads/sales/list?from=${from}&to=${to}`)
+  }
+
+  // ── WhatsApp numbers ──────────────────────────
+  async getWaNumbers(): Promise<{ configured: boolean; max: number; instances: WaNumber[] }> {
+    return this.request('GET', '/whatsapp/instances')
+  }
+
+  async checkEvolution(): Promise<{ ok: boolean; message: string }> {
+    return this.request('GET', '/whatsapp/check')
+  }
+
+  async createWaNumber(label: string, purpose: 'OFFERS' | 'LEADS'): Promise<{ instance: WaNumber; qrcode: string | null }> {
+    return this.request('POST', '/whatsapp/instances', { label, purpose })
+  }
+
+  async getWaNumberState(id: string): Promise<{ instance: WaNumber; status: 'connected' | 'disconnected' | 'not_created' }> {
+    return this.request('GET', `/whatsapp/instances/${id}`)
+  }
+
+  async getWaNumberQr(id: string): Promise<{ qrcode: string | null; state?: string; error?: string }> {
+    return this.request('GET', `/whatsapp/instances/${id}/qr`)
+  }
+
+  async connectWaNumber(id: string, confirm = false): Promise<{ qrcode: string | null }> {
+    return this.request('POST', `/whatsapp/instances/${id}/connect`, { confirm })
+  }
+
+  async logoutWaNumber(id: string): Promise<{ ok: boolean }> {
+    return this.request('POST', `/whatsapp/instances/${id}/logout`, {})
+  }
+
+  async updateWaNumber(id: string, data: { label?: string; purpose?: 'OFFERS' | 'LEADS' }): Promise<WaNumber> {
+    return this.request('PATCH', `/whatsapp/instances/${id}`, data)
+  }
+
+  async deleteWaNumber(id: string, force = false): Promise<{ ok: boolean }> {
+    return this.request('DELETE', `/whatsapp/instances/${id}${force ? '?force=1' : ''}`)
+  }
+
+  async getLeadSafety(id: string): Promise<{ safety: LeadSafety; defaults: LeadSafety; status: LeadQueueStatus }> {
+    return this.request('GET', `/whatsapp/instances/${id}/safety`)
+  }
+
+  async saveLeadSafety(id: string, safety: LeadSafety): Promise<{ safety: LeadSafety }> {
+    return this.request('PUT', `/whatsapp/instances/${id}/safety`, safety)
+  }
+
+  async setLeadQueuePaused(id: string, paused: boolean): Promise<LeadQueueStatus> {
+    return this.request('POST', `/whatsapp/instances/${id}/lead-pause`, { paused })
+  }
+
+  async endLeadRest(id: string): Promise<LeadQueueStatus> {
+    return this.request('POST', `/whatsapp/instances/${id}/end-rest`, {})
+  }
+
+  // ── Leads ─────────────────────────────────────
+  async getLeadOptions(): Promise<{
+    instances: Array<{ id: string; label: string; purpose: string; connected: boolean; number: string | null }>
+    niches: Array<{ id: string; name: string; groups: Array<{ id: string; name: string }> }>
+    groups: Array<{ id: string; name: string }>
+  }> {
+    return this.request('GET', '/leads/options')
+  }
+
+  async getLeadsOverview(): Promise<{
+    campaigns: LeadCampaignItem[]
+    queues: Array<LeadQueueStatus & { instanceId: string; instance: { id: string; label: string; connected: boolean; number: string | null } | null }>
+  }> {
+    return this.request('GET', '/leads/overview')
+  }
+
+  async createLeadCampaign(data: { name: string; nicheId: string | null; instanceId: string; groupIds: string[]; inviteFallback: boolean; phones: string; consent: boolean }): Promise<LeadImportResult & { id: string }> {
+    return this.request('POST', '/leads/campaigns', data)
+  }
+
+  async addLeads(id: string, phones: string, consent: boolean): Promise<LeadImportResult> {
+    return this.request('POST', `/leads/campaigns/${id}/leads`, { phones, consent })
+  }
+
+  async updateLeadCampaign(id: string, data: { status?: 'ACTIVE' | 'PAUSED'; name?: string; groupIds?: string[]; inviteFallback?: boolean }): Promise<unknown> {
+    return this.request('PATCH', `/leads/campaigns/${id}`, data)
+  }
+
+  async deleteLeadCampaign(id: string): Promise<{ ok: boolean }> {
+    return this.request('DELETE', `/leads/campaigns/${id}`)
+  }
+
+  async retryLeads(id: string, includeNoWhatsApp = false): Promise<{ requeued: number }> {
+    return this.request('POST', `/leads/campaigns/${id}/retry`, { includeNoWhatsApp })
+  }
+
+  async getCampaignLeads(id: string, params: { status?: string; q?: string; page?: number }): Promise<{
+    total: number; page: number; pages: number
+    rows: Array<{ id: string; phone: string; name: string | null; status: LeadStatus; detail: string | null; group: string | null; processedAt: string | null; createdAt: string }>
+  }> {
+    const qs = new URLSearchParams()
+    if (params.status) qs.set('status', params.status)
+    if (params.q) qs.set('q', params.q)
+    if (params.page) qs.set('page', String(params.page))
+    return this.request('GET', `/leads/campaigns/${id}/leads?${qs.toString()}`)
   }
 
   async getAdSalesRaw(): Promise<{ lastSync: { at: string; error?: string } | null; rows: Array<{ id: string; purchaseTime: string; clickTime: string | null; rawClickTime: unknown; utmContent: string | null; status: string; fields: string[] }> }> {

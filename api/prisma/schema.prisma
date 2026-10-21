@@ -475,6 +475,103 @@ model AdClick {
   @@index([createdAt])
 }
 
+// ── SaaS accounts (minimal slice) ───────────────────────────────────────────
+// Only "tenant_default" (the original owner) exists until the multi-tenant
+// foundation lands (docs/plano-multicliente.md). New features are scoped to a
+// tenant from day one, so they won't need rework later.
+model Tenant {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  createdAt DateTime @default(now())
+
+  whatsappInstances WhatsAppInstance[]
+  leadCampaigns     LeadCampaign[]
+  leads             Lead[]
+}
+
+// A WhatsApp number connected by QR code (one Evolution instance each).
+model WhatsAppInstance {
+  id          String    @id
+  tenantId    String
+  name        String    @unique // Evolution instance name: <prefix>_<id>
+  label       String
+  purpose     String    @default("LEADS") // OFFERS (posts the offers) | LEADS (adds leads to groups)
+  connected   Boolean   @default(false)
+  number      String?
+  profileName String?
+  lastState   String?
+  lastSeenAt  DateTime?
+
+  // Lead-adding safety settings (lib/leadQueue.ts → LeadSafety) and queue state.
+  leadSafety       Json?
+  leadPaused       Boolean   @default(false)
+  leadPausedReason String?
+  leadNextAt       DateTime?
+  leadRestUntil    DateTime?
+  leadSinceRest    Int       @default(0)
+  leadFailStreak   Int       @default(0)
+  leadWarmupFrom   DateTime?
+  leadLastResult   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant    Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  campaigns LeadCampaign[]
+
+  @@index([tenantId])
+}
+
+// A batch of opt-in leads (from the user's own capture page) to be added to
+// the WhatsApp groups of a niche, through one number's safe queue.
+model LeadCampaign {
+  id             String   @id @default(cuid())
+  tenantId       String
+  name           String // "nicho dos leads" — free label
+  nicheId        String? // destination niche (for display; groups are in groupIds)
+  instanceId     String
+  groupIds       Json // DestinationGroup ids, filled in this order
+  inviteFallback Boolean  @default(true) // privacy blocks direct add → send the link in private
+  status         String   @default("ACTIVE") // ACTIVE | PAUSED | DONE
+  pausedReason   String?
+  intakeToken    String   @unique // public webhook: POST /api/leads/intake/<token>
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  instance WhatsAppInstance @relation(fields: [instanceId], references: [id], onDelete: Restrict)
+  leads    Lead[]
+
+  @@index([tenantId, createdAt])
+}
+
+model Lead {
+  id          String    @id @default(cuid())
+  tenantId    String
+  campaignId  String
+  phone       String // 55DDDNNNNNNNN
+  name        String?
+  // QUEUED | ADDED | INVITED | INVITE_PENDING (privacy blocked the add and the
+  // day's invite quota was used — invited on a later day) | ALREADY_MEMBER |
+  // NO_WHATSAPP | FAILED
+  status      String    @default("QUEUED")
+  groupId     String? // DestinationGroup it went to
+  instanceId  String? // number that processed it (daily limits)
+  detail      String?
+  attempts    Int       @default(0)
+  processedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  tenant   Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  campaign LeadCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, phone])
+  @@index([campaignId, status, createdAt])
+  @@index([instanceId, processedAt])
+  @@index([tenantId, status])
+}
+
 // Monitoring rule on one campaign / ad set / ad.
 model MetaRule {
   id          String    @id @default(cuid())
