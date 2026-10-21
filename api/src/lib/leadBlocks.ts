@@ -136,9 +136,48 @@ export async function detectLeadLeaves(): Promise<Array<{ group: string; left?: 
   return out;
 }
 
-/** Members of one of the account's groups, as phone numbers, for a new lead list. */
-export async function membersForImport(tenantId: string, groupId: string, preferredInstanceId: string) {
-  const g = await prisma.destinationGroup.findFirst({ where: { id: groupId, type: 'WHATSAPP' } });
+/**
+ * Every WhatsApp group the account's connected numbers are in (live from the
+ * Evolution), merged by group — the sources offered for "Membros de um grupo meu".
+ */
+export async function groupsOfConnectedNumbers(tenantId: string) {
+  const instances = await prisma.whatsAppInstance.findMany({ where: { tenantId, connected: true }, orderBy: { createdAt: 'asc' } });
+  const registered = await prisma.destinationGroup.findMany({ where: { type: 'WHATSAPP' }, select: { id: true, chatId: true } });
+  const regByJid = new Map(registered.map((r) => [r.chatId, r.id]));
+  const map = new Map<string, { jid: string; name: string; size: number | null; announce: boolean; via: string[]; registeredId: string | null }>();
+  const errors: string[] = [];
+  await Promise.all(instances.map(async (inst) => {
+    const r = await evo('GET', `/group/fetchAllGroups/${inst.name}?getParticipants=false`, undefined, 90000);
+    if (!r.ok) { errors.push(`${inst.label}: HTTP ${r.status}`); return; }
+    const list: any[] = Array.isArray(r.data) ? r.data : [];
+    for (const g of list) {
+      const jid = String(g?.id ?? '');
+      if (!jid.endsWith('@g.us') || g?.isCommunity) continue; // a community's parent has no members of its own
+      const row = map.get(jid) ?? {
+        jid, name: String(g?.subject ?? jid), size: Number.isFinite(Number(g?.size)) ? Number(g.size) : null,
+        announce: !!g?.isCommunityAnnounce, via: [], registeredId: regByJid.get(jid) ?? null,
+      };
+      if (!row.via.includes(inst.label)) row.via.push(inst.label);
+      map.set(jid, row);
+    }
+  }));
+  const groups = [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+  return { groups, errors };
+}
+
+/**
+ * Members of one of the account's groups, as phone numbers, for a new lead list.
+ * `source` is a group JID (…@g.us, any group a connected number is in) or the
+ * id of a registered DestinationGroup.
+ */
+export async function membersForImport(tenantId: string, source: string, preferredInstanceId: string, sourceName?: string) {
+  let g: { chatId: string; name: string } | null;
+  if (source.endsWith('@g.us')) {
+    const reg = await prisma.destinationGroup.findFirst({ where: { chatId: source, type: 'WHATSAPP' }, select: { chatId: true, name: true } });
+    g = reg ?? { chatId: source, name: (sourceName || source).slice(0, 100) };
+  } else {
+    g = await prisma.destinationGroup.findFirst({ where: { id: source, type: 'WHATSAPP' }, select: { chatId: true, name: true } });
+  }
   if (!g) return { ok: false as const, error: 'Grupo não encontrado' };
   const instances = await prisma.whatsAppInstance.findMany({ where: { tenantId } });
   const ordered = [
@@ -161,5 +200,5 @@ export async function membersForImport(tenantId: string, groupId: string, prefer
     if (ownNumbers.some((n) => samePhone(n, phone))) { own++; continue; }
     phones.push(phone);
   }
-  return { ok: true as const, groupName: g.name, total: read.list.length, phones, hidden, admins, own };
+  return { ok: true as const, groupName: g.name, chatId: g.chatId, total: read.list.length, phones, hidden, admins, own };
 }

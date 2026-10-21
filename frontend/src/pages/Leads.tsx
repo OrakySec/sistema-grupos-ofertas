@@ -87,7 +87,21 @@ function NewCampaignModal({ onClose, onCreated }: { onClose: () => void; onCreat
   const [inviteFallback, setInviteFallback] = useState(true)
   const [phones, setPhones] = useState('')
   const [source, setSource] = useState<'LIST' | 'GROUP'>('LIST')
-  const [sourceGroupId, setSourceGroupId] = useState('')
+  const [sourceGroupId, setSourceGroupId] = useState('') // group JID
+  const [srcGroups, setSrcGroups] = useState<Awaited<ReturnType<typeof api.getLeadSourceGroups>> | null>(null)
+  const [srcLoading, setSrcLoading] = useState(false)
+  const [srcFilter, setSrcFilter] = useState('')
+  const srcGroup = srcGroups?.groups.find((g) => g.jid === sourceGroupId) ?? null
+
+  // Every group the connected numbers are in — fetched live when this source is picked.
+  useEffect(() => {
+    if (source !== 'GROUP' || srcGroups || srcLoading) return
+    setSrcLoading(true)
+    api.getLeadSourceGroups()
+      .then(setSrcGroups)
+      .catch((err) => { addToast(err instanceof Error ? err.message : 'Erro ao buscar os grupos', 'error'); setSrcGroups({ groups: [], errors: [] }) })
+      .finally(() => setSrcLoading(false))
+  }, [source, srcGroups, srcLoading, addToast])
   const [consent, setConsent] = useState(false)
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<LeadImportResult | null>(null)
@@ -101,7 +115,7 @@ function NewCampaignModal({ onClose, onCreated }: { onClose: () => void; onCreat
   }, [addToast])
 
   const niche = opts?.niches.find((n) => n.id === nicheId)
-  const groupChoices = (niche ? niche.groups : opts?.groups ?? []).filter((g) => source !== 'GROUP' || g.id !== sourceGroupId)
+  const groupChoices = (niche ? niche.groups : opts?.groups ?? []).filter((g) => source !== 'GROUP' || !srcGroup || g.id !== srcGroup.registeredId)
   const toggleGroup = (id: string) => setGroupIds((g) => (g.includes(id) ? g.filter((x) => x !== id) : [...g, id]))
   const chosen = opts?.instances.find((i) => i.id === instanceId)
   const lines = phones.split(/\r?\n/).filter((l) => l.trim()).length
@@ -111,7 +125,7 @@ function NewCampaignModal({ onClose, onCreated }: { onClose: () => void; onCreat
     try {
       const r = await api.createLeadCampaign({
         name: name.trim(), nicheId: nicheId || null, instanceId, groupIds, inviteFallback, consent,
-        ...(source === 'GROUP' ? { sourceGroupId } : { phones }),
+        ...(source === 'GROUP' ? { sourceGroupId, sourceGroupName: srcGroup?.name } : { phones }),
       })
       setResult(r)
       onCreated()
@@ -212,11 +226,47 @@ function NewCampaignModal({ onClose, onCreated }: { onClose: () => void; onCreat
             </div>
           ) : (
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="label">Grupo de origem</label>
-              <select className="select" value={sourceGroupId} onChange={(e) => { setSourceGroupId(e.target.value); setGroupIds((ids) => ids.filter((id) => id !== e.target.value)) }}>
-                <option value="">— escolha o grupo —</option>
-                {opts.groups.filter((g) => !groupIds.includes(g.id)).map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-              </select>
+              <label className="label">
+                Grupo de origem
+                {srcGroups && <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}> · {int(srcGroups.groups.length)} grupos dos seus números conectados</span>}
+              </label>
+              {srcLoading || !srcGroups ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.82rem', color: 'var(--text-muted)', padding: '8px 0' }}>
+                  <span className="spinner spinner-sm" /> Buscando os grupos em que seus números estão…
+                </div>
+              ) : (
+                <>
+                  {srcGroups.groups.length > 12 && (
+                    <input className="input" placeholder="Filtrar pelo nome do grupo" value={srcFilter} onChange={(e) => setSrcFilter(e.target.value)} style={{ marginBottom: 6 }} />
+                  )}
+                  <select
+                    className="select"
+                    value={sourceGroupId}
+                    onChange={(e) => {
+                      const jid = e.target.value
+                      setSourceGroupId(jid)
+                      const reg = srcGroups.groups.find((g) => g.jid === jid)?.registeredId
+                      if (reg) setGroupIds((ids) => ids.filter((id) => id !== reg))
+                    }}
+                  >
+                    <option value="">— escolha o grupo —</option>
+                    {srcGroups.groups
+                      .filter((g) => !srcFilter.trim() || g.name.toLowerCase().includes(srcFilter.trim().toLowerCase()) || g.jid === sourceGroupId)
+                      .filter((g) => !g.registeredId || !groupIds.includes(g.registeredId))
+                      .map((g) => (
+                        <option key={g.jid} value={g.jid}>
+                          {g.name}{g.size !== null ? ` (${int(g.size)} membros)` : ''}{g.announce ? ' · avisos da comunidade' : ''} · {g.via.join(', ')}
+                        </option>
+                      ))}
+                  </select>
+                  {srcGroups.errors.length > 0 && (
+                    <div style={{ fontSize: '0.74rem', color: 'var(--accent-warning)', marginTop: 6 }}>Não consegui listar os grupos de: {srcGroups.errors.join(' · ')}</div>
+                  )}
+                  {srcGroups.groups.length === 0 && (
+                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 6 }}>Nenhum grupo encontrado. Confira se os números estão conectados em WhatsApp.</div>
+                  )}
+                </>
+              )}
               <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.5 }}>
                 O sistema lê os membros na hora de criar. Admins e os seus próprios números ficam de fora, e quem já saiu de algum grupo seu também.
                 Membros com o número oculto pelo WhatsApp não têm como ser adicionados.

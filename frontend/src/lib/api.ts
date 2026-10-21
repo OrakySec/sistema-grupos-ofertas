@@ -1019,6 +1019,13 @@ class ApiClient {
     return this.request('GET', '/leads/options')
   }
 
+  async getLeadSourceGroups(): Promise<{
+    groups: Array<{ jid: string; name: string; size: number | null; announce: boolean; via: string[]; registeredId: string | null }>
+    errors: string[]
+  }> {
+    return this.request('GET', '/leads/source-groups')
+  }
+
   async getLeadsOverview(): Promise<{
     campaigns: LeadCampaignItem[]
     queues: Array<LeadQueueStatus & { instanceId: string; instance: { id: string; label: string; connected: boolean; number: string | null } | null }>
@@ -1026,7 +1033,7 @@ class ApiClient {
     return this.request('GET', '/leads/overview')
   }
 
-  async createLeadCampaign(data: { name: string; nicheId: string | null; instanceId: string; groupIds: string[]; inviteFallback: boolean; phones?: string; sourceGroupId?: string; consent: boolean }): Promise<LeadImportResult & { id: string }> {
+  async createLeadCampaign(data: { name: string; nicheId: string | null; instanceId: string; groupIds: string[]; inviteFallback: boolean; phones?: string; sourceGroupId?: string; sourceGroupName?: string; consent: boolean }): Promise<LeadImportResult & { id: string }> {
     return this.request('POST', '/leads/campaigns', data)
   }
 

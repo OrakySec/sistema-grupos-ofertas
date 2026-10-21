@@ -10,7 +10,7 @@ import { tenantIdOf } from '../lib/tenant';
 import { normalizePhoneBR } from '../lib/evolution';
 import { parseLeadLines, queueStatus } from '../lib/leadQueue';
 import { shortenerDomain } from '../lib/shortener';
-import { findBlock, membersForImport, samePhone } from '../lib/leadBlocks';
+import { findBlock, groupsOfConnectedNumbers, membersForImport, samePhone } from '../lib/leadBlocks';
 
 const STATUSES = ['QUEUED', 'ADDED', 'INVITED', 'INVITE_PENDING', 'ALREADY_MEMBER', 'NO_WHATSAPP', 'BLOCKED', 'FAILED'] as const;
 const MAX_IMPORT = 20000;
@@ -67,6 +67,9 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
     };
   });
 
+  // GET /leads/source-groups — every group the connected numbers are in (live)
+  fastify.get('/source-groups', async (request) => groupsOfConnectedNumbers(tenantIdOf(request)));
+
   // GET /leads/overview — campaigns with counts + each number's queue status
   fastify.get('/overview', async (request) => {
     const tenantId = tenantIdOf(request);
@@ -110,7 +113,7 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
 
   // POST /leads/campaigns — new campaign + its leads, from a pasted list or
   // from the members of one of the account's WhatsApp groups (sourceGroupId).
-  fastify.post<{ Body: { name?: string; nicheId?: string | null; instanceId?: string; groupIds?: string[]; inviteFallback?: boolean; phones?: string; sourceGroupId?: string; consent?: boolean } }>(
+  fastify.post<{ Body: { name?: string; nicheId?: string | null; instanceId?: string; groupIds?: string[]; inviteFallback?: boolean; phones?: string; sourceGroupId?: string; sourceGroupName?: string; consent?: boolean } }>(
     '/campaigns',
     async (request, reply) => {
       const tenantId = tenantIdOf(request);
@@ -131,9 +134,10 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       let incoming: Array<{ phone: string; name: string | null }>;
       let report: { duplicates: number; invalid: number; invalidSamples: string[]; fromGroup?: { group: string; total: number; hidden: number; admins: number; own: number } };
       if (b.sourceGroupId) {
-        if (ordered.includes(b.sourceGroupId)) return reply.code(400).send({ message: 'O grupo de origem não pode ser também um dos destinos.' });
-        const m = await membersForImport(tenantId, b.sourceGroupId, instance.id);
+        const m = await membersForImport(tenantId, String(b.sourceGroupId), instance.id, b.sourceGroupName);
         if (!m.ok) return reply.code(502).send({ message: m.error });
+        const targets = await prisma.destinationGroup.findMany({ where: { id: { in: ordered } }, select: { chatId: true } });
+        if (targets.some((t) => t.chatId === m.chatId)) return reply.code(400).send({ message: 'O grupo de origem não pode ser também um dos destinos.' });
         source = 'GROUP';
         incoming = m.phones.map((phone) => ({ phone, name: null }));
         report = { duplicates: 0, invalid: 0, invalidSamples: [], fromGroup: { group: m.groupName, total: m.total, hidden: m.hidden, admins: m.admins, own: m.own } };
