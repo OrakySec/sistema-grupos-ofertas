@@ -19,8 +19,9 @@
  *     the queue, each within its own limits; someone already added/invited to
  *     the same group by another list is skipped (DUPLICATE)
  *
- * Evolution calls (v2): /chat/whatsappNumbers, /group/participants,
- * /group/updateParticipant (action "add"), /group/inviteCode, /message/sendText.
+ * Evolution calls (v2): /group/participants (cached 1 h per number+group),
+ * /group/updateParticipant (action "add" — the only per-lead WhatsApp call),
+ * /group/inviteCode + /message/sendText (private invite, when enabled).
  */
 import prisma from './prisma';
 import { evo, getInstanceInfo, getState } from './evolution';
@@ -175,17 +176,38 @@ export function parseLeadLines(text: string, normalize: (raw: string) => string 
 
 const digits = (s: unknown) => String(s ?? '').replace(/\D/g, '');
 
-/** null = couldn't check (don't block on it). */
-async function hasWhatsApp(instance: string, phone: string): Promise<{ exists: boolean; jid: string | null } | null> {
-  const r = await evo('POST', `/chat/whatsappNumbers/${instance}`, { numbers: [phone] });
-  if (!r.ok) return null;
-  const list: any[] = Array.isArray(r.data) ? r.data : [];
-  const hit = list.find((x) => digits(x?.number).endsWith(phone.slice(-8)) || digits(x?.jid).endsWith(phone.slice(-8))) ?? list[0];
-  if (!hit) return null;
-  return { exists: !!hit.exists, jid: hit.jid ? String(hit.jid) : null };
-}
+// No "does this number have WhatsApp?" lookup (/chat/whatsappNumbers) before
+// adding: on Evolution 2.3.7 that check has known @lid problems (fixed only in
+// the 2.4.0 pre-releases) and the numbers were being logged out (401
+// device_removed) around queue actions. The add result itself says when a
+// number isn't on WhatsApp. The queue now makes one WhatsApp call per lead.
 
 interface GroupInfo { ok: boolean; error?: string; size: number; memberDigits: Set<string>; selfIsAdmin: boolean | null }
+
+// Participant list per (number, group), read at most once an hour instead of
+// once per lead; kept up to date in memory as people are added.
+const GROUP_TTL_MS = 60 * 60 * 1000;
+const groupCache = new Map<string, { at: number; info: GroupInfo }>();
+
+async function cachedGroupInfo(instance: string, groupJid: string, selfNumber: string | null): Promise<GroupInfo> {
+  const key = `${instance}|${groupJid}`;
+  const hit = groupCache.get(key);
+  if (hit && Date.now() - hit.at < GROUP_TTL_MS) return hit.info;
+  const info = await groupInfo(instance, groupJid, selfNumber);
+  if (info.ok) groupCache.set(key, { at: Date.now(), info });
+  return info;
+}
+
+function noteJoined(instance: string, groupJid: string, phone: string) {
+  const hit = groupCache.get(`${instance}|${groupJid}`);
+  if (!hit) return;
+  hit.info.size++;
+  hit.info.memberDigits.add(digits(phone));
+}
+
+function forgetGroup(instance: string, groupJid: string) {
+  groupCache.delete(`${instance}|${groupJid}`);
+}
 
 async function groupInfo(instance: string, groupJid: string, selfNumber: string | null): Promise<GroupInfo> {
   const r = await evo('GET', `/group/participants/${instance}?groupJid=${encodeURIComponent(groupJid)}`);
@@ -217,6 +239,7 @@ function isMember(info: GroupInfo, phone: string) {
 type AddOutcome =
   | { kind: 'ADDED' }
   | { kind: 'ALREADY' }
+  | { kind: 'NO_WHATSAPP' }
   | { kind: 'NEEDS_INVITE'; why: string }
   | { kind: 'FAILED'; why: string; blocking: boolean };
 
@@ -244,6 +267,7 @@ async function addToGroup(instance: string, groupJid: string, phone: string): Pr
   if (status === '409') return { kind: 'ALREADY' };
   if (status === '403') return { kind: 'NEEDS_INVITE', why: 'A privacidade da pessoa não permite ser adicionada direto' };
   if (status === '408') return { kind: 'NEEDS_INVITE', why: 'A pessoa saiu do grupo há pouco — o WhatsApp só deixa voltar por convite' };
+  if (status === '400' || status === '404') return { kind: 'NO_WHATSAPP' };
   return { kind: 'FAILED', why: `WhatsApp recusou (status ${status})`, blocking: false };
 }
 
@@ -411,17 +435,14 @@ async function processInstance(instanceId: string, now: Date): Promise<string | 
     return sendInvite(g, 'Convite que tinha ficado para hoje');
   }
 
-  // 1. Does the number have WhatsApp?
-  const check = await hasWhatsApp(inst.name, lead.phone);
-  if (check && !check.exists) return finish('NO_WHATSAPP', 'Número sem WhatsApp', null, { touched: false });
-
-  // 2. First group of the campaign that has room (and where they aren't yet).
+  // 1. First group of the campaign that has room (and where they aren't yet) —
+  //    from the hourly participant cache, no extra WhatsApp call per lead.
   const groupIds: string[] = Array.isArray(lead.campaign.groupIds) ? (lead.campaign.groupIds as string[]) : [];
   const groups = await prisma.destinationGroup.findMany({ where: { id: { in: groupIds }, type: 'WHATSAPP', isActive: true } });
   const ordered = groupIds.map((id) => groups.find((g) => g.id === id)).filter(Boolean) as typeof groups;
   let target: (typeof groups)[number] | null = null;
   for (const g of ordered) {
-    const info = await groupInfo(inst.name, g.chatId, inst.number);
+    const info = await cachedGroupInfo(inst.name, g.chatId, inst.number);
     if (!info.ok) {
       await pauseCampaign(lead.campaignId, `Não consegui ler o grupo "${g.name}" com este número (ele participa do grupo?): ${info.error}`);
       return `campanha pausada: grupo ${g.name} ilegível`;
@@ -440,11 +461,19 @@ async function processInstance(instanceId: string, now: Date): Promise<string | 
     return 'campanha pausada: sem grupo com vaga';
   }
 
-  // 3. Add.
+  // 2. Add — the only WhatsApp action for this lead.
   const add = await addToGroup(inst.name, target.chatId, lead.phone);
-  if (add.kind === 'ADDED') return finish('ADDED', `Adicionado ao grupo ${target.name}`, target.id, { touched: true, added: true });
-  if (add.kind === 'ALREADY') return finish('ALREADY_MEMBER', `Já estava no grupo ${target.name}`, target.id, { touched: true });
+  if (add.kind === 'ADDED') {
+    noteJoined(inst.name, target.chatId, lead.phone);
+    return finish('ADDED', `Adicionado ao grupo ${target.name}`, target.id, { touched: true, added: true });
+  }
+  if (add.kind === 'ALREADY') {
+    noteJoined(inst.name, target.chatId, lead.phone);
+    return finish('ALREADY_MEMBER', `Já estava no grupo ${target.name}`, target.id, { touched: true });
+  }
+  if (add.kind === 'NO_WHATSAPP') return finish('NO_WHATSAPP', 'O WhatsApp recusou o número (sem WhatsApp ou inválido)', target.id, { touched: true });
   if (add.kind === 'FAILED') {
+    forgetGroup(inst.name, target.chatId); // re-read the group next time (admin rights may have changed)
     if (add.why.includes('não é admin')) {
       await pauseCampaign(lead.campaignId, `O número "${inst.label}" não é admin do grupo "${target.name}". Torne-o admin e retome a campanha.`);
     }
