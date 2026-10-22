@@ -1031,8 +1031,8 @@ class ApiClient {
     return this.request('GET', `/whatsapp/instances/${id}/qr`)
   }
 
-  async connectWaNumber(id: string, confirm = false): Promise<{ qrcode: string | null }> {
-    return this.request('POST', `/whatsapp/instances/${id}/connect`, { confirm })
+  async connectWaNumber(id: string, confirm = false, fresh = false): Promise<{ qrcode: string | null; connected?: boolean }> {
+    return this.request('POST', `/whatsapp/instances/${id}/connect`, { confirm, fresh })
   }
 
   async logoutWaNumber(id: string): Promise<{ ok: boolean }> {

@@ -30,20 +30,23 @@ function QrModal({ number, initialQr, onClose, onConnected }: {
   const [status, setStatus] = useState<QrStatus>(initialQr ? 'qrcode' : 'loading')
   const [qr, setQr] = useState<string | null>(initialQr ?? null)
   const [error, setError] = useState<string | null>(null)
+  const [resuming, setResuming] = useState(false)
   const started = useRef(false)
 
   const fail = (msg: string) => { setError(msg); setStatus('error') }
 
-  const connect = useCallback(async (confirm = false) => {
-    setStatus('loading'); setError(null)
+  // fresh = false: the server first tries to bring the session back without a QR.
+  const connect = useCallback(async (confirm = false, fresh = false) => {
+    setStatus('loading'); setError(null); setResuming(!fresh && !number.connected)
     try {
-      const r = await api.connectWaNumber(number.id, confirm)
+      const r = await api.connectWaNumber(number.id, confirm, fresh)
+      if (r.connected) { setQr(null); setStatus('connected'); onConnected(); return }
       if (r.qrcode) { setQr(r.qrcode); setStatus('qrcode') }
       else fail(`O ${PROVIDER_LABEL[number.provider]} não devolveu o QR Code. Tente "Novo QR" ou "Resetar".`)
     } catch (err) {
       fail(err instanceof Error ? err.message : 'Não foi possível conectar.')
     }
-  }, [number.id, number.provider])
+  }, [number.id, number.provider, number.connected, onConnected])
 
   // Opened without a QR in hand ("Conectar" on an existing number): (re)create it now.
   useEffect(() => {
@@ -80,7 +83,7 @@ function QrModal({ number, initialQr, onClose, onConnected }: {
     <Modal isOpen onClose={onClose} title={`Conectar · ${number.label}`} width={460}>
       {status === 'loading' && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '36px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-          <span className="spinner" /> Preparando a conexão…
+          <span className="spinner" /> {resuming ? 'Tentando reconectar sem QR Code… (se não der, aparece um QR novo)' : 'Preparando a conexão…'}
         </div>
       )}
 
@@ -95,7 +98,7 @@ function QrModal({ number, initialQr, onClose, onConnected }: {
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn btn-secondary btn-sm" onClick={newQr}><Icon name="refresh" /> Novo QR</button>
-            <button className="btn btn-ghost btn-sm" onClick={() => connect(true)}>Resetar conexão</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => connect(true, true)}>Resetar conexão</button>
           </div>
         </div>
       )}
@@ -112,7 +115,7 @@ function QrModal({ number, initialQr, onClose, onConnected }: {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div className="alert alert-error">{error}</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button className="btn btn-primary" onClick={() => connect(true)}>Tentar de novo</button>
+            <button className="btn btn-primary" onClick={() => connect(true, true)}>Tentar de novo</button>
             <button className="btn btn-ghost" onClick={onClose}>Fechar</button>
           </div>
         </div>

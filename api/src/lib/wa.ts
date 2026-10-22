@@ -85,6 +85,43 @@ export async function remove(name: string, provider?: Provider) {
   return (await isWaha(name, provider)) ? wahaApi.deleteSession(name) : evolution.deleteInstance(name);
 }
 
+/**
+ * Brings a dropped session back with the credentials it already has — no QR.
+ * Works when WhatsApp only closed the connection; when it really unlinked the
+ * device the API ends up asking for a QR, which counts as "didn't come back"
+ * (a WAHA session is then stopped so it doesn't sit generating QRs).
+ */
+export async function resume(name: string, provider?: Provider, waitMs = 20000): Promise<boolean> {
+  const p = provider ?? (await providerOf(name));
+  if (p === 'WAHA') {
+    const s = await wahaApi.waha('GET', `/api/sessions/${enc(name)}`, undefined, 15000);
+    if (s.status === 404 || !s.ok) return false;
+    const status = String(s.data?.status ?? '');
+    if (status === 'WORKING') return true;
+    if (status === 'FAILED') await wahaApi.waha('POST', `/api/sessions/${enc(name)}/stop`, {});
+    await wahaApi.waha('POST', `/api/sessions/${enc(name)}/${status === 'STOPPED' || status === 'FAILED' ? 'start' : 'restart'}`, {});
+  } else {
+    const r = await evolution.evo('GET', `/instance/connect/${name}`, undefined, 30000);
+    if (r.status === 404) return false;
+    if ((r.data?.instance?.state ?? r.data?.state) === 'open') return true;
+  }
+  for (let waited = 0; waited < waitMs; waited += 4000) {
+    await evolution.sleep(4000);
+    if (p === 'WAHA') {
+      const s = await wahaApi.waha('GET', `/api/sessions/${enc(name)}`, undefined, 15000);
+      const status = String(s.data?.status ?? '');
+      if (status === 'WORKING') return true;
+      if (status === 'SCAN_QR_CODE' || status === 'FAILED') {
+        await wahaApi.waha('POST', `/api/sessions/${enc(name)}/stop`, {});
+        return false;
+      }
+    } else if ((await evolution.getState(name)) === 'open') {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** Reach-out timelock (WAHA only; the Evolution doesn't expose it → null = unknown). */
 export async function reachoutLock(name: string): Promise<{ active: boolean; until: Date | null } | null> {
   return (await isWaha(name)) ? wahaApi.getReachoutTimelock(name).catch(() => null) : null;

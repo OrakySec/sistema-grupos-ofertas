@@ -11,7 +11,7 @@ import { tenantIdOf } from '../lib/tenant';
 import { checkGlobalKey, disconnectReasonText } from '../lib/evolution';
 import { checkWahaKey } from '../lib/waha';
 import {
-  PROVIDERS, PROVIDER_LABEL, asProvider, createWithQr, defaultProvider, forgetProvider, getQr, logout, providerConfigured, remove,
+  PROVIDERS, PROVIDER_LABEL, asProvider, createWithQr, defaultProvider, forgetProvider, getQr, logout, providerConfigured, remove, resume,
   type Provider,
 } from '../lib/wa';
 import {
@@ -114,14 +114,20 @@ export const whatsappRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     return r;
   });
 
-  // POST /whatsapp/instances/:id/connect — recreate + QR ("Conectar" / "Resetar")
-  fastify.post<{ Params: { id: string }; Body: { confirm?: boolean } }>('/instances/:id/connect', async (request, reply) => {
+  // POST /whatsapp/instances/:id/connect { confirm?, fresh? } — "Conectar": first tries to bring the
+  // session back with its saved credentials (no QR); otherwise / with fresh ("Resetar") recreate + QR.
+  fastify.post<{ Params: { id: string }; Body: { confirm?: boolean; fresh?: boolean } }>('/instances/:id/connect', async (request, reply) => {
     const row = await own(request, request.params.id);
     if (!row) return reply.code(404).send({ message: 'Número não encontrado' });
     if (row.purpose === 'OFFERS' && row.connected && request.body?.confirm !== true) {
       return reply.code(409).send({ message: 'Este número posta as ofertas. Reconectar derruba os envios até escanear o QR de novo.' });
     }
-    const { qrcode, error } = await createWithQr(row.name, row.purpose, asProvider(row.provider) ?? 'EVOLUTION');
+    const provider = asProvider(row.provider) ?? 'EVOLUTION';
+    if (!row.connected && row.lastSeenAt && request.body?.fresh !== true && (await resume(row.name, provider).catch(() => false))) {
+      await refreshInstance(row.id);
+      return { qrcode: null, connected: true };
+    }
+    const { qrcode, error } = await createWithQr(row.name, row.purpose, provider);
     if (error && !qrcode) return reply.code(502).send({ message: error });
     await prisma.whatsAppInstance.update({ where: { id: row.id }, data: { connected: false, lastState: 'connecting' } });
     const whErr = await registerWebhook(row.name, row.purpose);
