@@ -33,6 +33,9 @@ export function extractWhatsAppInviteCode(url: string): string | null {
 }
 
 export class WhatsAppService {
+  /** instanceOverride: send through this Evolution instance instead of the main number. */
+  constructor(private readonly instanceOverride?: string) {}
+
   private async getConfig(): Promise<{
     baseUrl: string;
     apiKey: string;
@@ -41,12 +44,12 @@ export class WhatsAppService {
     const [cfg, instanceSetting] = await Promise.all([
       // Platform credentials (EVOLUTION_API_URL/KEY env, falling back to the panel settings).
       evoConfig(),
-      prisma.setting.findUnique({ where: { key: 'evolution_instance' } }),
+      this.instanceOverride ? null : prisma.setting.findUnique({ where: { key: 'evolution_instance' } }),
     ]);
 
     const baseUrl = cfg?.url;
     const apiKey = cfg?.key;
-    const instance = instanceSetting?.value?.trim();
+    const instance = (this.instanceOverride ?? instanceSetting?.value)?.trim();
 
     if (!baseUrl) throw new Error('evolution_api_url is not configured in settings');
     if (!apiKey) throw new Error('evolution_api_key is not configured in settings');

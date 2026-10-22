@@ -146,10 +146,14 @@ model DeliveryLog {
   destinationGroupId String
   status             DeliveryStatus
   errorMessage       String?
+  // WhatsApp: which number (Evolution instance name) posted it.
+  senderInstance     String?
   sentAt             DateTime       @default(now())
 
   offer            Offer            @relation(fields: [offerId], references: [id])
   destinationGroup DestinationGroup @relation(fields: [destinationGroupId], references: [id])
+
+  @@index([senderInstance, sentAt])
 }
 
 model Setting {
@@ -512,7 +516,10 @@ model WhatsAppInstance {
   tenantId           String
   name               String    @unique // Evolution instance name: <prefix>_<id>
   label              String
-  purpose            String    @default("LEADS") // OFFERS (posts the offers) | LEADS (adds leads to groups)
+  purpose            String    @default("LEADS") // OFFERS (main number: alerts, analytics, link checks) | LEADS (adds leads to groups)
+  // Takes part in posting the offers: each WhatsApp group gets them from a
+  // random connected number that is admin there (warms numbers up too).
+  sendsOffers        Boolean   @default(false)
   connected          Boolean   @default(false)
   number             String?
   profileName        String?

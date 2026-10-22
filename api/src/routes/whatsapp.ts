@@ -12,12 +12,14 @@ import {
   MAX_NUMBERS, instanceNameFor, newInstanceId, refreshInstance, registerWebhook, setOffersInstance,
 } from '../lib/whatsappNumbers';
 import { DEFAULT_SAFETY, queueStatus, safetyOf } from '../lib/leadQueue';
+import { brtDayStart } from '../lib/time';
 
 const PURPOSES = new Set(['OFFERS', 'LEADS']);
 
-function view(row: any) {
+function view(row: any, offersToday?: number) {
   return {
     id: row.id, label: row.label, purpose: row.purpose, name: row.name,
+    sendsOffers: !!row.sendsOffers, offersToday: offersToday ?? 0,
     connected: row.connected, number: row.number, profileName: row.profileName,
     lastState: row.liveState ?? row.lastState, lastSeenAt: row.lastSeenAt, createdAt: row.createdAt,
     lastDisconnectAt: row.lastDisconnectAt ?? null,
@@ -37,10 +39,17 @@ export const whatsappRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     const tenantId = tenantIdOf(request);
     const rows = await prisma.whatsAppInstance.findMany({ where: { tenantId }, orderBy: { createdAt: 'asc' } });
     const live = await Promise.all(rows.map((r) => refreshInstance(r.id).catch(() => r)));
+    // Offers each number posted today (Brasília day).
+    const sent = await prisma.deliveryLog.groupBy({
+      by: ['senderInstance'],
+      where: { status: 'SUCCESS', senderInstance: { in: rows.map((r) => r.name) }, sentAt: { gte: brtDayStart(0) } },
+      _count: { _all: true },
+    });
+    const sentBy = new Map(sent.map((s) => [s.senderInstance, s._count._all]));
     return {
       configured: !!(await evoConfig()),
       max: MAX_NUMBERS,
-      instances: live.filter(Boolean).map(view),
+      instances: live.filter(Boolean).map((r: any) => view(r, sentBy.get(r.name) ?? 0)),
     };
   });
 
@@ -48,7 +57,7 @@ export const whatsappRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   fastify.get('/check', async () => checkGlobalKey());
 
   // POST /whatsapp/instances { label, purpose } — creates the number and returns its QR
-  fastify.post<{ Body: { label?: string; purpose?: string } }>('/instances', async (request, reply) => {
+  fastify.post<{ Body: { label?: string; purpose?: string; sendsOffers?: boolean } }>('/instances', async (request, reply) => {
     const tenantId = tenantIdOf(request);
     if (!(await evoConfig())) return reply.code(400).send({ message: 'A Evolution API não está configurada (URL e chave global).' });
     const count = await prisma.whatsAppInstance.count({ where: { tenantId } });
@@ -63,7 +72,9 @@ export const whatsappRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
       await deleteInstance(name);
       return reply.code(502).send({ message: error });
     }
-    const row = await prisma.whatsAppInstance.create({ data: { id, tenantId, name, label, purpose: 'LEADS' } });
+    const row = await prisma.whatsAppInstance.create({
+      data: { id, tenantId, name, label, purpose: 'LEADS', sendsOffers: purpose === 'OFFERS' || request.body?.sendsOffers === true },
+    });
     const whErr = await registerWebhook(name, purpose);
     if (whErr) fastify.log.warn({ name, whErr }, 'WhatsApp number: webhook not registered');
     // Only one number posts the offers; making this one the poster updates the setting too.
@@ -113,13 +124,16 @@ export const whatsappRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   });
 
   // PATCH /whatsapp/instances/:id { label?, purpose? }
-  fastify.patch<{ Params: { id: string }; Body: { label?: string; purpose?: string } }>('/instances/:id', async (request, reply) => {
+  fastify.patch<{ Params: { id: string }; Body: { label?: string; purpose?: string; sendsOffers?: boolean } }>('/instances/:id', async (request, reply) => {
     const tenantId = tenantIdOf(request);
     const row = await own(request, request.params.id);
     if (!row) return reply.code(404).send({ message: 'Número não encontrado' });
-    const { label, purpose } = request.body ?? {};
+    const { label, purpose, sendsOffers } = request.body ?? {};
     if (typeof label === 'string' && label.trim()) {
       await prisma.whatsAppInstance.update({ where: { id: row.id }, data: { label: label.trim().slice(0, 60) } });
+    }
+    if (typeof sendsOffers === 'boolean') {
+      await prisma.whatsAppInstance.update({ where: { id: row.id }, data: { sendsOffers } });
     }
     if (purpose === 'OFFERS' && row.purpose !== 'OFFERS') {
       await setOffersInstance(tenantId, row.id);

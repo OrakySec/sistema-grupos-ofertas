@@ -7,6 +7,7 @@ import { expireCoupons } from './lib/coupons';
 import { scheduleAdsSync, scheduleLeadsTick } from './lib/queue';
 import { leadsTick } from './lib/leadQueue';
 import { detectLeadLeaves } from './lib/leadBlocks';
+import { forgetSender, sendersFor } from './lib/offerSenders';
 import { metaConfig, syncMeta } from './lib/metaAds';
 import { syncShopeeConversions } from './lib/shopeeConversions';
 import { sendPendingPurchases } from './lib/metaPurchase';
@@ -163,6 +164,7 @@ async function handleSendOffer(job: Job<SendOfferJobData>): Promise<void> {
 
     let deliveryStatus: 'SUCCESS' | 'FAILED' = 'SUCCESS';
     let errorMessage: string | undefined;
+    let senderInstance: string | null = null;
 
     // Per-group click attribution: same links, tagged with this group's seq.
     const offerForDest: OfferWithMediaType = {
@@ -175,7 +177,7 @@ async function handleSendOffer(job: Job<SendOfferJobData>): Promise<void> {
       if (dest.type === 'TELEGRAM') {
         await sendToTelegram(dest.chatId, offerForDest);
       } else if (dest.type === 'WHATSAPP') {
-        await sendToWhatsApp(dest.chatId, offerForDest);
+        senderInstance = await sendToWhatsApp(dest.chatId, offerForDest);
       }
       successCount++;
       console.log(`[Worker] Sent offer ${offerId} to ${dest.type} group ${dest.name}`);
@@ -194,6 +196,7 @@ async function handleSendOffer(job: Job<SendOfferJobData>): Promise<void> {
         destinationGroupId: dest.id,
         status: deliveryStatus,
         errorMessage,
+        senderInstance,
       },
     });
   }
@@ -270,23 +273,47 @@ async function sendToTelegram(chatId: string, offer: OfferWithMediaType): Promis
   }
 }
 
-async function sendToWhatsApp(chatId: string, offer: OfferWithMediaType): Promise<void> {
+/**
+ * Posts to a WhatsApp group through a random number marked "Envia ofertas"
+ * that is admin there (lib/offerSenders.ts); if it fails, the next one; with
+ * no eligible number, the main number as before. Returns the instance used.
+ */
+async function sendToWhatsApp(chatId: string, offer: OfferWithMediaType): Promise<string | null> {
+  const senders = await sendersFor(chatId).catch(() => []);
+  let lastErr: unknown = null;
+  for (const s of senders) {
+    try {
+      await postViaWhatsApp(new WhatsAppService(s.name), chatId, offer);
+      return s.name;
+    } catch (err) {
+      lastErr = err;
+      forgetSender(s.name, chatId);
+      console.warn(`[Worker] WhatsApp sender "${s.label}" failed for ${chatId}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+  const main = (await prisma.setting.findUnique({ where: { key: 'evolution_instance' } }))?.value?.trim() || null;
+  if (lastErr && main && senders.some((s) => s.name === main)) throw lastErr; // the main number already failed too
+  await postViaWhatsApp(whatsappService, chatId, offer);
+  return main;
+}
+
+async function postViaWhatsApp(service: WhatsAppService, chatId: string, offer: OfferWithMediaType): Promise<void> {
   switch (offer.mediaType) {
     case 'PHOTO':
       if (!offer.mediaLocalPath) throw new Error('mediaLocalPath is required for PHOTO');
-      await whatsappService.sendImage(chatId, offer.mediaLocalPath, offer.mediaCaption ?? undefined);
+      await service.sendImage(chatId, offer.mediaLocalPath, offer.mediaCaption ?? undefined);
       break;
 
     case 'VIDEO':
     case 'DOCUMENT':
       if (!offer.mediaLocalPath) throw new Error('mediaLocalPath is required for VIDEO/DOCUMENT');
-      await whatsappService.sendDocument(chatId, offer.mediaLocalPath, offer.mediaCaption ?? undefined);
+      await service.sendDocument(chatId, offer.mediaLocalPath, offer.mediaCaption ?? undefined);
       break;
 
     case 'NONE':
     default:
       if (!offer.text) throw new Error('text is required when mediaType is NONE');
-      await whatsappService.sendText(chatId, offer.text);
+      await service.sendText(chatId, offer.text);
       break;
   }
 }

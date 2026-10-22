@@ -537,6 +537,8 @@ export interface WaNumber {
   label: string
   purpose: 'OFFERS' | 'LEADS'
   name: string
+  sendsOffers: boolean
+  offersToday: number
   connected: boolean
   number: string | null
   profileName: string | null
@@ -1006,8 +1008,8 @@ class ApiClient {
     return this.request('GET', '/whatsapp/check')
   }
 
-  async createWaNumber(label: string, purpose: 'OFFERS' | 'LEADS'): Promise<{ instance: WaNumber; qrcode: string | null }> {
-    return this.request('POST', '/whatsapp/instances', { label, purpose })
+  async createWaNumber(label: string, purpose: 'OFFERS' | 'LEADS', sendsOffers = false): Promise<{ instance: WaNumber; qrcode: string | null }> {
+    return this.request('POST', '/whatsapp/instances', { label, purpose, sendsOffers })
   }
 
   async getWaNumberState(id: string): Promise<{ instance: WaNumber; status: 'connected' | 'disconnected' | 'not_created' }> {
@@ -1026,7 +1028,7 @@ class ApiClient {
     return this.request('POST', `/whatsapp/instances/${id}/logout`, {})
   }
 
-  async updateWaNumber(id: string, data: { label?: string; purpose?: 'OFFERS' | 'LEADS' }): Promise<WaNumber> {
+  async updateWaNumber(id: string, data: { label?: string; purpose?: 'OFFERS' | 'LEADS'; sendsOffers?: boolean }): Promise<WaNumber> {
     return this.request('PATCH', `/whatsapp/instances/${id}`, data)
   }
 

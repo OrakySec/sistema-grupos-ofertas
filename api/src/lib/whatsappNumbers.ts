@@ -124,7 +124,7 @@ export async function setOffersInstance(tenantId: string, id: string) {
   if (!row) return null;
   await prisma.$transaction([
     prisma.whatsAppInstance.updateMany({ where: { tenantId, purpose: 'OFFERS', NOT: { id } }, data: { purpose: 'LEADS' } }),
-    prisma.whatsAppInstance.update({ where: { id }, data: { purpose: 'OFFERS' } }),
+    prisma.whatsAppInstance.update({ where: { id }, data: { purpose: 'OFFERS', sendsOffers: true } }),
     // TODO(multi-tenant): per-tenant setting once Setting is tenant-scoped.
     prisma.setting.upsert({
       where: { key: 'evolution_instance' },

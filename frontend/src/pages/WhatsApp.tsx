@@ -3,6 +3,7 @@ import api, { type WaNumber } from '../lib/api'
 import { useToast } from '../lib/toast'
 import Icon from '../components/Icon'
 import Modal from '../components/Modal'
+import Toggle from '../components/Toggle'
 import { Skeleton } from '../components/LoadingSkeleton'
 
 const POLL_MS = 3000
@@ -13,7 +14,7 @@ const fmtPhone = (n: string | null) => {
   return m ? `+55 (${m[1]}) ${m[2]}-${m[3]}` : `+${n}`
 }
 
-const PURPOSE_LABEL: Record<WaNumber['purpose'], string> = { OFFERS: 'Posta as ofertas', LEADS: 'Adiciona leads' }
+const PURPOSE_LABEL: Record<WaNumber['purpose'], string> = { OFFERS: 'Principal', LEADS: 'Adiciona leads' }
 
 /* ─── QR code flow (whatsapp-qrcode skill): loading → qrcode → connected | error ─── */
 type QrStatus = 'loading' | 'qrcode' | 'connected' | 'error'
@@ -126,12 +127,13 @@ function NewNumberModal({ hasOffers, onClose, onCreated }: {
   const { addToast } = useToast()
   const [label, setLabel] = useState('')
   const [purpose, setPurpose] = useState<'OFFERS' | 'LEADS'>(hasOffers ? 'LEADS' : 'OFFERS')
+  const [alsoOffers, setAlsoOffers] = useState(true)
   const [busy, setBusy] = useState(false)
 
   const create = async () => {
     setBusy(true)
     try {
-      const r = await api.createWaNumber(label.trim(), purpose)
+      const r = await api.createWaNumber(label.trim(), purpose, purpose === 'OFFERS' || alsoOffers)
       onCreated(r.instance, r.qrcode)
     } catch (err) {
       addToast(err instanceof Error ? err.message : 'Erro ao criar a conexão', 'error')
@@ -161,15 +163,20 @@ function NewNumberModal({ hasOffers, onClose, onCreated }: {
         <label className="label">Função deste número</label>
         <div className="tabs">
           <button className={`tab${purpose === 'LEADS' ? ' active' : ''}`} onClick={() => setPurpose('LEADS')}><Icon name="userPlus" size={15} /> Adicionar leads</button>
-          <button className={`tab${purpose === 'OFFERS' ? ' active' : ''}`} onClick={() => setPurpose('OFFERS')}><Icon name="send" size={15} /> Postar ofertas</button>
+          <button className={`tab${purpose === 'OFFERS' ? ' active' : ''}`} onClick={() => setPurpose('OFFERS')}><Icon name="send" size={15} /> Número principal</button>
         </div>
         <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.5 }}>
           {purpose === 'LEADS'
-            ? 'Recomendado: um número separado do que posta as ofertas. Se ele for bloqueado, as ofertas continuam saindo. Ele precisa ser admin dos grupos.'
+            ? 'Recomendado: um número separado do principal. Se ele for bloqueado, as ofertas continuam saindo. Ele precisa ser admin dos grupos.'
             : hasOffers
-              ? 'Este número passa a postar as ofertas no lugar do atual.'
-              : 'Este número vai postar as ofertas nos grupos de WhatsApp.'}
+              ? 'Este número passa a ser o principal (posta ofertas, manda os alertas e coleta o Analytics) no lugar do atual.'
+              : 'O número principal posta as ofertas, manda os alertas e coleta o Analytics.'}
         </div>
+        {purpose === 'LEADS' && (
+          <div style={{ marginTop: 12 }}>
+            <Toggle checked={alsoOffers} onChange={setAlsoOffers} label="Também postar ofertas nos grupos em que for admin (aquece o número)" />
+          </div>
+        )}
       </div>
     </Modal>
   )
@@ -211,8 +218,8 @@ export default function WhatsApp() {
     act(() => api.deleteWaNumber(n.id, n.purpose === 'OFFERS'), 'Número removido')
   }
   const makeOffers = (n: WaNumber) => {
-    if (!confirm(`Usar "${n.label}" para postar as ofertas? O número atual das ofertas passa a ser de leads.`)) return
-    act(() => api.updateWaNumber(n.id, { purpose: 'OFFERS' }), 'Este número agora posta as ofertas')
+    if (!confirm(`Tornar "${n.label}" o número principal (alertas, Analytics e reserva das ofertas)? O principal atual passa a ser de leads.`)) return
+    act(() => api.updateWaNumber(n.id, { purpose: 'OFFERS' }), 'Este número agora é o principal')
   }
   const reconnect = (n: WaNumber) => {
     if (n.purpose === 'OFFERS' && n.connected && !confirm('Este número posta as ofertas. Reconectar derruba os envios até escanear o QR de novo. Continuar?')) return
@@ -227,7 +234,7 @@ export default function WhatsApp() {
       <div className="page-header" style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
         <div>
           <h1 className="page-title">WhatsApp</h1>
-          <p className="page-subtitle">Números conectados por QR Code — um posta as ofertas, os outros adicionam leads aos grupos.</p>
+          <p className="page-subtitle">Números conectados por QR Code. As ofertas saem por um número sorteado entre os que têm "Envia ofertas" e são admin do grupo.</p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button className="btn btn-ghost" onClick={check} disabled={checking}>{checking ? <span className="spinner spinner-sm" /> : <Icon name="activity" />} Testar Evolution</button>
@@ -274,6 +281,10 @@ export default function WhatsApp() {
                     <div style={{ fontSize: '0.78rem', color: n.connected ? 'var(--accent-success)' : 'var(--text-muted)' }}>
                       {n.connected ? 'Online' : n.lastState === 'not_found' ? 'Conexão apagada na Evolution — conecte de novo' : n.lastState === 'connecting' ? 'Aguardando leitura do QR Code' : 'Desconectado'}
                     </div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                      <Toggle checked={n.sendsOffers} onChange={(v) => act(() => api.updateWaNumber(n.id, { sendsOffers: v }), v ? 'Este número passa a postar ofertas' : 'Este número não posta mais ofertas')} label="Envia ofertas" />
+                      {n.sendsOffers && <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>{n.offersToday} {n.offersToday === 1 ? 'oferta' : 'ofertas'} hoje</span>}
+                    </div>
                     {n.lastDisconnectAt && (
                       <div style={{ fontSize: '0.74rem', color: [401, 402, 403, 406].includes(n.lastDisconnectCode ?? 0) ? '#ff8a8e' : 'var(--text-muted)', lineHeight: 1.45 }}>
                         Última queda: {new Date(n.lastDisconnectAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} — {n.lastDisconnectText}
@@ -286,7 +297,7 @@ export default function WhatsApp() {
                         <button className="btn btn-primary btn-sm" onClick={() => reconnect(n)}><Icon name="qr" size={15} /> Conectar</button>
                       )}
                       {n.connected && <button className="btn btn-ghost btn-sm" onClick={() => reconnect(n)}>Reconectar</button>}
-                      {n.purpose === 'LEADS' && <button className="btn btn-ghost btn-sm" onClick={() => makeOffers(n)}>Usar para ofertas</button>}
+                      {n.purpose === 'LEADS' && <button className="btn btn-ghost btn-sm" onClick={() => makeOffers(n)} title="Principal: manda os alertas e coleta o Analytics">Tornar principal</button>}
                       <button className="btn btn-ghost btn-sm" onClick={() => remove(n)} style={{ color: '#ff8a8e' }}><Icon name="trash" size={15} /></button>
                     </div>
                   </div>
@@ -296,7 +307,8 @@ export default function WhatsApp() {
           )}
 
           <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: 14, lineHeight: 1.6 }}>
-            {instances.length} de {data.max} números usados. As regras de segurança para adicionar leads (limite por dia, intervalos, descanso) ficam na aba <strong>Leads</strong>.
+            {instances.length} de {data.max} números usados. Para cada grupo, a oferta sai por um número sorteado entre os conectados com "Envia ofertas" que são <strong>admin</strong> daquele grupo; sem nenhum, sai pelo principal.
+            Um número novo pode ficar só postando ofertas por um tempo (aquecendo) antes de ir para a adição de leads. As regras de segurança da adição ficam na aba <strong>Leads</strong>.
           </div>
         </>
       )}
