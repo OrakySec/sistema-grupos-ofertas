@@ -139,11 +139,27 @@ function HelperModal({ helper, defaults, lists, onClose, onSaved }: {
           )}
         </div>
 
+        <div>
+          <div className="label" style={{ marginBottom: 6 }}>Como mandar a lista</div>
+          <div className="tabs">
+            <button type="button" className={`tab${s.delivery === 'LIST' ? ' active' : ''}`} onClick={() => set('delivery', 'LIST')}>Números na mensagem</button>
+            <button type="button" className={`tab${s.delivery === 'EACH' ? ' active' : ''}`} onClick={() => set('delivery', 'EACH')}>Um número por mensagem</button>
+            <button type="button" className={`tab${s.delivery === 'VCF' ? ' active' : ''}`} onClick={() => set('delivery', 'VCF')}>Arquivo de contatos</button>
+          </div>
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.5 }}>
+            {s.delivery === 'LIST'
+              ? 'Uma mensagem com os telefones um embaixo do outro, separados por grupo — copia e cola na busca de "Adicionar participantes", sem salvar contato.'
+              : s.delivery === 'EACH'
+                ? 'Cada telefone numa mensagem separada: é só tocar e segurar para copiar um por vez (no celular, copiar copia a mensagem inteira).'
+                : 'Um arquivo .vcf para salvar todos os contatos de uma vez; depois busca pelo nome do lote.'}
+          </div>
+        </div>
+
         <div className="form-group" style={{ marginBottom: 0 }}>
           <label className="label">Mensagem que acompanha a lista</label>
           <textarea className="textarea" rows={7} value={s.message} onChange={(e) => set('message', e.target.value)} />
           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
-            Use <span className="mono">{'{{nome}}'}</span>, <span className="mono">{'{{quantidade}}'}</span> e <span className="mono">{'{{grupos}}'}</span> (uma linha por grupo, com o nome para buscar). O arquivo de contatos vai logo depois, pelo número principal.
+            Use <span className="mono">{'{{nome}}'}</span>, <span className="mono">{'{{quantidade}}'}</span>, <span className="mono">{'{{instrucoes}}'}</span> (o passo a passo do jeito escolhido acima) e <span className="mono">{'{{grupos}}'}</span> (os grupos com os telefones). Tudo sai pelo número principal.
           </div>
         </div>
       </div>

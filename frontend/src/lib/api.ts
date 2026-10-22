@@ -607,6 +607,8 @@ export interface HelperSafety {
   weekdays: number[]
   sendHour: number
   expireDays: number
+  /** LIST = numbers in the message, one per line; EACH = one number per message; VCF = contacts file */
+  delivery: 'LIST' | 'EACH' | 'VCF'
   message: string
 }
 

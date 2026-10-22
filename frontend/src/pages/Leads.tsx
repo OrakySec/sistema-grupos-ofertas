@@ -157,12 +157,16 @@ function ManualBatchModal({ campaign, onClose }: { campaign: LeadCampaignItem; o
           ) : (
             <>
               <ol style={{ margin: 0, paddingLeft: 18, fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.7 }}>
-                <li><strong>Baixe os contatos</strong> e abra o arquivo no celular para salvar todos de uma vez.</li>
-                <li>No grupo: <strong>Adicionar participantes</strong> → busque <strong className="mono">{b.prefix}</strong> e marque os do lote (de 5 em 5, com calma).</li>
+                <li>No grupo: <strong>Adicionar participantes</strong> → cole cada número na busca e adicione (de 5 em 5, com calma). Use o ícone de copiar ao lado de cada pessoa, ou <strong>"Copiar todos os números"</strong>.</li>
+                <li>Prefere salvar os contatos? <strong>Baixe o arquivo</strong> e busque <strong className="mono">{b.prefix}</strong> no app.</li>
                 <li>O sistema confere sozinho quem entrou (a cada 15 min) — ou clique em "Conferir agora".</li>
               </ol>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button className="btn btn-primary btn-sm" onClick={download} disabled={!!busy || !b.pending.some((l) => !l.helper)} title="Só os seus — os celulares recebem o arquivo deles pelo WhatsApp">{busy === 'vcf' ? <span className="spinner spinner-sm" /> : <Icon name="download" size={14} />} Baixar contatos (.vcf)</button>
+                <button className="btn btn-primary btn-sm" disabled={!!busy} onClick={() => {
+                  const mine = b.pending.filter((l) => !l.helper).map((l) => `+${l.phone}`).join('\n')
+                  navigator.clipboard?.writeText(mine).then(() => addToast('Números copiados — um por linha', 'success')).catch(() => addToast('Não consegui copiar', 'error'))
+                }}><Icon name="copy" size={14} /> Copiar todos os números</button>
+                <button className="btn btn-secondary btn-sm" onClick={download} disabled={!!busy || !b.pending.some((l) => !l.helper)} title="Só os seus — os celulares recebem a lista deles pelo WhatsApp">{busy === 'vcf' ? <span className="spinner spinner-sm" /> : <Icon name="download" size={14} />} Baixar contatos (.vcf)</button>
                 <button className="btn btn-secondary btn-sm" onClick={check} disabled={!!busy}>{busy === 'check' ? <span className="spinner spinner-sm" /> : <Icon name="refresh" size={14} />} Conferir agora</button>
                 <button className="btn btn-ghost btn-sm" onClick={() => confirm('Marcar todos os pendentes como adicionados? Use só se você adicionou e o sistema não consegue ver os números do grupo.') && run('mark', async () => `${(await api.markManualAdded(campaign.id)).marked} marcados como adicionados`)} disabled={!!busy}>Marcar todos como adicionados</button>
                 <button className="btn btn-ghost btn-sm" onClick={() => confirm('Devolver os pendentes para a fila? Eles entram num próximo lote.') && run('requeue', async () => `${(await api.requeueManualBatch(campaign.id)).requeued} de volta para a fila`)} disabled={!!busy}>Devolver pendentes à fila</button>

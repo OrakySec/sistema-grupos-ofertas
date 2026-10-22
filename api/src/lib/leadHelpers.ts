@@ -17,6 +17,7 @@ import prisma from './prisma';
 import { brtDayStart, toBrt } from './time';
 import { makeManualBatch, vcardOf, vcfFileName } from './leadManual';
 import { WhatsAppService } from '../services/whatsapp.service';
+import { sleep } from './evolution';
 
 export interface HelperSafety {
   dailyLimit: number;
@@ -28,15 +29,35 @@ export interface HelperSafety {
   weekdays: number[]; // 0 = Sunday … 6 = Saturday
   sendHour: number; // 0-23, Brasília
   expireDays: number; // not added after this → back to the queue
+  // How the people go out: LIST = the numbers in the message, one per line
+  // (the app adds a typed/pasted number without saving it); EACH = one number
+  // per message (long-press copies a whole message); VCF = a contacts file.
+  delivery: HelperDelivery;
   message: string;
 }
 
+export type HelperDelivery = 'LIST' | 'EACH' | 'VCF';
+const DELIVERIES = new Set<HelperDelivery>(['LIST', 'EACH', 'VCF']);
+
 export const DEFAULT_HELPER_MESSAGE =
+  'Oi {{nome}}! 📋 Lista de hoje: *{{quantidade}} pessoas* para adicionar.\n\n' +
+  '{{instrucoes}}\n\n' +
+  '{{grupos}}\n\n' +
+  'O sistema confere sozinho quem entrou. Obrigado!';
+
+// The first default (contacts file only) — phones saved with it get the new one.
+const LEGACY_HELPER_MESSAGE =
   'Oi {{nome}}! 📋 Lista de hoje: *{{quantidade}} pessoas* para adicionar.\n\n' +
   '1. Abra o arquivo abaixo e salve os contatos.\n' +
   '2. No grupo: *Dados do grupo → Adicionar participantes*, busque o nome indicado e marque (de 5 em 5, com calma).\n\n' +
   '{{grupos}}\n\n' +
   'O sistema confere sozinho quem entrou. Obrigado!';
+
+const INSTRUCTIONS: Record<HelperDelivery, string> = {
+  LIST: 'No grupo: *Dados do grupo → Adicionar participantes*, cole cada número na busca e adicione (de 5 em 5, com calma).',
+  EACH: 'Os números vêm logo abaixo, um por mensagem (toque e segure para copiar). No grupo: *Dados do grupo → Adicionar participantes*, cole na busca e adicione (de 5 em 5, com calma).',
+  VCF: '1. Abra o arquivo abaixo e salve os contatos.\n2. No grupo: *Dados do grupo → Adicionar participantes*, busque o nome indicado e marque (de 5 em 5, com calma).',
+};
 
 export const DEFAULT_HELPER_SAFETY: HelperSafety = {
   dailyLimit: 15,
@@ -48,6 +69,7 @@ export const DEFAULT_HELPER_SAFETY: HelperSafety = {
   weekdays: [1, 2, 3, 4, 5, 6],
   sendHour: 9,
   expireDays: 2,
+  delivery: 'LIST',
   message: DEFAULT_HELPER_MESSAGE,
 };
 
@@ -72,7 +94,8 @@ export function helperSafetyOf(raw: unknown): HelperSafety {
     weekdays: weekdays.length ? weekdays : d.weekdays,
     sendHour: clampInt(r.sendHour, 0, 23, d.sendHour),
     expireDays: clampInt(r.expireDays, 1, 30, d.expireDays),
-    message: typeof r.message === 'string' && r.message.trim() ? r.message.slice(0, 1500) : d.message,
+    delivery: DELIVERIES.has(r.delivery as HelperDelivery) ? (r.delivery as HelperDelivery) : r.message === LEGACY_HELPER_MESSAGE ? 'VCF' : d.delivery,
+    message: typeof r.message === 'string' && r.message.trim() && r.message !== LEGACY_HELPER_MESSAGE ? r.message.slice(0, 1500) : d.message,
   };
 }
 
@@ -115,7 +138,44 @@ function notDue(h: HelperRow, s: HelperSafety, now: Date, force: boolean): strin
 }
 
 export function renderHelperMessage(template: string, vars: Record<string, string>) {
-  return template.replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? '').trim();
+  return template.replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? '').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+type Person = { phone: string; name: string | null; group: string; prefix: string };
+type Extra = { kind: 'text'; text: string } | { kind: 'file'; vcf: string; fileName: string; caption: string };
+
+/** The day's message, plus what follows it (one message per number, or the contacts file). */
+export function helperMessages(s: HelperSafety, label: string, people: Person[]): { text: string; extra: Extra[] } {
+  const byGroup = new Map<string, Person[]>();
+  for (const p of people) byGroup.set(p.group, [...(byGroup.get(p.group) ?? []), p]);
+  const count = (n: number) => `${n} ${n === 1 ? 'pessoa' : 'pessoas'}`;
+  const number = (p: Person) => `+${p.phone}`;
+
+  let grupos: string;
+  const extra: Extra[] = [];
+  if (s.delivery === 'LIST') {
+    grupos = [...byGroup.entries()].map(([g, ps]) => `*${g}* (${count(ps.length)}):\n${ps.map(number).join('\n')}`).join('\n\n');
+  } else if (s.delivery === 'EACH') {
+    grupos = [...byGroup.entries()].map(([g, ps]) => `• *${g}*: ${count(ps.length)}`).join('\n');
+    for (const [g, ps] of byGroup) {
+      extra.push({ kind: 'text', text: `👇 *${g}* (${count(ps.length)})` });
+      for (const p of ps) extra.push({ kind: 'text', text: number(p) });
+    }
+  } else {
+    const parts = new Map<string, { group: string; prefix: string; n: number }>();
+    for (const p of people) {
+      const key = `${p.group}|${p.prefix}`;
+      const hit = parts.get(key);
+      if (hit) hit.n++; else parts.set(key, { group: p.group, prefix: p.prefix, n: 1 });
+    }
+    grupos = [...parts.values()].map((x) => `• *${x.group}*: ${count(x.n)} — busque "${x.prefix}"`).join('\n');
+    const fileName = vcfFileName(byGroup.size === 1 ? people[0].prefix : `Lista ${label} ${people[0].prefix.split(' ').pop()}`);
+    extra.push({ kind: 'file', vcf: vcardOf(people), fileName, caption: `${people.length} contatos para adicionar` });
+  }
+  const text = renderHelperMessage(s.message, {
+    nome: label.split(' ')[0], quantidade: String(people.length), grupos, instrucoes: INSTRUCTIONS[s.delivery],
+  });
+  return { text, extra };
 }
 
 /** Builds and sends this phone's batch. Returns what happened (also stored in lastResult). */
@@ -157,25 +217,16 @@ export async function sendHelperBatch(helperId: string, opts: { now?: Date; forc
     return done(problems.length ? `Nada enviado — ${problems.join(' | ')}` : 'Nada para enviar: as filas das listas estão vazias', opts.force ? {} : { lastSentAt: now });
   }
 
-  // One line per group: how many and what to search for.
-  const byGroup = new Map<string, { prefix: string; n: number }[]>();
-  for (const p of people) {
-    const list = byGroup.get(p.group) ?? [];
-    const hit = list.find((x) => x.prefix === p.prefix);
-    if (hit) hit.n++; else list.push({ prefix: p.prefix, n: 1 });
-    byGroup.set(p.group, list);
-  }
-  const groupsText = [...byGroup.entries()]
-    .map(([g, parts]) => parts.map((x) => `• *${g}*: ${x.n} ${x.n === 1 ? 'pessoa' : 'pessoas'} — busque "${x.prefix}"`).join('\n'))
-    .join('\n');
-  const text = renderHelperMessage(s.message, { nome: h.label.split(' ')[0], quantidade: String(people.length), grupos: groupsText });
-  const vcf = vcardOf(people);
-  const fileName = vcfFileName(people.length && byGroup.size === 1 ? people[0].prefix : `Lista ${h.label} ${people[0].prefix.split(' ').pop()}`);
+  const { text, extra } = helperMessages(s, h.label, people);
 
   try {
     const wa = new WhatsAppService();
     await wa.sendText(h.phone, text);
-    await wa.sendDocumentData(h.phone, vcf, fileName, 'text/vcard', `${people.length} contatos para adicionar`);
+    for (const m of extra) {
+      await sleep(1200); // a calm pace, even to a known contact
+      if (m.kind === 'text') await wa.sendText(h.phone, m.text);
+      else await wa.sendDocumentData(h.phone, m.vcf, m.fileName, 'text/vcard', m.caption);
+    }
   } catch (err) {
     // Not delivered → the people go back to the queue for the next try.
     await prisma.lead.updateMany({
