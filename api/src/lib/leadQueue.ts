@@ -329,7 +329,10 @@ async function processInstance(instanceId: string, now: Date): Promise<string | 
   const finish = async (status: string, detail: string | null, groupId: string | null, opts: { touched: boolean; added?: boolean; failure?: 'real' | 'none' }) => {
     await prisma.lead.update({
       where: { id: lead.id },
-      data: { status, detail, groupId, instanceId, processedAt: new Date(), attempts: { increment: 1 } },
+      data: {
+        status, detail, groupId, instanceId, processedAt: new Date(), attempts: { increment: 1 },
+        ...(status === 'ADDED' ? { joinedAt: new Date() } : {}),
+      },
     });
     const data: Record<string, unknown> = { leadLastResult: `${lead.phone}: ${detail ?? status}` };
     // Cheap checks (no WhatsApp action) only wait a little; real actions wait the random interval.

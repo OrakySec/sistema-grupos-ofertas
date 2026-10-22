@@ -543,9 +543,11 @@ const linkMonitorWorker = new Worker(
     } else if (job.name === 'snapshot-wa-members') {
       const results = await snapshotWhatsAppGroups();
       console.log('[Worker] WhatsApp member snapshot:', JSON.stringify(results));
-      // Leads we added who are no longer in the group → never added again.
+      // Leads: who left (never added again) and which invited people joined.
       const leaves = await detectLeadLeaves();
-      if (leaves.length) console.log('[Worker] Lead leaves:', JSON.stringify(leaves));
+      if (leaves.length) console.log('[Worker] Lead membership:', JSON.stringify(leaves));
+      const value = JSON.stringify({ at: new Date().toISOString(), results: leaves });
+      await prisma.setting.upsert({ where: { key: 'lead_membership_check' }, update: { value }, create: { key: 'lead_membership_check', value } });
     } else {
       console.warn(`[Worker] Unknown link-monitor job type: ${job.name}`);
     }

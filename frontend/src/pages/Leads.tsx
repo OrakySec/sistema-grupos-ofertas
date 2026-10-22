@@ -6,6 +6,7 @@ import Icon from '../components/Icon'
 import Modal from '../components/Modal'
 import Toggle from '../components/Toggle'
 import { Skeleton } from '../components/LoadingSkeleton'
+import LeadResults from '../components/LeadResults'
 
 const int = (v: number) => v.toLocaleString('pt-BR')
 const when = (iso: string | null) => {
@@ -521,6 +522,7 @@ export default function Leads() {
   const [viewing, setViewing] = useState<LeadCampaignItem | null>(null)
   const [intake, setIntake] = useState<LeadCampaignItem | null>(null)
   const [safety, setSafety] = useState<{ id: string; label: string } | null>(null)
+  const [tab, setTab] = useState<'lists' | 'results'>('lists')
 
   const load = useCallback(() => api.getLeadsOverview().then(setData).catch((err) => addToast(err instanceof Error ? err.message : 'Erro ao carregar', 'error')), [addToast])
   useEffect(() => { load(); const t = setInterval(load, 30_000); return () => clearInterval(t) }, [load])
@@ -569,7 +571,14 @@ export default function Leads() {
         <button className="btn btn-primary" onClick={() => setCreating(true)}><Icon name="userPlus" /> Nova lista de leads</button>
       </div>
 
-      {!data ? <Skeleton height={300} borderRadius={14} /> : (
+      <div style={{ marginBottom: 16, overflowX: 'auto' }}>
+        <div className="tabs">
+          <button className={`tab${tab === 'lists' ? ' active' : ''}`} onClick={() => setTab('lists')}><Icon name="inbox" size={15} /> Listas</button>
+          <button className={`tab${tab === 'results' ? ' active' : ''}`} onClick={() => setTab('results')}><Icon name="trendUp" size={15} /> Resultados</button>
+        </div>
+      </div>
+
+      {tab === 'results' ? <LeadResults /> : !data ? <Skeleton height={300} borderRadius={14} /> : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
           {data.queues.length > 0 && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 14 }}>

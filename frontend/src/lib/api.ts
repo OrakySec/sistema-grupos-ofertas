@@ -597,6 +597,42 @@ export interface LeadCampaignItem {
   createdAt: string
 }
 
+export interface LeadResultsSummary {
+  processed: number
+  added: number
+  invitesSent: number
+  invitesJoined: number
+  inviteConversionPct: number | null
+  alreadyMember: number
+  noWhatsApp: number
+  blocked: number
+  failed: number
+  entered: number
+  left: number
+  stillIn: number
+  retentionPct: number | null
+  leftPct: number | null
+  quickLeaves: number
+  avgTenureDays: number | null
+  d1: { eligible: number; pct: number | null }
+  d7: { eligible: number; pct: number | null }
+  d30: { eligible: number; pct: number | null }
+}
+
+export interface LeadResults {
+  from: string
+  to: string
+  bucket: 'day' | 'hour'
+  totals: LeadResultsSummary
+  series: Array<{ date: string; entered: number; left: number; invitesSent: number }>
+  byCampaign: Array<LeadResultsSummary & { key: string; label: string }>
+  byGroup: Array<LeadResultsSummary & { key: string; label: string }>
+  bySource: Array<LeadResultsSummary & { key: string; label: string }>
+  byInstance: Array<LeadResultsSummary & { key: string; label: string }>
+  lastCheck: { at: string; results: Array<{ group: string; left?: number; joined?: number; skipped?: string }> } | null
+  options: { campaigns: Array<{ id: string; name: string }>; instances: Array<{ id: string; label: string }> }
+}
+
 export interface LeadImportResult {
   created: number
   blocked?: number
@@ -1017,6 +1053,12 @@ class ApiClient {
     groups: Array<{ id: string; name: string }>
   }> {
     return this.request('GET', '/leads/options')
+  }
+
+  async getLeadResults(params: { days?: number; from?: string; to?: string; campaignId?: string; instanceId?: string }): Promise<LeadResults> {
+    const qs = new URLSearchParams()
+    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') qs.set(k, String(v))
+    return this.request('GET', `/leads/results?${qs.toString()}`)
   }
 
   async getLeadSourceGroups(): Promise<{

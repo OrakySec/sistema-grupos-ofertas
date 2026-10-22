@@ -58,31 +58,56 @@ async function block(tenantId: string, phone: string, reason: 'LEFT' | 'REMOVED'
   // Mark the lead(s) we added to that group as gone.
   const leads = await prisma.lead.findMany({
     where: { tenantId, phone: { endsWith: phone.slice(-8) }, leftAt: null, status: { in: ['ADDED', 'INVITED', 'ALREADY_MEMBER'] } },
-    select: { id: true, phone: true },
+    select: { id: true, phone: true, joinedAt: true, processedAt: true },
   });
-  const ids = leads.filter((l) => samePhone(l.phone, phone)).map((l) => l.id);
-  if (ids.length) await prisma.lead.updateMany({ where: { id: { in: ids } }, data: { leftAt: at } });
+  for (const l of leads.filter((x) => samePhone(x.phone, phone))) {
+    // An invited person who leaves had joined at some point (the join itself may have been missed).
+    await prisma.lead.update({ where: { id: l.id }, data: { leftAt: at, ...(l.joinedAt ? {} : { joinedAt: l.processedAt ?? at }) } });
+  }
   return true;
 }
 
-/** group-participants.update webhook → block whoever left (phones only). */
-export async function recordLeavesFromWebhook(data: any): Promise<number> {
+/** An invited lead showed up in the group → record when they got in. */
+async function markJoined(tenantId: string, phone: string, groupId: string, at: Date) {
+  const leads = await prisma.lead.findMany({
+    where: { tenantId, phone: { endsWith: phone.slice(-8) }, joinedAt: null, status: { in: ['INVITED', 'INVITE_PENDING'] } },
+    select: { id: true, phone: true, groupId: true },
+  });
+  const hits = leads.filter((l) => samePhone(l.phone, phone) && (!l.groupId || l.groupId === groupId));
+  for (const l of hits) {
+    await prisma.lead.update({ where: { id: l.id }, data: { joinedAt: at, status: 'INVITED', groupId } });
+  }
+  return hits.length;
+}
+
+/**
+ * group-participants.update webhook:
+ *   remove → block whoever left (never re-added)
+ *   add    → an invited lead joined through the link (counts as a converted invite)
+ * Phones only — hidden (@lid) participants can't be matched.
+ */
+export async function recordMembershipFromWebhook(data: any): Promise<{ left: number; joined: number }> {
   const action = String(data?.action ?? '').toLowerCase();
-  if (action !== 'remove') return 0;
+  if (action !== 'remove' && action !== 'add') return { left: 0, joined: 0 };
   const groupJid = String(data?.id ?? data?.groupJid ?? '');
   const dest = await prisma.destinationGroup.findFirst({ where: { type: 'WHATSAPP', chatId: groupJid }, select: { id: true } });
-  if (!dest) return 0;
+  if (!dest) return { left: 0, joined: 0 };
   const authorPhone = participantPhone(data?.author);
   const tenantId = DEFAULT_TENANT_ID; // TODO(multi-tenant): DestinationGroup.tenantId
   const now = new Date();
-  let n = 0;
+  let left = 0;
+  let joined = 0;
   for (const p of Array.isArray(data?.participants) ? data.participants : []) {
     const phone = participantPhone(p);
     if (!phone) continue;
-    const removed = !!authorPhone && !samePhone(authorPhone, phone);
-    if (await block(tenantId, phone, removed ? 'REMOVED' : 'LEFT', dest.id, now)) n++;
+    if (action === 'add') {
+      joined += await markJoined(tenantId, phone, dest.id, now);
+    } else {
+      const removed = !!authorPhone && !samePhone(authorPhone, phone);
+      if (await block(tenantId, phone, removed ? 'REMOVED' : 'LEFT', dest.id, now)) left++;
+    }
   }
-  return n;
+  return { left, joined };
 }
 
 /** Raw participant list of a group, read through the first instance that can see it. */
@@ -100,18 +125,30 @@ export async function readParticipants(groupJid: string, instanceNames: string[]
 }
 
 /**
- * Every 6 h: for each group we added people to, who is no longer there?
+ * Every 6 h, for each group we sent people to:
+ *   - who we added (or who joined by invite) is no longer there → left, blocked
+ *   - who we invited is there now → joined by invite
  * Skipped when most of the group's numbers are hidden (@lid) — no guessing.
  */
-export async function detectLeadLeaves(): Promise<Array<{ group: string; left?: number; skipped?: string }>> {
+export async function detectLeadLeaves(): Promise<Array<{ group: string; left?: number; joined?: number; skipped?: string }>> {
+  const settle = new Date(Date.now() - 15 * 60_000);
   const rows = await prisma.lead.findMany({
-    where: { status: 'ADDED', leftAt: null, groupId: { not: null }, processedAt: { lt: new Date(Date.now() - 15 * 60_000) } },
-    select: { id: true, tenantId: true, phone: true, groupId: true, instanceId: true },
+    where: {
+      groupId: { not: null },
+      leftAt: null,
+      processedAt: { lt: settle },
+      OR: [
+        { joinedAt: { not: null }, status: { in: ['ADDED', 'INVITED'] } },
+        // invites still waiting for a join (only recent ones are worth checking)
+        { joinedAt: null, status: 'INVITED', processedAt: { gte: new Date(Date.now() - 30 * 86_400_000) } },
+      ],
+    },
+    select: { id: true, tenantId: true, phone: true, groupId: true, instanceId: true, joinedAt: true },
   });
   const byGroup = new Map<string, typeof rows>();
   for (const r of rows) byGroup.set(r.groupId as string, [...(byGroup.get(r.groupId as string) ?? []), r]);
 
-  const out: Array<{ group: string; left?: number; skipped?: string }> = [];
+  const out: Array<{ group: string; left?: number; joined?: number; skipped?: string }> = [];
   for (const [groupId, leads] of byGroup) {
     const g = await prisma.destinationGroup.findUnique({ where: { id: groupId } });
     if (!g) continue;
@@ -128,10 +165,16 @@ export async function detectLeadLeaves(): Promise<Array<{ group: string; left?: 
     }
     const now = new Date();
     let left = 0;
+    let joined = 0;
     for (const l of leads) {
-      if (!phones.some((p) => samePhone(p, l.phone)) && (await block(l.tenantId, l.phone, 'LEFT', groupId, now))) left++;
+      const present = phones.some((p) => samePhone(p, l.phone));
+      if (l.joinedAt) {
+        if (!present && (await block(l.tenantId, l.phone, 'LEFT', groupId, now))) left++;
+      } else if (present) {
+        joined += await markJoined(l.tenantId, l.phone, groupId, now);
+      }
     }
-    out.push({ group: g.name, left });
+    out.push({ group: g.name, left, joined });
   }
   return out;
 }

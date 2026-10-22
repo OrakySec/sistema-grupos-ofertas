@@ -11,6 +11,7 @@ import { normalizePhoneBR } from '../lib/evolution';
 import { parseLeadLines, queueStatus } from '../lib/leadQueue';
 import { shortenerDomain } from '../lib/shortener';
 import { findBlock, groupsOfConnectedNumbers, membersForImport, samePhone } from '../lib/leadBlocks';
+import { leadResults } from '../lib/leadStats';
 
 const STATUSES = ['QUEUED', 'ADDED', 'INVITED', 'INVITE_PENDING', 'ALREADY_MEMBER', 'NO_WHATSAPP', 'BLOCKED', 'FAILED'] as const;
 const MAX_IMPORT = 20000;
@@ -65,6 +66,15 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       niches,
       groups,
     };
+  });
+
+  // GET /leads/results?days|from&to&campaignId&instanceId — entries, leaves, retention
+  fastify.get<{ Querystring: { days?: string; from?: string; to?: string; campaignId?: string; instanceId?: string } }>('/results', async (request) => {
+    const q = request.query;
+    return leadResults(tenantIdOf(request), {
+      days: q.days ? Number(q.days) : undefined, from: q.from, to: q.to,
+      campaignId: q.campaignId || undefined, instanceId: q.instanceId || undefined,
+    });
   });
 
   // GET /leads/source-groups — every group the connected numbers are in (live)

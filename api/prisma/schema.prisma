@@ -578,6 +578,9 @@ model Lead {
   detail      String?
   attempts    Int       @default(0)
   processedAt DateTime?
+  // Actually got into the group: when we added them, or when an invited
+  // person joined through the link (seen by the webhook / 6 h check).
+  joinedAt    DateTime?
   leftAt      DateTime? // left the group after we added them (→ LeadBlock)
   createdAt   DateTime  @default(now())
 
@@ -588,6 +591,7 @@ model Lead {
   @@index([campaignId, status, createdAt])
   @@index([instanceId, processedAt])
   @@index([tenantId, status])
+  @@index([tenantId, joinedAt])
 }
 
 // Monitoring rule on one campaign / ad set / ad.
