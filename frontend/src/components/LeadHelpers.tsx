@@ -187,6 +187,7 @@ export default function LeadHelpers({ lists }: { lists: LeadCampaignItem[] }) {
 
   const statusText = (h: LeadHelperItem) => {
     if (h.paused) return h.pausedReason ?? 'Pausado'
+    if (!h.campaigns.some((c) => c.mode === 'MANUAL' && c.status === 'ACTIVE')) return 'Sem lista ativa — nada para enviar'
     if (h.restUntil) return `Descansando até ${when(h.restUntil)}`
     if (h.nextAt && new Date(h.nextAt).getTime() <= Date.now() + 60_000) return 'Envia nos próximos minutos'
     return `Próxima lista ${when(h.nextAt)}`
@@ -234,7 +235,7 @@ export default function LeadHelpers({ lists }: { lists: LeadCampaignItem[] }) {
                   {h.campaigns.length ? h.campaigns.map((c) => c.name).join(' · ') : <span style={{ color: 'var(--accent-warning)' }}>Sem listas — clique em Ajustes</span>}
                 </div>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  <button className="btn btn-primary btn-sm" disabled={!!busy || h.paused} onClick={() => act(`send-${h.id}`, async () => (await api.sendLeadHelperNow(h.id)).result)}>
+                  <button className="btn btn-primary btn-sm" disabled={!!busy || h.paused || !h.campaigns.length} title={h.campaigns.length ? undefined : 'Escolha uma lista em Ajustes'} onClick={() => act(`send-${h.id}`, async () => (await api.sendLeadHelperNow(h.id)).result)}>
                     {busy === `send-${h.id}` ? <span className="spinner spinner-sm" /> : <Icon name="send" size={14} />} Enviar agora
                   </button>
                   <button className="btn btn-ghost btn-sm" onClick={() => setEditing(h)}>Ajustes</button>
