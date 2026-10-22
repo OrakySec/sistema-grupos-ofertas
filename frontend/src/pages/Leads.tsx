@@ -81,6 +81,24 @@ function ConsentBox({ checked, onChange, fromGroup = false }: { checked: boolean
 type NumberOption = { id: string; label: string; purpose: string; connected: boolean; number: string | null }
 
 /** Private invite messages to non-contacts are what got the lead numbers logged out (401 device_removed). */
+/** How the list puts people in the group. */
+function ModePicker({ value, onChange }: { value: 'ADD' | 'INVITE'; onChange: (m: 'ADD' | 'INVITE') => void }) {
+  return (
+    <div>
+      <div className="label" style={{ marginBottom: 6 }}>Como colocar as pessoas no grupo</div>
+      <div className="tabs">
+        <button type="button" className={`tab${value === 'INVITE' ? ' active' : ''}`} onClick={() => onChange('INVITE')}><Icon name="send" size={15} /> Só convite (link no privado)</button>
+        <button type="button" className={`tab${value === 'ADD' ? ' active' : ''}`} onClick={() => onChange('ADD')}><Icon name="userPlus" size={15} /> Adicionar direto</button>
+      </div>
+      <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.5 }}>
+        {value === 'INVITE'
+          ? 'Ninguém é adicionado: cada pessoa recebe a mensagem de convite com o link do grupo (texto e limite por dia em Segurança → "Convites no privado"). Quem entrar pelo link aparece em Resultados.'
+          : 'Tenta adicionar direto ao grupo. Atenção: tentar adicionar quem não tem você nos contatos derrubou os números (Evolution e WAHA).'}
+      </div>
+    </div>
+  )
+}
+
 function InviteRiskNote() {
   return (
     <div style={{ fontSize: '0.74rem', color: 'var(--accent-warning)', lineHeight: 1.5 }}>
@@ -114,11 +132,12 @@ function NumbersModal({ campaign, onClose, onSaved }: { campaign: LeadCampaignIt
   const [opts, setOpts] = useState<NumberOption[] | null>(null)
   const [ids, setIds] = useState<string[]>(campaign.instances.map((i) => i.id))
   const [invite, setInvite] = useState(campaign.inviteFallback)
+  const [mode, setMode] = useState<'ADD' | 'INVITE'>(campaign.mode)
   const [busy, setBusy] = useState(false)
   useEffect(() => { api.getLeadOptions().then((o) => setOpts(o.instances)).catch(() => setOpts([])) }, [])
   const save = async () => {
     setBusy(true)
-    try { await api.updateLeadCampaign(campaign.id, { instanceIds: ids, inviteFallback: invite }); addToast('Ajustes da lista salvos', 'success'); onSaved(); onClose() }
+    try { await api.updateLeadCampaign(campaign.id, { instanceIds: ids, inviteFallback: invite, mode }); addToast('Ajustes da lista salvos', 'success'); onSaved(); onClose() }
     catch (err) { addToast(err instanceof Error ? err.message : 'Erro ao salvar', 'error') }
     finally { setBusy(false) }
   }
@@ -129,8 +148,9 @@ function NumbersModal({ campaign, onClose, onSaved }: { campaign: LeadCampaignIt
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div className="label" style={{ marginBottom: -4 }}>Números que trabalham nesta lista</div>
           <NumberPicker instances={opts} value={ids} onChange={setIds} />
-          <Toggle checked={invite} onChange={setInvite} label="Mandar o link do grupo no privado para quem a privacidade não deixar adicionar" />
-          {invite && <InviteRiskNote />}
+          <ModePicker value={mode} onChange={setMode} />
+          {mode === 'ADD' && <Toggle checked={invite} onChange={setInvite} label="Mandar o link do grupo no privado para quem a privacidade não deixar adicionar" />}
+          {(mode === 'INVITE' || invite) && <InviteRiskNote />}
           <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
             Os números marcados dividem a fila desta lista: cada pessoa é pega por um só, e cada número respeita os próprios limites (botão Segurança).
             Quem já foi adicionado ou convidado para o mesmo grupo por outra lista é pulado.
@@ -150,6 +170,7 @@ function NewCampaignModal({ onClose, onCreated }: { onClose: () => void; onCreat
   const [nicheId, setNicheId] = useState('')
   const [groupIds, setGroupIds] = useState<string[]>([])
   const [inviteFallback, setInviteFallback] = useState(true)
+  const [mode, setMode] = useState<'ADD' | 'INVITE'>('INVITE')
   const [phones, setPhones] = useState('')
   const [source, setSource] = useState<'LIST' | 'GROUP'>('LIST')
   const [sourceGroupId, setSourceGroupId] = useState('') // group JID
@@ -189,7 +210,7 @@ function NewCampaignModal({ onClose, onCreated }: { onClose: () => void; onCreat
     setBusy(true)
     try {
       const r = await api.createLeadCampaign({
-        name: name.trim(), nicheId: nicheId || null, instanceIds, groupIds, inviteFallback, consent,
+        name: name.trim(), nicheId: nicheId || null, instanceIds, groupIds, inviteFallback, mode, consent,
         ...(source === 'GROUP' ? { sourceGroupId, sourceGroupName: srcGroup?.name } : { phones }),
       })
       setResult(r)
@@ -265,8 +286,9 @@ function NewCampaignModal({ onClose, onCreated }: { onClose: () => void; onCreat
             <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: 6 }}>Quando o 1º grupo chega no limite de membros, o sistema passa para o 2º, e assim por diante.</div>
           </div>
 
-          <Toggle checked={inviteFallback} onChange={setInviteFallback} label="Se a privacidade da pessoa não deixar adicionar, mandar o link do grupo no privado" />
-          {inviteFallback && <InviteRiskNote />}
+          <ModePicker value={mode} onChange={setMode} />
+          {mode === 'ADD' && <Toggle checked={inviteFallback} onChange={setInviteFallback} label="Se a privacidade da pessoa não deixar adicionar, mandar o link do grupo no privado" />}
+          {(mode === 'INVITE' || inviteFallback) && <InviteRiskNote />}
 
           <div>
             <div className="label" style={{ marginBottom: 6 }}>De onde vêm os contatos</div>
@@ -675,6 +697,7 @@ export default function Leads() {
                       <tr key={c.id}>
                         <td className="primary">
                           {c.name}
+                          {c.mode === 'INVITE' && <span className="badge" style={{ marginLeft: 6 }} title="Ninguém é adicionado: cada pessoa recebe o link do grupo no privado">Só convite</span>}
                           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{int(c.total)} leads · criada {new Date(c.createdAt).toLocaleDateString('pt-BR')}</div>
                         </td>
                         <td style={{ fontSize: '0.8rem' }}>

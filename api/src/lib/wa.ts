@@ -85,6 +85,11 @@ export async function remove(name: string, provider?: Provider) {
   return (await isWaha(name, provider)) ? wahaApi.deleteSession(name) : evolution.deleteInstance(name);
 }
 
+/** Reach-out timelock (WAHA only; the Evolution doesn't expose it → null = unknown). */
+export async function reachoutLock(name: string): Promise<{ active: boolean; until: Date | null } | null> {
+  return (await isWaha(name)) ? wahaApi.getReachoutTimelock(name).catch(() => null) : null;
+}
+
 // ── Groups and messages (Evolution-shaped results) ──────────────────────────
 
 export async function groupParticipants(name: string, groupJid: string, timeout = 30000): Promise<EvoResult> {

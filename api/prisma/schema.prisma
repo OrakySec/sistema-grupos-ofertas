@@ -576,6 +576,9 @@ model LeadCampaign {
   instanceId     String
   groupIds       Json // DestinationGroup ids, filled in this order
   inviteFallback Boolean  @default(true) // privacy blocks direct add → send the link in private
+  // ADD = add to the group (link in private only when privacy refuses);
+  // INVITE = never add, everyone gets the group link in private (invite daily limit).
+  mode           String   @default("ADD")
   status         String   @default("ACTIVE") // ACTIVE | PAUSED | DONE
   pausedReason   String?
   intakeToken    String   @unique // public webhook: POST /api/leads/intake/<token>

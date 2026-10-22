@@ -15,6 +15,10 @@
  *     and the owner is alerted
  *   - anyone who ever left one of the account's groups is never added again
  *     (lib/leadBlocks.ts)
+ *   - "invite only" lists (mode INVITE): nobody is added — everyone gets the
+ *     group link in private, within the invite daily limit (and the rest cycle)
+ *   - WhatsApp's reach-out timelock (WAHA reports it): no private invite while
+ *     it's on — the number rests until it ends, the lead stays in the queue
  *   - a list can be worked by several numbers (LeadCampaignNumber): they share
  *     the queue, each within its own limits; someone already added/invited to
  *     the same group by another list is skipped (DUPLICATE)
@@ -24,7 +28,7 @@
  * /group/inviteCode + /message/sendText (private invite, when enabled).
  */
 import prisma from './prisma';
-import { addParticipant, getInfo, getState, groupInviteCode, groupParticipants, sendText } from './wa';
+import { addParticipant, getInfo, getState, groupInviteCode, groupParticipants, reachoutLock, sendText } from './wa';
 import { brtDayStart, toBrt } from './time';
 import { WhatsAppService } from '../services/whatsapp.service';
 import { findBlock, samePhone } from './leadBlocks';
@@ -338,11 +342,13 @@ async function processInstance(instanceId: string, now: Date): Promise<string | 
         include: { campaign: true },
       })
     : null;
-  const lead = pending ?? (canAdd
+  // ADD lists need room in the add limit; INVITE lists (link in private only) in the invite limit.
+  const modes = [...(canAdd ? ['ADD'] : []), ...(canInvite ? ['INVITE'] : [])];
+  const lead = pending ?? (modes.length
     ? await prisma.lead.findFirst({
         // Every number of the list pulls from the same queue. Numbers are worked one
         // after another in a single tick (one worker), so a lead is never taken twice.
-        where: { status: 'QUEUED', campaign: { status: 'ACTIVE', numbers: { some: { instanceId } } } },
+        where: { status: 'QUEUED', campaign: { status: 'ACTIVE', mode: { in: modes }, numbers: { some: { instanceId } } } },
         orderBy: { createdAt: 'asc' },
         include: { campaign: true },
       })
@@ -397,14 +403,35 @@ async function processInstance(instanceId: string, now: Date): Promise<string | 
     return `${lead.phone} → ${status}${detail ? ` (${detail})` : ''}`;
   };
 
-  const sendInvite = async (target: { id: string; name: string; chatId: string; inviteLink: string | null }, why: string) => {
+  /**
+   * WhatsApp is blocking this number from messaging new people (reach-out
+   * timelock): the number rests until the lock ends (24 h when unknown) and the
+   * lead stays where it is — retrying during the lock only makes it longer.
+   */
+  const timelocked = async (until: Date | null, why: string) => {
+    const restUntil = until && until > now ? until : new Date(now.getTime() + DAY_MS);
+    const when = restUntil.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    await prisma.whatsAppInstance.update({
+      where: { id: instanceId },
+      data: { leadRestUntil: restUntil, leadLastResult: `Convites suspensos até ${when}: ${why}` },
+    });
+    await alertOwner(`⚠️ Leads: o WhatsApp está limitando o número "${inst.label}" de mandar mensagem para quem não falou com ele (${why}).
+A fila dele descansa até ${when}. Ninguém foi perdido: os leads continuam na fila.`);
+    return `limitado pelo WhatsApp até ${when}`;
+  };
+
+  const sendInvite = async (target: { id: string; name: string; chatId: string; inviteLink: string | null }, why: string, countsForRest = false) => {
+    const lock = await reachoutLock(inst.name);
+    if (lock?.active) return timelocked(lock.until, 'trava de contato com desconhecidos ativa');
     const link = await groupLink(inst.name, target);
     if (!link) return finish('FAILED', `${why}, e não consegui o link do grupo ${target.name}`, target.id, { touched: true, failure: 'real' });
     const text = renderInvite(s.inviteText, { nome: lead.name?.split(' ')[0] ?? '', grupo: target.name, link });
     const sendErr = await sendPrivate(inst.name, lead.phone, text);
+    if (sendErr && /\b463\b|timelock|reach-?out/i.test(sendErr)) return timelocked(null, 'o WhatsApp recusou o envio (erro 463)');
     if (sendErr) return finish('FAILED', `${why}; falhou ao mandar o convite: ${sendErr}`, target.id, { touched: true, failure: 'real' });
-    return finish('INVITED', `${why} — link do grupo ${target.name} enviado no privado`, target.id, { touched: true });
+    return finish('INVITED', `${why} — link do grupo ${target.name} enviado no privado`, target.id, { touched: true, added: countsForRest });
   };
+  const inviteOnly = lead.campaign.mode === 'INVITE';
 
   // Left (or was removed from) one of the account's groups before → never again.
   if (await findBlock(lead.tenantId, lead.phone)) {
@@ -444,7 +471,8 @@ async function processInstance(instanceId: string, now: Date): Promise<string | 
       await pauseCampaign(lead.campaignId, `Não consegui ler o grupo "${g.name}" com este número (ele participa do grupo?): ${info.error}`);
       return `campanha pausada: grupo ${g.name} ilegível`;
     }
-    if (info.selfIsAdmin === false) {
+    // Invite-only lists don't need admin when the group's link is registered.
+    if (info.selfIsAdmin === false && !(inviteOnly && g.inviteLink)) {
       await pauseCampaign(lead.campaignId, `O número "${inst.label}" não é admin do grupo "${g.name}". Torne-o admin e retome a campanha.`);
       return `campanha pausada: não é admin de ${g.name}`;
     }
@@ -457,6 +485,9 @@ async function processInstance(instanceId: string, now: Date): Promise<string | 
       : 'A campanha não tem nenhum grupo de WhatsApp ativo.');
     return 'campanha pausada: sem grupo com vaga';
   }
+
+  // 2a. Invite-only list: the link in private, no add attempt.
+  if (inviteOnly) return sendInvite(target, 'Lista só de convite', true);
 
   // 2. Add — the only WhatsApp action for this lead.
   const add = await addToGroup(inst.name, target.chatId, lead.phone);
@@ -504,11 +535,19 @@ export async function queueStatus(instanceId: string, now = new Date()) {
     prisma.lead.count({ where: { status: 'INVITE_PENDING', campaign: { status: 'ACTIVE', numbers: { some: { instanceId } } } } }),
   ]);
   const limit = effectiveDailyLimit(s, inst.leadWarmupFrom, now);
+  // Today's quota is used up for every kind of list this number works (add / invite-only).
+  const modes = await prisma.leadCampaign.findMany({
+    where: { status: 'ACTIVE', numbers: { some: { instanceId } } }, select: { mode: true }, distinct: ['mode'],
+  });
+  const usesAdd = modes.some((m) => m.mode !== 'INVITE');
+  const usesInvite = modes.some((m) => m.mode === 'INVITE');
+  const quotaFull = (usesAdd || usesInvite)
+    && (!usesAdd || addsToday >= limit) && (!usesInvite || invitesToday >= s.inviteDailyLimit);
   let waitingFor: string | null = null;
   let nextAt: Date | null = inst.leadNextAt && inst.leadNextAt > now ? inst.leadNextAt : null;
   if (inst.leadPaused) waitingFor = 'paused';
   else if (inst.leadRestUntil && inst.leadRestUntil > now) { waitingFor = 'rest'; nextAt = inst.leadRestUntil; }
-  else if (addsToday >= limit) { waitingFor = 'daily_limit'; nextAt = nextWindowStart(s, brtDayStart(-1, now)); }
+  else if (quotaFull) { waitingFor = 'daily_limit'; nextAt = nextWindowStart(s, brtDayStart(-1, now)); }
   else if (!inWorkingWindow(s, now)) { waitingFor = 'window'; nextAt = nextWindowStart(s, now); }
   else if (!queued && !invitePending) waitingFor = 'empty';
   return {

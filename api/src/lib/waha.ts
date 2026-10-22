@@ -188,6 +188,23 @@ export async function getSessionInfo(name: string) {
   };
 }
 
+/**
+ * WhatsApp's "reach-out timelock" on this number (a server-side block on
+ * messaging people who never talked to it), as last seen by WAHA — from
+ * GET /api/sessions/{s}/me. null = no lock seen / unknown.
+ */
+export async function getReachoutTimelock(name: string): Promise<{ active: boolean; until: Date | null } | null> {
+  const r = await waha('GET', `/api/sessions/${enc(name)}/me`, undefined, 15000);
+  const t = r.ok ? r.data?.reachoutTimelock : null;
+  if (!t || typeof t !== 'object') return null;
+  const endsRaw = t.timeEnforcementEnds ?? t.TimeEnforcementEnds ?? t.enforcementEnds ?? t.until ?? t.expiresAt ?? null;
+  const until = endsRaw ? new Date(typeof endsRaw === 'number' && endsRaw < 1e12 ? endsRaw * 1000 : endsRaw) : null;
+  const validUntil = until && !Number.isNaN(until.getTime()) ? until : null;
+  const flag = t.isActive ?? t.IsActive ?? t.active;
+  const active = typeof flag === 'boolean' ? flag : !!validUntil && validUntil.getTime() > Date.now();
+  return { active: active && (!validUntil || validUntil.getTime() > Date.now()), until: validUntil };
+}
+
 /** The session's webhook pointing at us, Evolution-style ({ enabled, url, events }), or null. */
 export async function getSessionWebhook(name: string): Promise<{ enabled: boolean; url: string; events: string[] } | null> {
   const r = await getSession(name);

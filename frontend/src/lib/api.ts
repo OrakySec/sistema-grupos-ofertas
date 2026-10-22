@@ -602,6 +602,7 @@ export interface LeadCampaignItem {
   instance: { id: string; label: string; connected: boolean; number: string | null }
   instances: Array<{ id: string; label: string; connected: boolean; number: string | null }>
   inviteFallback: boolean
+  mode: 'ADD' | 'INVITE'
   counts: Record<LeadStatus, number>
   total: number
   left: number
@@ -1091,7 +1092,7 @@ class ApiClient {
     return this.request('GET', '/leads/overview')
   }
 
-  async createLeadCampaign(data: { name: string; nicheId: string | null; instanceIds: string[]; groupIds: string[]; inviteFallback: boolean; phones?: string; sourceGroupId?: string; sourceGroupName?: string; consent: boolean }): Promise<LeadImportResult & { id: string }> {
+  async createLeadCampaign(data: { name: string; nicheId: string | null; instanceIds: string[]; groupIds: string[]; inviteFallback: boolean; mode?: 'ADD' | 'INVITE'; phones?: string; sourceGroupId?: string; sourceGroupName?: string; consent: boolean }): Promise<LeadImportResult & { id: string }> {
     return this.request('POST', '/leads/campaigns', data)
   }
 
@@ -1099,7 +1100,7 @@ class ApiClient {
     return this.request('POST', `/leads/campaigns/${id}/leads`, { phones, consent })
   }
 
-  async updateLeadCampaign(id: string, data: { status?: 'ACTIVE' | 'PAUSED'; name?: string; groupIds?: string[]; inviteFallback?: boolean; instanceIds?: string[] }): Promise<unknown> {
+  async updateLeadCampaign(id: string, data: { status?: 'ACTIVE' | 'PAUSED'; name?: string; groupIds?: string[]; inviteFallback?: boolean; mode?: 'ADD' | 'INVITE'; instanceIds?: string[] }): Promise<unknown> {
     return this.request('PATCH', `/leads/campaigns/${id}`, data)
   }
 

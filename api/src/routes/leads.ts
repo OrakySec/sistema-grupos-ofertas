@@ -125,6 +125,7 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
           instance: c.instance,
           instances: c.numbers.length ? c.numbers.map((n) => n.instance) : [c.instance],
           inviteFallback: c.inviteFallback,
+          mode: c.mode === 'INVITE' ? 'INVITE' : 'ADD',
           counts: byStatus, total: Object.values(byStatus).reduce((a, b) => a + b, 0),
           left: leftCounts.find((r) => r.campaignId === c.id)?._count._all ?? 0,
           intakeUrl: await intakeUrl(c.intakeToken), createdAt: c.createdAt,
@@ -136,7 +137,7 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
 
   // POST /leads/campaigns — new campaign + its leads, from a pasted list or
   // from the members of one of the account's WhatsApp groups (sourceGroupId).
-  fastify.post<{ Body: { name?: string; nicheId?: string | null; instanceId?: string; instanceIds?: string[]; groupIds?: string[]; inviteFallback?: boolean; phones?: string; sourceGroupId?: string; sourceGroupName?: string; consent?: boolean } }>(
+  fastify.post<{ Body: { name?: string; nicheId?: string | null; instanceId?: string; instanceIds?: string[]; groupIds?: string[]; inviteFallback?: boolean; mode?: string; phones?: string; sourceGroupId?: string; sourceGroupName?: string; consent?: boolean } }>(
     '/campaigns',
     async (request, reply) => {
       const tenantId = tenantIdOf(request);
@@ -176,7 +177,7 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       const campaign = await prisma.leadCampaign.create({
         data: {
           tenantId, name, nicheId: b.nicheId || null, instanceId: instance.id, groupIds: ordered,
-          inviteFallback: b.inviteFallback !== false, intakeToken: randomBytes(18).toString('hex'),
+          inviteFallback: b.inviteFallback !== false, mode: b.mode === 'INVITE' ? 'INVITE' : 'ADD', intakeToken: randomBytes(18).toString('hex'),
           numbers: { create: numbers.map((n) => ({ instanceId: n.id })) },
         },
       });
@@ -204,8 +205,8 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
     return { created, blocked, alreadyInCampaign: keep.length - created, duplicates: parsed.duplicates, invalid: parsed.invalid.length, invalidSamples: parsed.invalid.slice(0, 10) };
   });
 
-  // PATCH /leads/campaigns/:id { status?, name?, groupIds?, inviteFallback?, instanceIds? }
-  fastify.patch<{ Params: { id: string }; Body: { status?: string; name?: string; groupIds?: string[]; inviteFallback?: boolean; instanceIds?: string[] } }>(
+  // PATCH /leads/campaigns/:id { status?, name?, groupIds?, inviteFallback?, mode?, instanceIds? }
+  fastify.patch<{ Params: { id: string }; Body: { status?: string; name?: string; groupIds?: string[]; inviteFallback?: boolean; mode?: string; instanceIds?: string[] } }>(
     '/campaigns/:id',
     async (request, reply) => {
       const c = await ownCampaign(request, request.params.id);
@@ -218,6 +219,7 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       }
       if (typeof b.name === 'string' && b.name.trim()) data.name = b.name.trim().slice(0, 80);
       if (typeof b.inviteFallback === 'boolean') data.inviteFallback = b.inviteFallback;
+      if (b.mode === 'ADD' || b.mode === 'INVITE') data.mode = b.mode;
       if (Array.isArray(b.groupIds)) {
         const ids = b.groupIds.map(String);
         const valid = await prisma.destinationGroup.findMany({ where: { id: { in: ids }, type: 'WHATSAPP' }, select: { id: true } });
