@@ -43,7 +43,7 @@ function HelperModal({ helper, defaults, lists, onClose, onSaved }: {
   const { addToast } = useToast()
   const [label, setLabel] = useState(helper?.label ?? '')
   const [phone, setPhone] = useState(helper?.phone ?? '')
-  const [ids, setIds] = useState<string[]>(helper?.campaigns.map((c) => c.id) ?? lists.map((l) => l.id).slice(0, 1))
+  const [ids, setIds] = useState<string[]>(helper?.campaigns.map((c) => c.id) ?? []) // none = every active list
   const [s, setS] = useState<HelperSafety>(helper?.safety ?? defaults)
   const [busy, setBusy] = useState(false)
   const set = <K extends keyof HelperSafety>(k: K, v: HelperSafety[K]) => setS((x) => ({ ...x, [k]: v }))
@@ -85,9 +85,9 @@ function HelperModal({ helper, defaults, lists, onClose, onSaved }: {
         </div>
 
         <div>
-          <div className="label" style={{ marginBottom: 6 }}>Listas que este celular trabalha</div>
+          <div className="label" style={{ marginBottom: 6 }}>Listas que este celular trabalha <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(opcional)</span></div>
           {lists.length === 0 ? (
-            <div style={{ fontSize: '0.8rem', color: 'var(--accent-warning)' }}>Nenhuma lista "Adicionar pelo celular" ainda — crie uma em Listas (ou mude uma em Ajustes).</div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--accent-warning)' }}>Nenhuma lista ainda — crie uma em Listas com os telefones da sua captura.</div>
           ) : (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {lists.map((l) => {
@@ -101,7 +101,7 @@ function HelperModal({ helper, defaults, lists, onClose, onSaved }: {
             </div>
           )}
           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.5 }}>
-            Ninguém vai para dois celulares: cada pessoa entra em um só lote. O celular precisa ser <strong>admin</strong> dos grupos dessas listas.
+            <strong>Nenhuma marcada = pega de todas as listas ativas.</strong> Ninguém vai para dois celulares: cada pessoa entra em um só lote. O celular precisa ser <strong>admin</strong> dos grupos das listas.
           </div>
         </div>
 
@@ -173,7 +173,7 @@ export default function LeadHelpers({ lists }: { lists: LeadCampaignItem[] }) {
   const [data, setData] = useState<Awaited<ReturnType<typeof api.getLeadHelpers>> | null>(null)
   const [editing, setEditing] = useState<LeadHelperItem | 'new' | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
-  const manualLists = lists.filter((l) => l.mode === 'MANUAL')
+  const activeLists = lists.filter((l) => l.status !== 'DONE')
 
   const load = useCallback(() => api.getLeadHelpers().then(setData).catch((err) => addToast(err instanceof Error ? err.message : 'Erro ao carregar', 'error')), [addToast])
   useEffect(() => { load() }, [load])
@@ -187,7 +187,7 @@ export default function LeadHelpers({ lists }: { lists: LeadCampaignItem[] }) {
 
   const statusText = (h: LeadHelperItem) => {
     if (h.paused) return h.pausedReason ?? 'Pausado'
-    if (!h.campaigns.some((c) => c.mode === 'MANUAL' && c.status === 'ACTIVE')) return 'Sem lista ativa — nada para enviar'
+    if (h.campaigns.length ? !h.campaigns.some((c) => c.status === 'ACTIVE') : !activeLists.some((l) => l.status === 'ACTIVE')) return 'Nenhuma lista ativa — nada para enviar'
     if (h.restUntil) return `Descansando até ${when(h.restUntil)}`
     if (h.nextAt && new Date(h.nextAt).getTime() <= Date.now() + 60_000) return 'Envia nos próximos minutos'
     return `Próxima lista ${when(h.nextAt)}`
@@ -232,10 +232,10 @@ export default function LeadHelpers({ lists }: { lists: LeadCampaignItem[] }) {
                 <div style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>{statusText(h)}</div>
                 {h.lastResult && <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>Último: {h.lastResult}</div>}
                 <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
-                  {h.campaigns.length ? h.campaigns.map((c) => c.name).join(' · ') : <span style={{ color: 'var(--accent-warning)' }}>Sem listas — clique em Ajustes</span>}
+                  {h.campaigns.length ? h.campaigns.map((c) => c.name).join(' · ') : 'Todas as listas ativas'}
                 </div>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  <button className="btn btn-primary btn-sm" disabled={!!busy || h.paused || !h.campaigns.length} title={h.campaigns.length ? undefined : 'Escolha uma lista em Ajustes'} onClick={() => act(`send-${h.id}`, async () => (await api.sendLeadHelperNow(h.id)).result)}>
+                  <button className="btn btn-primary btn-sm" disabled={!!busy || h.paused} onClick={() => act(`send-${h.id}`, async () => (await api.sendLeadHelperNow(h.id)).result)}>
                     {busy === `send-${h.id}` ? <span className="spinner spinner-sm" /> : <Icon name="send" size={14} />} Enviar agora
                   </button>
                   <button className="btn btn-ghost btn-sm" onClick={() => setEditing(h)}>Ajustes</button>
@@ -255,7 +255,7 @@ export default function LeadHelpers({ lists }: { lists: LeadCampaignItem[] }) {
         <HelperModal
           helper={editing === 'new' ? null : editing}
           defaults={data.defaults}
-          lists={manualLists}
+          lists={activeLists}
           onClose={() => setEditing(null)}
           onSaved={load}
         />

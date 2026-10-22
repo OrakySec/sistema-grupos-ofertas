@@ -1,8 +1,9 @@
 /**
- * Phones that add people by hand ("Adicionar pelo celular" lists).
+ * Phones that add people by hand.
  *
  * Every day, at the phone's send hour, the main number sends it its own
- * batch: a message with the instructions + a .vcf with the people to add
+ * batch: a message with the instructions and the numbers to add (or a .vcf),
+ * taken from the lists chosen for the phone — none chosen = every active list
  * (lib/leadManual.ts makes the batch, so nobody is in two batches and the
  * usual filters apply). Each phone has its own safety settings, like the
  * numbers of the automatic queue:
@@ -197,12 +198,16 @@ export async function sendHelperBatch(helperId: string, opts: { now?: Date; forc
   if (s.restEvery > 0) room = Math.min(room, s.restEvery - h.sinceRest);
   if (room <= 0) return done(`Limite de hoje (${limit}) já enviado`, opts.force ? {} : { lastSentAt: now });
 
-  const links = await prisma.leadCampaignHelper.findMany({
-    where: { helperId: h.id, campaign: { status: 'ACTIVE', mode: 'MANUAL' } },
-    include: { campaign: { select: { id: true, name: true, createdAt: true } } },
-  });
-  const lists = links.map((l) => l.campaign).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-  if (!lists.length) return done('Nenhuma lista "Adicionar pelo celular" ativa para este celular');
+  // The lists chosen for this phone; none chosen = every active list of the account.
+  const chosen = await prisma.leadCampaignHelper.count({ where: { helperId: h.id } });
+  const lists = (chosen
+    ? (await prisma.leadCampaignHelper.findMany({
+        where: { helperId: h.id, campaign: { status: 'ACTIVE' } },
+        include: { campaign: { select: { id: true, name: true, createdAt: true } } },
+      })).map((l) => l.campaign)
+    : await prisma.leadCampaign.findMany({ where: { tenantId: h.tenantId, status: 'ACTIVE' }, select: { id: true, name: true, createdAt: true } })
+  ).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  if (!lists.length) return done(chosen ? 'As listas escolhidas para este celular estão pausadas' : 'Nenhuma lista ativa');
 
   const people: Array<{ id: string; phone: string; name: string | null; group: string; prefix: string }> = [];
   const problems: string[] = [];

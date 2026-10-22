@@ -330,11 +330,11 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
   // ── Phones that add by hand ("Adicionar pelo celular" lists, lib/leadHelpers.ts) ──
   const helperInclude = { campaigns: { include: { campaign: { select: { id: true, name: true, mode: true, status: true } } } } } as const;
   const ownHelper = (request: any, id: string) => prisma.leadHelper.findFirst({ where: { id, tenantId: tenantIdOf(request) }, include: helperInclude });
-  /** Only the account's "Adicionar pelo celular" lists. */
+  /** The account's lists among the given ids (any mode). */
   const manualLists = async (tenantId: string, ids: unknown) => {
     const list = Array.isArray(ids) ? ids.map(String) : [];
     if (!list.length) return [];
-    return (await prisma.leadCampaign.findMany({ where: { tenantId, id: { in: list }, mode: 'MANUAL' }, select: { id: true } })).map((c) => c.id);
+    return (await prisma.leadCampaign.findMany({ where: { tenantId, id: { in: list } }, select: { id: true } })).map((c) => c.id);
   };
 
   fastify.get('/helpers', async (request) => {
