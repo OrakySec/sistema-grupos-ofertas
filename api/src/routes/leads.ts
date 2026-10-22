@@ -13,8 +13,16 @@ import { shortenerDomain } from '../lib/shortener';
 import { findBlock, groupsOfConnectedNumbers, membersForImport, samePhone } from '../lib/leadBlocks';
 import { leadResults } from '../lib/leadStats';
 
-const STATUSES = ['QUEUED', 'ADDED', 'INVITED', 'INVITE_PENDING', 'ALREADY_MEMBER', 'NO_WHATSAPP', 'BLOCKED', 'FAILED'] as const;
+const STATUSES = ['QUEUED', 'ADDED', 'INVITED', 'INVITE_PENDING', 'ALREADY_MEMBER', 'NO_WHATSAPP', 'BLOCKED', 'DUPLICATE', 'FAILED'] as const;
 const MAX_IMPORT = 20000;
+
+/** The account's numbers among the given ids, in the given order. */
+async function ownNumbers(tenantId: string, ids: unknown) {
+  const list = Array.isArray(ids) ? [...new Set(ids.map(String))] : [];
+  if (!list.length) return [];
+  const rows = await prisma.whatsAppInstance.findMany({ where: { tenantId, id: { in: list } } });
+  return list.map((id) => rows.find((r) => r.id === id)).filter(Boolean) as typeof rows;
+}
 
 /** Drops people who already left one of the account's groups (they're never re-added). */
 async function withoutBlocked<T extends { phone: string }>(tenantId: string, leads: T[]): Promise<{ keep: T[]; blocked: number }> {
@@ -86,7 +94,10 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
     const campaigns = await prisma.leadCampaign.findMany({
       where: { tenantId },
       orderBy: { createdAt: 'desc' },
-      include: { instance: { select: { id: true, label: true, connected: true, number: true } } },
+      include: {
+        instance: { select: { id: true, label: true, connected: true, number: true } },
+        numbers: { include: { instance: { select: { id: true, label: true, connected: true, number: true } } } },
+      },
     });
     const [counts, leftCounts] = await Promise.all([
       prisma.lead.groupBy({ by: ['campaignId', 'status'], where: { tenantId }, _count: { _all: true } }),
@@ -98,7 +109,7 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
     const nicheNames = new Map((await prisma.niche.findMany({ select: { id: true, name: true } })).map((n) => [n.id, n.name]));
     // Every lead-adding number shows its queue (so its safety can be set before the first list).
     const leadNumbers = await prisma.whatsAppInstance.findMany({ where: { tenantId, purpose: 'LEADS' }, select: { id: true } });
-    const instanceIds = [...new Set([...campaigns.map((c) => c.instanceId), ...leadNumbers.map((n) => n.id)])];
+    const instanceIds = [...new Set([...campaigns.flatMap((c) => c.numbers.map((n) => n.instanceId)), ...leadNumbers.map((n) => n.id)])];
     const queues = await Promise.all(instanceIds.map(async (id) => ({ instanceId: id, ...(await queueStatus(id)) })));
     const instances = await prisma.whatsAppInstance.findMany({ where: { id: { in: instanceIds } }, select: { id: true, label: true, connected: true, number: true } });
 
@@ -111,7 +122,9 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
           id: c.id, name: c.name, status: c.status, pausedReason: c.pausedReason,
           niche: c.nicheId ? nicheNames.get(c.nicheId) ?? null : null,
           groups: groupIds.map((id) => ({ id, name: groupNames.get(id) ?? '(grupo removido)' })),
-          instance: c.instance, inviteFallback: c.inviteFallback,
+          instance: c.instance,
+          instances: c.numbers.length ? c.numbers.map((n) => n.instance) : [c.instance],
+          inviteFallback: c.inviteFallback,
           counts: byStatus, total: Object.values(byStatus).reduce((a, b) => a + b, 0),
           left: leftCounts.find((r) => r.campaignId === c.id)?._count._all ?? 0,
           intakeUrl: await intakeUrl(c.intakeToken), createdAt: c.createdAt,
@@ -123,7 +136,7 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
 
   // POST /leads/campaigns — new campaign + its leads, from a pasted list or
   // from the members of one of the account's WhatsApp groups (sourceGroupId).
-  fastify.post<{ Body: { name?: string; nicheId?: string | null; instanceId?: string; groupIds?: string[]; inviteFallback?: boolean; phones?: string; sourceGroupId?: string; sourceGroupName?: string; consent?: boolean } }>(
+  fastify.post<{ Body: { name?: string; nicheId?: string | null; instanceId?: string; instanceIds?: string[]; groupIds?: string[]; inviteFallback?: boolean; phones?: string; sourceGroupId?: string; sourceGroupName?: string; consent?: boolean } }>(
     '/campaigns',
     async (request, reply) => {
       const tenantId = tenantIdOf(request);
@@ -133,8 +146,9 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       }
       const name = String(b.name ?? '').trim().slice(0, 80);
       if (!name) return reply.code(400).send({ message: 'Dê um nome para a lista (ex.: "Captura Casa outubro").' });
-      const instance = await prisma.whatsAppInstance.findFirst({ where: { id: String(b.instanceId ?? ''), tenantId } });
-      if (!instance) return reply.code(400).send({ message: 'Escolha o número que vai adicionar as pessoas.' });
+      const numbers = await ownNumbers(tenantId, b.instanceIds ?? (b.instanceId ? [b.instanceId] : []));
+      if (!numbers.length) return reply.code(400).send({ message: 'Escolha pelo menos um número para adicionar as pessoas.' });
+      const instance = numbers[0];
       const groupIds = Array.isArray(b.groupIds) ? b.groupIds.map(String) : [];
       const valid = await prisma.destinationGroup.findMany({ where: { id: { in: groupIds }, type: 'WHATSAPP' }, select: { id: true } });
       const ordered = groupIds.filter((id) => valid.some((v) => v.id === id));
@@ -163,6 +177,7 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
         data: {
           tenantId, name, nicheId: b.nicheId || null, instanceId: instance.id, groupIds: ordered,
           inviteFallback: b.inviteFallback !== false, intakeToken: randomBytes(18).toString('hex'),
+          numbers: { create: numbers.map((n) => ({ instanceId: n.id })) },
         },
       });
       const created = keep.length
@@ -189,8 +204,8 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
     return { created, blocked, alreadyInCampaign: keep.length - created, duplicates: parsed.duplicates, invalid: parsed.invalid.length, invalidSamples: parsed.invalid.slice(0, 10) };
   });
 
-  // PATCH /leads/campaigns/:id { status?, name?, groupIds?, inviteFallback? }
-  fastify.patch<{ Params: { id: string }; Body: { status?: string; name?: string; groupIds?: string[]; inviteFallback?: boolean } }>(
+  // PATCH /leads/campaigns/:id { status?, name?, groupIds?, inviteFallback?, instanceIds? }
+  fastify.patch<{ Params: { id: string }; Body: { status?: string; name?: string; groupIds?: string[]; inviteFallback?: boolean; instanceIds?: string[] } }>(
     '/campaigns/:id',
     async (request, reply) => {
       const c = await ownCampaign(request, request.params.id);
@@ -209,6 +224,15 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
         const ordered = ids.filter((id) => valid.some((v) => v.id === id));
         if (!ordered.length) return reply.code(400).send({ message: 'Escolha pelo menos um grupo de WhatsApp.' });
         data.groupIds = ordered;
+      }
+      if (Array.isArray(b.instanceIds)) {
+        const numbers = await ownNumbers(c.tenantId, b.instanceIds);
+        if (!numbers.length) return reply.code(400).send({ message: 'A lista precisa de pelo menos um número.' });
+        data.instanceId = numbers[0].id;
+        await prisma.$transaction([
+          prisma.leadCampaignNumber.deleteMany({ where: { campaignId: c.id } }),
+          prisma.leadCampaignNumber.createMany({ data: numbers.map((n) => ({ campaignId: c.id, instanceId: n.id })) }),
+        ]);
       }
       return prisma.leadCampaign.update({ where: { id: c.id }, data });
     },

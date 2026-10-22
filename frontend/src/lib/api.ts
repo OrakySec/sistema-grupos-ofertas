@@ -579,7 +579,7 @@ export interface LeadQueueStatus {
   lastResult: string | null
 }
 
-export type LeadStatus = 'QUEUED' | 'ADDED' | 'INVITED' | 'INVITE_PENDING' | 'ALREADY_MEMBER' | 'NO_WHATSAPP' | 'BLOCKED' | 'FAILED'
+export type LeadStatus = 'QUEUED' | 'ADDED' | 'INVITED' | 'INVITE_PENDING' | 'ALREADY_MEMBER' | 'NO_WHATSAPP' | 'BLOCKED' | 'DUPLICATE' | 'FAILED'
 
 export interface LeadCampaignItem {
   id: string
@@ -589,6 +589,7 @@ export interface LeadCampaignItem {
   niche: string | null
   groups: Array<{ id: string; name: string }>
   instance: { id: string; label: string; connected: boolean; number: string | null }
+  instances: Array<{ id: string; label: string; connected: boolean; number: string | null }>
   inviteFallback: boolean
   counts: Record<LeadStatus, number>
   total: number
@@ -1075,7 +1076,7 @@ class ApiClient {
     return this.request('GET', '/leads/overview')
   }
 
-  async createLeadCampaign(data: { name: string; nicheId: string | null; instanceId: string; groupIds: string[]; inviteFallback: boolean; phones?: string; sourceGroupId?: string; sourceGroupName?: string; consent: boolean }): Promise<LeadImportResult & { id: string }> {
+  async createLeadCampaign(data: { name: string; nicheId: string | null; instanceIds: string[]; groupIds: string[]; inviteFallback: boolean; phones?: string; sourceGroupId?: string; sourceGroupName?: string; consent: boolean }): Promise<LeadImportResult & { id: string }> {
     return this.request('POST', '/leads/campaigns', data)
   }
 
@@ -1083,7 +1084,7 @@ class ApiClient {
     return this.request('POST', `/leads/campaigns/${id}/leads`, { phones, consent })
   }
 
-  async updateLeadCampaign(id: string, data: { status?: 'ACTIVE' | 'PAUSED'; name?: string; groupIds?: string[]; inviteFallback?: boolean }): Promise<unknown> {
+  async updateLeadCampaign(id: string, data: { status?: 'ACTIVE' | 'PAUSED'; name?: string; groupIds?: string[]; inviteFallback?: boolean; instanceIds?: string[] }): Promise<unknown> {
     return this.request('PATCH', `/leads/campaigns/${id}`, data)
   }
 

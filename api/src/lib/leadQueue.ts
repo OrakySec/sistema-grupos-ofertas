@@ -15,6 +15,9 @@
  *     and the owner is alerted
  *   - anyone who ever left one of the account's groups is never added again
  *     (lib/leadBlocks.ts)
+ *   - a list can be worked by several numbers (LeadCampaignNumber): they share
+ *     the queue, each within its own limits; someone already added/invited to
+ *     the same group by another list is skipped (DUPLICATE)
  *
  * Evolution calls (v2): /chat/whatsappNumbers, /group/participants,
  * /group/updateParticipant (action "add"), /group/inviteCode, /message/sendText.
@@ -23,7 +26,7 @@ import prisma from './prisma';
 import { evo, getState } from './evolution';
 import { brtDayStart, toBrt } from './time';
 import { WhatsAppService } from '../services/whatsapp.service';
-import { findBlock } from './leadBlocks';
+import { findBlock, samePhone } from './leadBlocks';
 
 export interface LeadSafety {
   dailyLimit: number;
@@ -271,7 +274,10 @@ export interface TickResult { instance: string; action: string }
 export async function leadsTick(now = new Date()): Promise<TickResult[]> {
   const out: TickResult[] = [];
   const instances = await prisma.whatsAppInstance.findMany({
-    where: { leadPaused: false, campaigns: { some: { status: 'ACTIVE', leads: { some: { status: { in: ['QUEUED', 'INVITE_PENDING'] } } } } } },
+    where: {
+      leadPaused: false,
+      campaignNumbers: { some: { campaign: { status: 'ACTIVE', leads: { some: { status: { in: ['QUEUED', 'INVITE_PENDING'] } } } } } },
+    },
   });
   for (const inst of instances) {
     try {
@@ -306,14 +312,16 @@ async function processInstance(instanceId: string, now: Date): Promise<string | 
   // Invites postponed by yesterday's invite limit go first (no new add attempt for them).
   const pending = canInvite
     ? await prisma.lead.findFirst({
-        where: { status: 'INVITE_PENDING', campaign: { instanceId, status: 'ACTIVE' } },
+        where: { status: 'INVITE_PENDING', campaign: { status: 'ACTIVE', numbers: { some: { instanceId } } } },
         orderBy: { createdAt: 'asc' },
         include: { campaign: true },
       })
     : null;
   const lead = pending ?? (canAdd
     ? await prisma.lead.findFirst({
-        where: { status: 'QUEUED', campaign: { instanceId, status: 'ACTIVE' } },
+        // Every number of the list pulls from the same queue. Numbers are worked one
+        // after another in a single tick (one worker), so a lead is never taken twice.
+        where: { status: 'QUEUED', campaign: { status: 'ACTIVE', numbers: { some: { instanceId } } } },
         orderBy: { createdAt: 'asc' },
         include: { campaign: true },
       })
@@ -374,6 +382,21 @@ async function processInstance(instanceId: string, now: Date): Promise<string | 
   // Left (or was removed from) one of the account's groups before → never again.
   if (await findBlock(lead.tenantId, lead.phone)) {
     return finish('BLOCKED', 'Já saiu de um dos seus grupos antes — não é adicionado de novo', null, { touched: false });
+  }
+
+  // Already added / invited to one of these groups through another list (maybe by
+  // another number) → skip, so nobody gets two adds or two private invites.
+  if (lead.status === 'QUEUED') {
+    const listGroups: string[] = Array.isArray(lead.campaign.groupIds) ? (lead.campaign.groupIds as string[]) : [];
+    const others = await prisma.lead.findMany({
+      where: {
+        tenantId: lead.tenantId, id: { not: lead.id }, phone: { endsWith: lead.phone.slice(-8) },
+        status: { in: ['ADDED', 'INVITED', 'INVITE_PENDING'] }, groupId: { in: listGroups },
+      },
+      select: { phone: true, campaign: { select: { name: true } } },
+    });
+    const dup = others.find((o) => samePhone(o.phone, lead.phone));
+    if (dup) return finish('DUPLICATE', `Já foi adicionado ou convidado para esse grupo pela lista "${dup.campaign.name}"`, null, { touched: false });
   }
 
   if (lead.status === 'INVITE_PENDING') {
@@ -444,8 +467,9 @@ export async function queueStatus(instanceId: string, now = new Date()) {
   const [addsToday, invitesToday, queued, invitePending] = await Promise.all([
     prisma.lead.count({ where: { instanceId, status: 'ADDED', processedAt: { gte: dayStart } } }),
     prisma.lead.count({ where: { instanceId, status: 'INVITED', processedAt: { gte: dayStart } } }),
-    prisma.lead.count({ where: { status: 'QUEUED', campaign: { instanceId, status: 'ACTIVE' } } }),
-    prisma.lead.count({ where: { status: 'INVITE_PENDING', campaign: { instanceId, status: 'ACTIVE' } } }),
+    // Shared with the list's other numbers.
+    prisma.lead.count({ where: { status: 'QUEUED', campaign: { status: 'ACTIVE', numbers: { some: { instanceId } } } } }),
+    prisma.lead.count({ where: { status: 'INVITE_PENDING', campaign: { status: 'ACTIVE', numbers: { some: { instanceId } } } } }),
   ]);
   const limit = effectiveDailyLimit(s, inst.leadWarmupFrom, now);
   let waitingFor: string | null = null;

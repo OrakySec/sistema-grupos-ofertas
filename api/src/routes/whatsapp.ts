@@ -132,8 +132,8 @@ export const whatsappRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   fastify.delete<{ Params: { id: string }; Querystring: { force?: string } }>('/instances/:id', async (request, reply) => {
     const row = await own(request, request.params.id);
     if (!row) return reply.code(404).send({ message: 'Número não encontrado' });
-    const campaigns = await prisma.leadCampaign.count({ where: { instanceId: row.id } });
-    if (campaigns) return reply.code(409).send({ message: `Este número tem ${campaigns} campanha(s) de leads. Exclua ou troque o número delas antes.` });
+    const campaigns = await prisma.leadCampaign.count({ where: { OR: [{ instanceId: row.id }, { numbers: { some: { instanceId: row.id } } }] } });
+    if (campaigns) return reply.code(409).send({ message: `Este número está em ${campaigns} lista(s) de leads. Tire ele dessas listas (botão "Números") ou exclua-as antes.` });
     if (row.purpose === 'OFFERS' && request.query.force !== '1') {
       return reply.code(409).send({ message: 'Este número posta as ofertas. Remover para os envios para o WhatsApp.' });
     }

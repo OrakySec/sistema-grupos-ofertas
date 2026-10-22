@@ -29,9 +29,10 @@ const STATUS: Record<LeadStatus, { label: string; cls: string; color: string }> 
   ALREADY_MEMBER: { label: 'Já estava', cls: '', color: 'var(--text-muted)' },
   NO_WHATSAPP: { label: 'Sem WhatsApp', cls: '', color: 'var(--text-muted)' },
   BLOCKED: { label: 'Saiu antes', cls: '', color: '#c9a0ff' },
+  DUPLICATE: { label: 'Já feito em outra lista', cls: '', color: 'var(--text-muted)' },
   FAILED: { label: 'Falhou', cls: 'badge-failed', color: '#ff8a8e' },
 }
-const STATUS_ORDER: LeadStatus[] = ['QUEUED', 'ADDED', 'INVITED', 'INVITE_PENDING', 'ALREADY_MEMBER', 'NO_WHATSAPP', 'BLOCKED', 'FAILED']
+const STATUS_ORDER: LeadStatus[] = ['QUEUED', 'ADDED', 'INVITED', 'INVITE_PENDING', 'ALREADY_MEMBER', 'NO_WHATSAPP', 'BLOCKED', 'DUPLICATE', 'FAILED']
 
 const WEEKDAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 
@@ -77,12 +78,61 @@ function ConsentBox({ checked, onChange, fromGroup = false }: { checked: boolean
   )
 }
 
+type NumberOption = { id: string; label: string; purpose: string; connected: boolean; number: string | null }
+
+/** Several numbers can work the same list — toggle chips. */
+function NumberPicker({ instances, value, onChange }: { instances: NumberOption[]; value: string[]; onChange: (ids: string[]) => void }) {
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+      {instances.map((i) => {
+        const on = value.includes(i.id)
+        return (
+          <button key={i.id} type="button" className={`btn btn-sm ${on ? 'btn-primary' : 'btn-secondary'}`}
+            onClick={() => onChange(on ? value.filter((x) => x !== i.id) : [...value, i.id])}
+            title={i.purpose === 'OFFERS' ? 'Este número posta as ofertas' : undefined}>
+            <span className={`status-dot ${i.connected ? 'online' : 'offline'}`} />
+            {i.label}{i.number ? ` · ${fmtPhone(i.number)}` : ''}{i.purpose === 'OFFERS' ? ' (ofertas)' : ''}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function NumbersModal({ campaign, onClose, onSaved }: { campaign: LeadCampaignItem; onClose: () => void; onSaved: () => void }) {
+  const { addToast } = useToast()
+  const [opts, setOpts] = useState<NumberOption[] | null>(null)
+  const [ids, setIds] = useState<string[]>(campaign.instances.map((i) => i.id))
+  const [busy, setBusy] = useState(false)
+  useEffect(() => { api.getLeadOptions().then((o) => setOpts(o.instances)).catch(() => setOpts([])) }, [])
+  const save = async () => {
+    setBusy(true)
+    try { await api.updateLeadCampaign(campaign.id, { instanceIds: ids }); addToast('Números da lista atualizados', 'success'); onSaved(); onClose() }
+    catch (err) { addToast(err instanceof Error ? err.message : 'Erro ao salvar', 'error') }
+    finally { setBusy(false) }
+  }
+  return (
+    <Modal isOpen onClose={onClose} title={`Números · ${campaign.name}`} width={560}
+      footer={<><button className="btn btn-ghost" onClick={onClose}>Cancelar</button><button className="btn btn-primary" onClick={save} disabled={busy || !ids.length}>{busy ? <span className="spinner spinner-sm" /> : null} Salvar</button></>}>
+      {!opts ? <Skeleton height={80} /> : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <NumberPicker instances={opts} value={ids} onChange={setIds} />
+          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+            Os números marcados dividem a fila desta lista: cada pessoa é pega por um só, e cada número respeita os próprios limites (botão Segurança).
+            Quem já foi adicionado ou convidado para o mesmo grupo por outra lista é pulado.
+          </div>
+        </div>
+      )}
+    </Modal>
+  )
+}
+
 /* ─── New campaign ─── */
 function NewCampaignModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const { addToast } = useToast()
   const [opts, setOpts] = useState<Awaited<ReturnType<typeof api.getLeadOptions>> | null>(null)
   const [name, setName] = useState('')
-  const [instanceId, setInstanceId] = useState('')
+  const [instanceIds, setInstanceIds] = useState<string[]>([])
   const [nicheId, setNicheId] = useState('')
   const [groupIds, setGroupIds] = useState<string[]>([])
   const [inviteFallback, setInviteFallback] = useState(true)
@@ -111,21 +161,21 @@ function NewCampaignModal({ onClose, onCreated }: { onClose: () => void; onCreat
     api.getLeadOptions().then((o) => {
       setOpts(o)
       const leadsNumber = o.instances.find((i) => i.purpose === 'LEADS') ?? o.instances[0]
-      if (leadsNumber) setInstanceId(leadsNumber.id)
+      if (leadsNumber) setInstanceIds([leadsNumber.id])
     }).catch((err) => addToast(err instanceof Error ? err.message : 'Erro', 'error'))
   }, [addToast])
 
   const niche = opts?.niches.find((n) => n.id === nicheId)
   const groupChoices = (niche ? niche.groups : opts?.groups ?? []).filter((g) => source !== 'GROUP' || !srcGroup || g.id !== srcGroup.registeredId)
   const toggleGroup = (id: string) => setGroupIds((g) => (g.includes(id) ? g.filter((x) => x !== id) : [...g, id]))
-  const chosen = opts?.instances.find((i) => i.id === instanceId)
+  const chosenOffers = opts?.instances.some((i) => instanceIds.includes(i.id) && i.purpose === 'OFFERS')
   const lines = phones.split(/\r?\n/).filter((l) => l.trim()).length
 
   const save = async () => {
     setBusy(true)
     try {
       const r = await api.createLeadCampaign({
-        name: name.trim(), nicheId: nicheId || null, instanceId, groupIds, inviteFallback, consent,
+        name: name.trim(), nicheId: nicheId || null, instanceIds, groupIds, inviteFallback, consent,
         ...(source === 'GROUP' ? { sourceGroupId, sourceGroupName: srcGroup?.name } : { phones }),
       })
       setResult(r)
@@ -146,7 +196,7 @@ function NewCampaignModal({ onClose, onCreated }: { onClose: () => void; onCreat
       footer={result ? <button className="btn btn-primary" onClick={onClose}>Fechar</button> : (
         <>
           <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
-          <button className="btn btn-primary" onClick={save} disabled={busy || !consent || !name.trim() || !instanceId || !groupIds.length || (source === 'GROUP' && !sourceGroupId)}>
+          <button className="btn btn-primary" onClick={save} disabled={busy || !consent || !name.trim() || !instanceIds.length || !groupIds.length || (source === 'GROUP' && !sourceGroupId)}>
             {busy ? <span className="spinner spinner-sm" /> : <Icon name="userPlus" />} {busy && source === 'GROUP' ? 'Lendo os membros…' : 'Criar e colocar na fila'}
           </button>
         </>
@@ -162,18 +212,16 @@ function NewCampaignModal({ onClose, onCreated }: { onClose: () => void; onCreat
           </div>
 
           <div className="form-group" style={{ marginBottom: 0 }}>
-            <label className="label">Número que vai adicionar</label>
-            <select className="select" value={instanceId} onChange={(e) => setInstanceId(e.target.value)}>
-              {opts.instances.map((i) => (
-                <option key={i.id} value={i.id}>{i.label}{i.number ? ` · ${fmtPhone(i.number)}` : ''}{i.connected ? '' : ' (desconectado)'}{i.purpose === 'OFFERS' ? ' — posta as ofertas' : ''}</option>
-              ))}
-            </select>
-            {chosen?.purpose === 'OFFERS' && (
+            <label className="label">Números que vão adicionar</label>
+            <NumberPicker instances={opts.instances} value={instanceIds} onChange={setInstanceIds} />
+            {chosenOffers && (
               <div style={{ fontSize: '0.76rem', color: 'var(--accent-warning)', marginTop: 6 }}>
                 Este é o número que posta as ofertas. Se ele for bloqueado por adicionar gente, as ofertas param. O ideal é um número separado.
               </div>
             )}
-            <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: 6 }}>Ele precisa ser <strong>admin</strong> dos grupos escolhidos abaixo.</div>
+            <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.5 }}>
+              Marque mais de um para a lista andar mais rápido: eles dividem a mesma fila, cada um com os próprios limites. Todos precisam ser <strong>admin</strong> dos grupos escolhidos abaixo.
+            </div>
           </div>
 
           <div className="form-group" style={{ marginBottom: 0 }}>
@@ -523,6 +571,7 @@ export default function Leads() {
   const [intake, setIntake] = useState<LeadCampaignItem | null>(null)
   const [safety, setSafety] = useState<{ id: string; label: string } | null>(null)
   const [tab, setTab] = useState<'lists' | 'results'>('lists')
+  const [numbersFor, setNumbersFor] = useState<LeadCampaignItem | null>(null)
 
   const load = useCallback(() => api.getLeadsOverview().then(setData).catch((err) => addToast(err instanceof Error ? err.message : 'Erro ao carregar', 'error')), [addToast])
   useEffect(() => { load(); const t = setInterval(load, 30_000); return () => clearInterval(t) }, [load])
@@ -615,7 +664,10 @@ export default function Leads() {
                           <div style={{ color: 'var(--text-muted)', fontSize: '0.74rem' }}>{c.groups.map((g, i) => `${i + 1}. ${g.name}`).join(' · ')}</div>
                         </td>
                         <td style={{ fontSize: '0.8rem' }}>
-                          <span className={`status-dot ${c.instance.connected ? 'online' : 'offline'}`} style={{ marginRight: 6 }} />{c.instance.label}
+                          {c.instances.map((i) => (
+                            <div key={i.id} style={{ whiteSpace: 'nowrap' }}><span className={`status-dot ${i.connected ? 'online' : 'offline'}`} style={{ marginRight: 6 }} />{i.label}</div>
+                          ))}
+                          <button className="btn btn-ghost btn-sm" style={{ paddingLeft: 0, fontSize: '0.74rem' }} onClick={() => setNumbersFor(c)}>Números</button>
                         </td>
                         <td style={{ minWidth: 220 }}>
                           <div className="health-bar" title={`${pct}% processados`}>
@@ -670,6 +722,7 @@ export default function Leads() {
       {adding && <AddLeadsModal campaign={adding} onClose={() => setAdding(null)} onDone={load} />}
       {viewing && <LeadsListModal campaign={viewing} onClose={() => setViewing(null)} />}
       {intake && <IntakeModal campaign={intake} onClose={() => setIntake(null)} />}
+      {numbersFor && <NumbersModal campaign={numbersFor} onClose={() => setNumbersFor(null)} onSaved={load} />}
       {safety && <SafetyModal instanceId={safety.id} label={safety.label} onClose={() => setSafety(null)} onSaved={load} />}
     </div>
   )

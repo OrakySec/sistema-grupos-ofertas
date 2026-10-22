@@ -533,10 +533,24 @@ model WhatsAppInstance {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  tenant    Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  campaigns LeadCampaign[]
+  tenant          Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  campaigns       LeadCampaign[]
+  campaignNumbers LeadCampaignNumber[]
 
   @@index([tenantId])
+}
+
+// The numbers that work a lead list together: all of them pull from the same
+// queue (each lead is taken by one number), each within its own safety limits.
+model LeadCampaignNumber {
+  campaignId String
+  instanceId String
+
+  campaign LeadCampaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  instance WhatsAppInstance @relation(fields: [instanceId], references: [id], onDelete: Restrict)
+
+  @@id([campaignId, instanceId])
+  @@index([instanceId])
 }
 
 // A batch of opt-in leads (from the user's own capture page) to be added to
@@ -546,6 +560,7 @@ model LeadCampaign {
   tenantId       String
   name           String // "nicho dos leads" — free label
   nicheId        String? // destination niche (for display; groups are in groupIds)
+  // First number of the list (kept in sync); the queue uses `numbers`.
   instanceId     String
   groupIds       Json // DestinationGroup ids, filled in this order
   inviteFallback Boolean  @default(true) // privacy blocks direct add → send the link in private
@@ -555,8 +570,9 @@ model LeadCampaign {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  instance WhatsAppInstance @relation(fields: [instanceId], references: [id], onDelete: Restrict)
+  tenant   Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  instance WhatsAppInstance     @relation(fields: [instanceId], references: [id], onDelete: Restrict)
+  numbers  LeadCampaignNumber[]
   leads    Lead[]
 
   @@index([tenantId, createdAt])
@@ -570,7 +586,8 @@ model Lead {
   name        String?
   // QUEUED | ADDED | INVITED | INVITE_PENDING (privacy blocked the add and the
   // day's invite quota was used — invited on a later day) | ALREADY_MEMBER |
-  // NO_WHATSAPP | BLOCKED (left one of our groups before — see LeadBlock) | FAILED
+  // NO_WHATSAPP | BLOCKED (left one of our groups before — see LeadBlock) |
+  // DUPLICATE (already added/invited to the same group by another list) | FAILED
   status      String    @default("QUEUED")
   source      String    @default("LIST") // LIST (pasted/CSV) | INTAKE (webhook) | GROUP (members of one of the account's groups)
   groupId     String? // DestinationGroup it went to
