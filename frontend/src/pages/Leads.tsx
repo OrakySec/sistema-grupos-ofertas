@@ -7,6 +7,7 @@ import Modal from '../components/Modal'
 import Toggle from '../components/Toggle'
 import { Skeleton } from '../components/LoadingSkeleton'
 import LeadResults from '../components/LeadResults'
+import LeadHelpers from '../components/LeadHelpers'
 
 const int = (v: number) => v.toLocaleString('pt-BR')
 const when = (iso: string | null) => {
@@ -144,7 +145,7 @@ function ManualBatchModal({ campaign, onClose }: { campaign: LeadCampaignItem; o
     <Modal isOpen onClose={onClose} title={`Lote do dia · ${campaign.name}`} width={680}>
       {!b ? <Skeleton height={160} /> : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {b.pending.length === 0 ? (
+          {!b.pending.some((l) => !l.helper) ? (
             <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="label">Quantas pessoas neste lote</label>
@@ -161,7 +162,7 @@ function ManualBatchModal({ campaign, onClose }: { campaign: LeadCampaignItem; o
                 <li>O sistema confere sozinho quem entrou (a cada 15 min) — ou clique em "Conferir agora".</li>
               </ol>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button className="btn btn-primary btn-sm" onClick={download} disabled={!!busy}>{busy === 'vcf' ? <span className="spinner spinner-sm" /> : <Icon name="download" size={14} />} Baixar contatos (.vcf)</button>
+                <button className="btn btn-primary btn-sm" onClick={download} disabled={!!busy || !b.pending.some((l) => !l.helper)} title="Só os seus — os celulares recebem o arquivo deles pelo WhatsApp">{busy === 'vcf' ? <span className="spinner spinner-sm" /> : <Icon name="download" size={14} />} Baixar contatos (.vcf)</button>
                 <button className="btn btn-secondary btn-sm" onClick={check} disabled={!!busy}>{busy === 'check' ? <span className="spinner spinner-sm" /> : <Icon name="refresh" size={14} />} Conferir agora</button>
                 <button className="btn btn-ghost btn-sm" onClick={() => confirm('Marcar todos os pendentes como adicionados? Use só se você adicionou e o sistema não consegue ver os números do grupo.') && run('mark', async () => `${(await api.markManualAdded(campaign.id)).marked} marcados como adicionados`)} disabled={!!busy}>Marcar todos como adicionados</button>
                 <button className="btn btn-ghost btn-sm" onClick={() => confirm('Devolver os pendentes para a fila? Eles entram num próximo lote.') && run('requeue', async () => `${(await api.requeueManualBatch(campaign.id)).requeued} de volta para a fila`)} disabled={!!busy}>Devolver pendentes à fila</button>
@@ -170,8 +171,8 @@ function ManualBatchModal({ campaign, onClose }: { campaign: LeadCampaignItem; o
           )}
 
           {(b.pending.length > 0 || b.added.length > 0) && (
-            <div className="table-wrap" style={{ maxHeight: 340, overflow: 'auto' }}>
-              <table className="table">
+            <div className="table-wrapper" style={{ maxHeight: 340, overflow: 'auto' }}>
+              <table>
                 <thead><tr><th>Pessoa</th><th>Grupo</th><th>Situação</th><th></th></tr></thead>
                 <tbody>
                   {[...b.pending, ...b.added].map((l) => (
@@ -180,7 +181,7 @@ function ManualBatchModal({ campaign, onClose }: { campaign: LeadCampaignItem; o
                         <div>{l.name || '—'}</div>
                         <div className="mono" style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>{fmtPhone(l.phone)}</div>
                       </td>
-                      <td style={{ fontSize: '0.8rem' }}>{l.group ?? '—'}</td>
+                      <td style={{ fontSize: '0.8rem' }}>{l.group ?? '—'}{l.helper && <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>lista do celular {l.helper}</div>}</td>
                       <td>{l.status === 'ADDED'
                         ? <span className="badge badge-sent">Entrou {when(l.at)}</span>
                         : <span className="badge badge-pending">Falta adicionar</span>}</td>
@@ -712,7 +713,7 @@ export default function Leads() {
   const [manualFor, setManualFor] = useState<LeadCampaignItem | null>(null)
   const [intake, setIntake] = useState<LeadCampaignItem | null>(null)
   const [safety, setSafety] = useState<{ id: string; label: string } | null>(null)
-  const [tab, setTab] = useState<'lists' | 'results'>('lists')
+  const [tab, setTab] = useState<'lists' | 'helpers' | 'results'>('lists')
   const [numbersFor, setNumbersFor] = useState<LeadCampaignItem | null>(null)
 
   const load = useCallback(() => api.getLeadsOverview().then(setData).catch((err) => addToast(err instanceof Error ? err.message : 'Erro ao carregar', 'error')), [addToast])
@@ -765,11 +766,12 @@ export default function Leads() {
       <div style={{ marginBottom: 16, overflowX: 'auto' }}>
         <div className="tabs">
           <button className={`tab${tab === 'lists' ? ' active' : ''}`} onClick={() => setTab('lists')}><Icon name="inbox" size={15} /> Listas</button>
+          <button className={`tab${tab === 'helpers' ? ' active' : ''}`} onClick={() => setTab('helpers')}><Icon name="smartphone" size={15} /> Celulares que adicionam</button>
           <button className={`tab${tab === 'results' ? ' active' : ''}`} onClick={() => setTab('results')}><Icon name="trendUp" size={15} /> Resultados</button>
         </div>
       </div>
 
-      {tab === 'results' ? <LeadResults /> : !data ? <Skeleton height={300} borderRadius={14} /> : (
+      {tab === 'results' ? <LeadResults /> : tab === 'helpers' ? (data ? <LeadHelpers lists={data.campaigns} /> : <Skeleton height={300} borderRadius={14} />) : !data ? <Skeleton height={300} borderRadius={14} /> : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
           {data.queues.length > 0 && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 14 }}>

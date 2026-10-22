@@ -493,6 +493,7 @@ model Tenant {
   leadCampaigns     LeadCampaign[]
   leads             Lead[]
   leadBlocks        LeadBlock[]
+  leadHelpers       LeadHelper[]
 }
 
 // People who left (or were removed from) one of the account's WhatsApp groups.
@@ -588,9 +589,46 @@ model LeadCampaign {
   tenant   Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   instance WhatsAppInstance     @relation(fields: [instanceId], references: [id], onDelete: Restrict)
   numbers  LeadCampaignNumber[]
+  helpers  LeadCampaignHelper[]
   leads    Lead[]
 
   @@index([tenantId, createdAt])
+}
+
+// A phone that adds people by hand ("Adicionar pelo celular" lists): every
+// day the main number sends it its own batch — instructions + a .vcf of the
+// people to add — within its own safety settings (lib/leadHelpers.ts).
+model LeadHelper {
+  id           String    @id @default(cuid())
+  tenantId     String
+  label        String
+  phone        String // WhatsApp that receives the batches (55DDD…)
+  safety       Json? // HelperSafety: daily limit, warm-up, rest, weekdays, send hour, message
+  paused       Boolean   @default(false)
+  pausedReason String?
+  restUntil    DateTime?
+  sinceRest    Int       @default(0) // people sent since the last rest
+  warmupFrom   DateTime? // first batch (warm-up ramp)
+  lastSentAt   DateTime?
+  lastResult   String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  tenant    Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  campaigns LeadCampaignHelper[]
+
+  @@index([tenantId])
+}
+
+model LeadCampaignHelper {
+  campaignId String
+  helperId   String
+
+  campaign LeadCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  helper   LeadHelper   @relation(fields: [helperId], references: [id], onDelete: Cascade)
+
+  @@id([campaignId, helperId])
+  @@index([helperId])
 }
 
 model Lead {
@@ -607,6 +645,7 @@ model Lead {
   source      String    @default("LIST") // LIST (pasted/CSV) | INTAKE (webhook) | GROUP (members of one of the account's groups)
   groupId     String? // DestinationGroup it went to
   instanceId  String? // number that processed it (daily limits)
+  helperId    String? // phone that got it in its daily batch ("Adicionar pelo celular")
   detail      String?
   attempts    Int       @default(0)
   processedAt DateTime?
@@ -624,6 +663,7 @@ model Lead {
   @@index([instanceId, processedAt])
   @@index([tenantId, status])
   @@index([tenantId, joinedAt])
+  @@index([helperId, processedAt])
 }
 
 // Monitoring rule on one campaign / ad set / ad.

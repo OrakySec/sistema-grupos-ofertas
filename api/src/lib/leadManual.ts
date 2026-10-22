@@ -56,11 +56,15 @@ export function batchPrefix(campaignName: string, at: Date) {
   return `Lead ${short} ${dayLabel(at)}`;
 }
 
-export async function makeManualBatch(tenantId: string, campaignId: string, size: number) {
+/**
+ * Next batch of a list. Without helperId it's the owner's own batch (one open at
+ * a time); with helperId it's that phone's daily batch (lib/leadHelpers.ts).
+ */
+export async function makeManualBatch(tenantId: string, campaignId: string, size: number, opts: { helperId?: string; now?: Date } = {}) {
   const campaign = await prisma.leadCampaign.findFirst({ where: { id: campaignId, tenantId }, include: { numbers: { include: { instance: true } } } });
   if (!campaign) return { ok: false as const, error: 'Lista não encontrada' };
-  const want = Math.max(1, Math.min(100, Math.round(size) || 10));
-  const pending = await prisma.lead.count({ where: { campaignId, status: PENDING } });
+  const want = Math.max(1, Math.min(200, Math.round(size) || 10));
+  const pending = opts.helperId ? 0 : await prisma.lead.count({ where: { campaignId, status: PENDING, helperId: null } });
   if (pending) return { ok: false as const, error: `Ainda há ${pending} pessoa(s) no lote atual. Confira quem entrou ou devolva os pendentes para a fila antes de gerar outro.` };
 
   const groupIds: string[] = Array.isArray(campaign.groupIds) ? (campaign.groupIds as string[]) : [];
@@ -77,7 +81,7 @@ export async function makeManualBatch(tenantId: string, campaignId: string, size
     state.push({ g, phones: r.phones, room: Math.max(0, cap - r.size) });
   }
 
-  const now = new Date();
+  const now = opts.now ?? new Date();
   const prefix = batchPrefix(campaign.name, now);
   const skipped = { blocked: 0, member: 0, duplicate: 0 };
   const batch: Array<{ id: string; phone: string; name: string | null; group: string }> = [];
@@ -111,11 +115,14 @@ export async function makeManualBatch(tenantId: string, campaignId: string, size
     const target = state.find((s) => s.room > 0);
     if (!target) break; // every group is full
     target.room--;
-    await set(PENDING, `Lote ${dayLabel(now)} — adicionar pelo celular no grupo ${target.g.name}`, target.g.id);
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: { status: PENDING, detail: `Lote ${dayLabel(now)} — adicionar pelo celular no grupo ${target.g.name}`, groupId: target.g.id, helperId: opts.helperId ?? null, processedAt: now, attempts: { increment: 1 } },
+    });
     batch.push({ id: lead.id, phone: lead.phone, name: lead.name, group: target.g.name });
   }
   const full = !state.some((s) => s.room > 0);
-  return { ok: true as const, prefix, batch, skipped, groupsFull: full && batch.length < want };
+  return { ok: true as const, prefix, batch, skipped, groupsFull: full && batch.length < want, exhausted: candidates.length < want * 5 && batch.length < want };
 }
 
 /** The current batch (still to add + added since it was made). */
@@ -132,8 +139,12 @@ export async function manualBatch(tenantId: string, campaignId: string) {
   const groupIds = [...new Set([...pending, ...added].map((l) => l.groupId).filter(Boolean))] as string[];
   const groups = await prisma.destinationGroup.findMany({ where: { id: { in: groupIds } }, select: { id: true, name: true } });
   const gName = new Map(groups.map((g) => [g.id, g.name]));
+  const helperIds = [...new Set([...pending, ...added].map((l) => l.helperId).filter(Boolean))] as string[];
+  const helpers = await prisma.leadHelper.findMany({ where: { id: { in: helperIds } }, select: { id: true, label: true } });
+  const hName = new Map(helpers.map((h) => [h.id, h.label]));
   const row = (l: (typeof pending)[number], status: 'PENDING' | 'ADDED') => ({
     id: l.id, phone: l.phone, name: l.name, group: l.groupId ? gName.get(l.groupId) ?? null : null, status, at: (status === 'ADDED' ? l.joinedAt : l.processedAt) ?? null,
+    helper: l.helperId ? hName.get(l.helperId) ?? null : null,
   });
   const madeAt = pending[0]?.processedAt ?? added[added.length - 1]?.processedAt ?? null;
   return {
@@ -144,18 +155,27 @@ export async function manualBatch(tenantId: string, campaignId: string) {
   };
 }
 
-/** vCard 3.0 of the pending batch — import it on the phone, then add them in the group. */
-export async function manualVcard(tenantId: string, campaignId: string) {
-  const b = await manualBatch(tenantId, campaignId);
-  if (!b || !b.pending.length || !b.prefix) return null;
+/** vCard 3.0 text: each person as "<prefix> — <name>" (search the prefix in the app to find the batch). */
+export function vcardOf(people: Array<{ phone: string; name: string | null; group: string | null; prefix: string }>) {
   const esc = (s: string) => s.replace(/[\\;,]/g, (c) => `\\${c}`);
-  const cards = b.pending.map((l) => {
+  const cards = people.map((l) => {
     const who = l.name?.trim() || `final ${l.phone.slice(-4)}`;
-    const full = `${b.prefix} — ${who}`;
+    const full = `${l.prefix} — ${who}`;
     return ['BEGIN:VCARD', 'VERSION:3.0', `FN:${esc(full)}`, `N:${esc(full)};;;;`, `TEL;TYPE=CELL:+${l.phone}`, `NOTE:${esc(`Grupo: ${l.group ?? ''}`)}`, 'END:VCARD'].join('\r\n');
   });
-  const file = `${b.prefix.replace(/[^\w\d]+/g, '-').replace(/-+$/, '')}.vcf`;
-  return { filename: file, vcf: `${cards.join('\r\n')}\r\n`, count: cards.length };
+  return `${cards.join('\r\n')}\r\n`;
+}
+
+export const vcfFileName = (prefix: string) => `${prefix.replace(/[^\w\d]+/g, '-').replace(/-+$/, '')}.vcf`;
+
+/** vCard of the owner's own pending batch (not the helpers') — import it on the phone, then add them. */
+export async function manualVcard(tenantId: string, campaignId: string) {
+  const b = await manualBatch(tenantId, campaignId);
+  if (!b || !b.prefix) return null;
+  const mine = b.pending.filter((l) => !l.helper);
+  if (!mine.length) return null;
+  const prefix = b.prefix;
+  return { filename: vcfFileName(prefix), vcf: vcardOf(mine.map((l) => ({ ...l, prefix }))), count: mine.length };
 }
 
 /**
@@ -188,15 +208,16 @@ export async function checkManualJoins(tenantId?: string, campaignId?: string) {
 }
 
 /** "Não consegui adicionar" — the pending ones go back to the queue (next batch). */
-export async function requeueManual(campaignId: string) {
-  const r = await prisma.lead.updateMany({ where: { campaignId, status: PENDING }, data: { status: 'QUEUED', groupId: null, detail: null } });
+export async function requeueManual(campaignId: string, opts: { ownerOnly?: boolean } = {}) {
+  const r = await prisma.lead.updateMany({ where: { campaignId, status: PENDING, ...(opts.ownerOnly ? { helperId: null } : {}) }, data: { status: 'QUEUED', groupId: null, detail: null, helperId: null } });
   return r.count;
 }
 
 /** Group members hidden → the owner confirms by hand. */
 export async function markManualAdded(campaignId: string, ids?: string[]) {
   const r = await prisma.lead.updateMany({
-    where: { campaignId, status: PENDING, ...(ids?.length ? { id: { in: ids } } : {}) },
+    // Without ids: the owner's own batch (the phones' batches are checked in the group).
+    where: { campaignId, status: PENDING, ...(ids?.length ? { id: { in: ids } } : { helperId: null }) },
     data: { status: 'ADDED', joinedAt: new Date(), detail: 'Adicionado pelo celular (marcado por você)' },
   });
   return r.count;

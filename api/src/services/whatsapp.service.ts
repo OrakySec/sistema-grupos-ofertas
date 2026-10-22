@@ -342,4 +342,28 @@ export class WhatsAppService {
       throw new Error(`Evolution API sendDocument failed (${err.response?.status ?? '?'}): ${detail}`);
     }
   }
+
+  /** A file built in memory (e.g. a .vcf of contacts) as a document. */
+  async sendDocumentData(chatId: string, content: Buffer | string, fileName: string, mimeType: string, caption?: string): Promise<void> {
+    const base64 = Buffer.from(content).toString('base64');
+    const session = await this.wahaSession();
+    if (session) {
+      this.wahaOk(await wahaApi.sendFile(session, chatId, 'document', { mimetype: mimeType, filename: fileName, data: base64 }, caption ?? ''), 'sendFile');
+      return;
+    }
+    const { client, instance } = await this.getClient();
+    try {
+      await client.post(`/message/sendMedia/${instance}`, {
+        number: chatId,
+        mediatype: 'document',
+        mimetype: mimeType,
+        media: base64, // raw base64, not a data URI — see sendImage()
+        caption: caption ?? '',
+        fileName,
+      });
+    } catch (err: any) {
+      const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+      throw new Error(`Evolution API sendDocument failed (${err.response?.status ?? '?'}): ${detail}`);
+    }
+  }
 }

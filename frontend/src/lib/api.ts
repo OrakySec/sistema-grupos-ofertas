@@ -595,7 +595,41 @@ export type LeadMode = 'ADD' | 'INVITE' | 'MANUAL'
 
 export type LeadStatus = 'QUEUED' | 'ADDED' | 'INVITED' | 'INVITE_PENDING' | 'MANUAL_PENDING' | 'ALREADY_MEMBER' | 'NO_WHATSAPP' | 'BLOCKED' | 'DUPLICATE' | 'FAILED'
 
-export interface ManualBatchRow { id: string; phone: string; name: string | null; group: string | null; status: 'PENDING' | 'ADDED'; at: string | null }
+export interface ManualBatchRow { id: string; phone: string; name: string | null; group: string | null; status: 'PENDING' | 'ADDED'; at: string | null; helper: string | null }
+
+export interface HelperSafety {
+  dailyLimit: number
+  warmup: boolean
+  warmupStart: number
+  warmupStep: number
+  restEvery: number
+  restDays: number
+  weekdays: number[]
+  sendHour: number
+  expireDays: number
+  message: string
+}
+
+/** A phone that gets a daily batch to add by hand ("Adicionar pelo celular" lists). */
+export interface LeadHelperItem {
+  id: string
+  label: string
+  phone: string
+  safety: HelperSafety
+  paused: boolean
+  pausedReason: string | null
+  restUntil: string | null
+  lastSentAt: string | null
+  lastResult: string | null
+  limit: number
+  sentToday: number
+  pending: number
+  added: number
+  addedToday: number
+  sinceRest: number
+  nextAt: string | null
+  campaigns: Array<{ id: string; name: string; mode: string; status: string }>
+}
 export interface ManualBatch { prefix: string | null; pending: ManualBatchRow[]; added: ManualBatchRow[]; queued: number }
 
 export interface LeadCampaignItem {
@@ -1107,6 +1141,31 @@ class ApiClient {
   }
 
   // ── "Adicionar pelo celular" batches ──
+  // ── Phones that add by hand ──
+  async getLeadHelpers(): Promise<{ helpers: LeadHelperItem[]; defaults: HelperSafety }> {
+    return this.request('GET', '/leads/helpers')
+  }
+
+  async createLeadHelper(data: { label: string; phone: string; campaignIds: string[]; safety: HelperSafety }): Promise<LeadHelperItem> {
+    return this.request('POST', '/leads/helpers', data)
+  }
+
+  async updateLeadHelper(id: string, data: { label?: string; phone?: string; campaignIds?: string[]; safety?: HelperSafety; paused?: boolean }): Promise<LeadHelperItem> {
+    return this.request('PATCH', `/leads/helpers/${id}`, data)
+  }
+
+  async deleteLeadHelper(id: string): Promise<{ ok: boolean }> {
+    return this.request('DELETE', `/leads/helpers/${id}`)
+  }
+
+  async sendLeadHelperNow(id: string): Promise<{ sent: number; result: string; helper: LeadHelperItem }> {
+    return this.request('POST', `/leads/helpers/${id}/send`, {})
+  }
+
+  async endLeadHelperRest(id: string): Promise<LeadHelperItem> {
+    return this.request('POST', `/leads/helpers/${id}/end-rest`, {})
+  }
+
   async getManualBatch(id: string): Promise<ManualBatch> {
     return this.request('GET', `/leads/campaigns/${id}/manual`)
   }

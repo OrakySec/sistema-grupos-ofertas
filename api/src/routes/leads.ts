@@ -13,6 +13,7 @@ import { shortenerDomain } from '../lib/shortener';
 import { findBlock, groupsOfConnectedNumbers, membersForImport, samePhone } from '../lib/leadBlocks';
 import { leadResults } from '../lib/leadStats';
 import { checkManualJoins, makeManualBatch, manualBatch, manualVcard, markManualAdded, requeueManual } from '../lib/leadManual';
+import { DEFAULT_HELPER_SAFETY, helperSafetyOf, helperView, sendHelperBatch } from '../lib/leadHelpers';
 
 const MODES = new Set(['ADD', 'INVITE', 'MANUAL']);
 const modeOf = (v: unknown) => (MODES.has(String(v)) ? String(v) : 'ADD');
@@ -281,7 +282,7 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
   fastify.post<{ Params: { id: string } }>('/campaigns/:id/manual/requeue', async (request, reply) => {
     const c = await ownCampaign(request, request.params.id);
     if (!c) return reply.code(404).send({ message: 'Lista não encontrada' });
-    return { requeued: await requeueManual(c.id) };
+    return { requeued: await requeueManual(c.id, { ownerOnly: true }) };
   });
 
   fastify.post<{ Params: { id: string }; Body: { ids?: string[] } }>('/campaigns/:id/manual/mark-added', async (request, reply) => {
@@ -319,10 +320,94 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
     ]);
     const groupNames = new Map((await prisma.destinationGroup.findMany({ select: { id: true, name: true } })).map((g) => [g.id, g.name]));
     const numberNames = new Map((await prisma.whatsAppInstance.findMany({ where: { tenantId: c.tenantId }, select: { id: true, label: true } })).map((i) => [i.id, i.label]));
+    const helperNames = new Map((await prisma.leadHelper.findMany({ where: { tenantId: c.tenantId }, select: { id: true, label: true } })).map((h) => [h.id, `celular ${h.label}`]));
     return {
       total, page, pages: Math.max(1, Math.ceil(total / take)),
-      rows: rows.map((l) => ({ id: l.id, phone: l.phone, name: l.name, status: l.status, source: l.source, detail: l.detail, group: l.groupId ? groupNames.get(l.groupId) ?? null : null, number: l.instanceId ? numberNames.get(l.instanceId) ?? null : null, processedAt: l.processedAt, leftAt: l.leftAt, createdAt: l.createdAt })),
+      rows: rows.map((l) => ({ id: l.id, phone: l.phone, name: l.name, status: l.status, source: l.source, detail: l.detail, group: l.groupId ? groupNames.get(l.groupId) ?? null : null, number: l.instanceId ? numberNames.get(l.instanceId) ?? null : l.helperId ? helperNames.get(l.helperId) ?? null : null, processedAt: l.processedAt, leftAt: l.leftAt, createdAt: l.createdAt })),
     };
+  });
+
+  // ── Phones that add by hand ("Adicionar pelo celular" lists, lib/leadHelpers.ts) ──
+  const helperInclude = { campaigns: { include: { campaign: { select: { id: true, name: true, mode: true, status: true } } } } } as const;
+  const ownHelper = (request: any, id: string) => prisma.leadHelper.findFirst({ where: { id, tenantId: tenantIdOf(request) }, include: helperInclude });
+  /** Only the account's "Adicionar pelo celular" lists. */
+  const manualLists = async (tenantId: string, ids: unknown) => {
+    const list = Array.isArray(ids) ? ids.map(String) : [];
+    if (!list.length) return [];
+    return (await prisma.leadCampaign.findMany({ where: { tenantId, id: { in: list }, mode: 'MANUAL' }, select: { id: true } })).map((c) => c.id);
+  };
+
+  fastify.get('/helpers', async (request) => {
+    const rows = await prisma.leadHelper.findMany({ where: { tenantId: tenantIdOf(request) }, include: helperInclude, orderBy: { createdAt: 'asc' } });
+    return { helpers: await Promise.all(rows.map((h) => helperView(h))), defaults: DEFAULT_HELPER_SAFETY };
+  });
+
+  fastify.post<{ Body: { label?: string; phone?: string; campaignIds?: string[]; safety?: unknown } }>('/helpers', async (request, reply) => {
+    const tenantId = tenantIdOf(request);
+    const b = request.body ?? {};
+    const phone = normalizePhoneBR(String(b.phone ?? ''));
+    if (!phone) return reply.code(400).send({ message: 'Informe o WhatsApp do celular com DDD.' });
+    const label = String(b.label ?? '').trim().slice(0, 60) || `Celular ${phone.slice(-4)}`;
+    const ids = await manualLists(tenantId, b.campaignIds);
+    const h = await prisma.leadHelper.create({
+      data: {
+        tenantId, label, phone, safety: helperSafetyOf(b.safety) as any,
+        campaigns: { create: ids.map((campaignId) => ({ campaignId })) },
+      },
+      include: helperInclude,
+    });
+    return reply.code(201).send(await helperView(h));
+  });
+
+  fastify.patch<{ Params: { id: string }; Body: { label?: string; phone?: string; campaignIds?: string[]; safety?: unknown; paused?: boolean } }>('/helpers/:id', async (request, reply) => {
+    const h = await ownHelper(request, request.params.id);
+    if (!h) return reply.code(404).send({ message: 'Celular não encontrado' });
+    const b = request.body ?? {};
+    const data: Record<string, unknown> = {};
+    if (typeof b.label === 'string' && b.label.trim()) data.label = b.label.trim().slice(0, 60);
+    if (b.phone !== undefined) {
+      const phone = normalizePhoneBR(String(b.phone));
+      if (!phone) return reply.code(400).send({ message: 'WhatsApp inválido (use DDD + número).' });
+      data.phone = phone;
+    }
+    if (b.safety !== undefined) data.safety = helperSafetyOf(b.safety) as any;
+    if (typeof b.paused === 'boolean') {
+      data.paused = b.paused;
+      data.pausedReason = b.paused ? 'Pausado por você' : null;
+    }
+    await prisma.leadHelper.update({ where: { id: h.id }, data });
+    if (Array.isArray(b.campaignIds)) {
+      const ids = await manualLists(h.tenantId, b.campaignIds);
+      await prisma.$transaction([
+        prisma.leadCampaignHelper.deleteMany({ where: { helperId: h.id } }),
+        prisma.leadCampaignHelper.createMany({ data: ids.map((campaignId) => ({ campaignId, helperId: h.id })) }),
+      ]);
+    }
+    return helperView((await ownHelper(request, h.id))!);
+  });
+
+  // DELETE /leads/helpers/:id — the people still in its batch go back to the queue
+  fastify.delete<{ Params: { id: string } }>('/helpers/:id', async (request, reply) => {
+    const h = await ownHelper(request, request.params.id);
+    if (!h) return reply.code(404).send({ message: 'Celular não encontrado' });
+    await prisma.lead.updateMany({ where: { helperId: h.id, status: 'MANUAL_PENDING' }, data: { status: 'QUEUED', helperId: null, groupId: null, detail: null } });
+    await prisma.leadHelper.delete({ where: { id: h.id } });
+    return { ok: true };
+  });
+
+  // POST /leads/helpers/:id/send — today's batch now (outside the send hour; daily limit and rest still apply)
+  fastify.post<{ Params: { id: string } }>('/helpers/:id/send', async (request, reply) => {
+    const h = await ownHelper(request, request.params.id);
+    if (!h) return reply.code(404).send({ message: 'Celular não encontrado' });
+    const r = await sendHelperBatch(h.id, { force: true });
+    return { ...r, helper: await helperView((await ownHelper(request, h.id))!) };
+  });
+
+  fastify.post<{ Params: { id: string } }>('/helpers/:id/end-rest', async (request, reply) => {
+    const h = await ownHelper(request, request.params.id);
+    if (!h) return reply.code(404).send({ message: 'Celular não encontrado' });
+    await prisma.leadHelper.update({ where: { id: h.id }, data: { restUntil: null, sinceRest: 0 } });
+    return helperView((await ownHelper(request, h.id))!);
   });
 };
 

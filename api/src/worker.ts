@@ -8,6 +8,7 @@ import { scheduleAdsSync, scheduleLeadsTick } from './lib/queue';
 import { leadsTick } from './lib/leadQueue';
 import { autoReconnect } from './lib/autoReconnect';
 import { checkManualJoins } from './lib/leadManual';
+import { helpersTick } from './lib/leadHelpers';
 import { detectLeadLeaves } from './lib/leadBlocks';
 import { forgetSender, sendersFor } from './lib/offerSenders';
 import { metaConfig, syncMeta } from './lib/metaAds';
@@ -604,6 +605,8 @@ let lastReconnectAt = 0;
 // …and every 15 min, who of the "add from the phone" batches is in the group now.
 const MANUAL_CHECK_EVERY_MS = 15 * 60 * 1000;
 let lastManualCheckAt = 0;
+const HELPERS_EVERY_MS = 5 * 60 * 1000;
+let lastHelpersAt = 0;
 const leadsWorker = new Worker(
   'leads',
   async () => {
@@ -616,6 +619,12 @@ const leadsWorker = new Worker(
       lastManualCheckAt = Date.now();
       const joined = await checkManualJoins().catch((err) => [{ group: '?', skipped: `erro: ${err.message}` }]);
       if (joined.length) console.log('[Worker] Manual batches:', JSON.stringify(joined));
+    }
+    // Phones that add by hand: each gets its daily batch at its send hour.
+    if (Date.now() - lastHelpersAt >= HELPERS_EVERY_MS) {
+      lastHelpersAt = Date.now();
+      const sent = await helpersTick().catch((err) => [{ helper: '?', result: `erro: ${err.message}` }]);
+      if (sent.length) console.log('[Worker] Helper phones:', JSON.stringify(sent));
     }
     const results = await leadsTick();
     if (results.length) console.log('[Worker] Leads:', JSON.stringify(results));
