@@ -24,7 +24,7 @@
  * /group/inviteCode + /message/sendText (private invite, when enabled).
  */
 import prisma from './prisma';
-import { evo, getInstanceInfo, getState } from './evolution';
+import { addParticipant, getInfo, getState, groupInviteCode, groupParticipants, sendText } from './wa';
 import { brtDayStart, toBrt } from './time';
 import { WhatsAppService } from '../services/whatsapp.service';
 import { findBlock, samePhone } from './leadBlocks';
@@ -210,7 +210,7 @@ function forgetGroup(instance: string, groupJid: string) {
 }
 
 async function groupInfo(instance: string, groupJid: string, selfNumber: string | null): Promise<GroupInfo> {
-  const r = await evo('GET', `/group/participants/${instance}?groupJid=${encodeURIComponent(groupJid)}`);
+  const r = await groupParticipants(instance, groupJid);
   if (!r.ok) {
     return { ok: false, error: `HTTP ${r.status} ${JSON.stringify(r.data).slice(0, 150)}`, size: 0, memberDigits: new Set(), selfIsAdmin: null };
   }
@@ -245,10 +245,7 @@ type AddOutcome =
 
 /** Per-participant status from /group/updateParticipant (shape varies across releases). */
 async function addToGroup(instance: string, groupJid: string, phone: string): Promise<AddOutcome> {
-  const r = await evo('POST', `/group/updateParticipant/${instance}?groupJid=${encodeURIComponent(groupJid)}`, {
-    action: 'add',
-    participants: [phone],
-  }, 45000);
+  const r = await addParticipant(instance, groupJid, phone);
   const text = JSON.stringify(r.data ?? '').slice(0, 300);
   if (!r.ok) {
     const lower = text.toLowerCase();
@@ -273,13 +270,13 @@ async function addToGroup(instance: string, groupJid: string, phone: string): Pr
 
 async function groupLink(instance: string, group: { chatId: string; inviteLink: string | null }): Promise<string | null> {
   if (group.inviteLink) return group.inviteLink;
-  const r = await evo('GET', `/group/inviteCode/${instance}?groupJid=${encodeURIComponent(group.chatId)}`);
+  const r = await groupInviteCode(instance, group.chatId);
   const url = r.data?.inviteUrl ?? (r.data?.inviteCode ? `https://chat.whatsapp.com/${r.data.inviteCode}` : null);
   return r.ok && url ? String(url) : null;
 }
 
 async function sendPrivate(instance: string, phone: string, text: string): Promise<string | null> {
-  const r = await evo('POST', `/message/sendText/${instance}`, { number: phone, text }, 45000);
+  const r = await sendText(instance, phone, text);
   return r.ok ? null : `HTTP ${r.status}: ${JSON.stringify(r.data).slice(0, 200)}`;
 }
 
@@ -356,8 +353,8 @@ async function processInstance(instanceId: string, now: Date): Promise<string | 
   if (state !== 'open') {
     await prisma.whatsAppInstance.update({ where: { id: instanceId }, data: { connected: false, lastState: state, leadLastResult: 'Número desconectado — conecte de novo em WhatsApp' } });
     // Logged out by WhatsApp (device removed…) → pause this number's queue and alert.
-    const info = state === 'close' ? await getInstanceInfo(inst.name).catch(() => null) : null;
-    if (info?.disconnectCode) {
+    const info = state === 'close' ? await getInfo(inst.name).catch(() => null) : null;
+    if (info?.disconnectCode && (info.disconnectAt || inst.connected)) {
       const { recordDisconnect } = await import('./whatsappNumbers');
       await recordDisconnect(instanceId, info.disconnectCode, info.disconnectAt ?? new Date());
     }

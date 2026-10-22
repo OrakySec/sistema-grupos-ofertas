@@ -35,6 +35,10 @@ function buildSettingsResponse(
     evolutionApiUrl:        dbObj.evolution_api_url ?? '',
     evolutionApiKey:        dbObj.evolution_api_key ? '***' : '',
     evolutionInstance:      dbObj.evolution_instance ?? '',
+    // API for new WhatsApp numbers (each number keeps the one it was connected through)
+    whatsappProvider:       dbObj.whatsapp_provider === 'WAHA' ? 'WAHA' : 'EVOLUTION',
+    wahaApiUrl:             dbObj.waha_api_url ?? '',
+    wahaApiKey:             dbObj.waha_api_key ? '***' : '',
     telegramAuthenticated:  authenticated,
     // Affiliate link conversion
     amazonAffiliateTag:     dbObj.amazon_affiliate_tag ?? '',
@@ -153,6 +157,9 @@ export const settingsRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
       if ('evolutionApiUrl' in updates)    dbUpdates.evolution_api_url   = updates.evolutionApiUrl ?? '';
       if ('evolutionApiKey' in updates && updates.evolutionApiKey !== '***') dbUpdates.evolution_api_key = updates.evolutionApiKey ?? '';
       if ('evolutionInstance' in updates)  dbUpdates.evolution_instance  = updates.evolutionInstance ?? '';
+      if ('whatsappProvider' in updates)   dbUpdates.whatsapp_provider   = updates.whatsappProvider === 'WAHA' ? 'WAHA' : 'EVOLUTION';
+      if ('wahaApiUrl' in updates)         dbUpdates.waha_api_url        = String(updates.wahaApiUrl ?? '').trim();
+      if ('wahaApiKey' in updates && updates.wahaApiKey !== '***') dbUpdates.waha_api_key = String(updates.wahaApiKey ?? '').trim();
       // Affiliate link conversion
       if ('amazonAffiliateTag' in updates)   dbUpdates.amazon_affiliate_tag   = updates.amazonAffiliateTag ?? '';
       if ('shopeeAffiliateId' in updates)    dbUpdates.shopee_affiliate_id    = updates.shopeeAffiliateId ?? '';

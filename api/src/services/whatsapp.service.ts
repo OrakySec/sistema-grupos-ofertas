@@ -4,6 +4,8 @@ import fs from 'fs';
 import path from 'path';
 import prisma from '../lib/prisma';
 import { evoConfig } from '../lib/evolution';
+import { providerOf } from '../lib/wa';
+import * as wahaApi from '../lib/waha';
 
 interface EvolutionGroup {
   id: string;
@@ -33,8 +35,27 @@ export function extractWhatsAppInviteCode(url: string): string | null {
 }
 
 export class WhatsAppService {
-  /** instanceOverride: send through this Evolution instance instead of the main number. */
+  /** instanceOverride: send through this instance instead of the main number. */
   constructor(private readonly instanceOverride?: string) {}
+
+  /**
+   * The number this service talks through, when it lives in WAHA (null = Evolution,
+   * the original code path below). A number's API is recorded on its WhatsAppInstance row.
+   */
+  private async wahaSession(): Promise<string | null> {
+    const name = (this.instanceOverride
+      ?? (await prisma.setting.findUnique({ where: { key: 'evolution_instance' } }))?.value)?.trim();
+    if (!name) return null;
+    if ((await providerOf(name)) !== 'WAHA') return null;
+    if (!(await wahaApi.wahaConfig())) throw new Error('WAHA não está configurado (URL e chave em Configurações)');
+    return name;
+  }
+
+  /** Throws with the WAHA's message when a call failed. */
+  private wahaOk(r: { ok: boolean; status: number; data: any }, what: string) {
+    if (!r.ok) throw new Error(`WAHA ${what} failed (${r.status || '?'}): ${JSON.stringify(r.data).slice(0, 300)}`);
+    return r;
+  }
 
   private async getConfig(): Promise<{
     baseUrl: string;
@@ -73,6 +94,8 @@ export class WhatsAppService {
 
   async testConnection(): Promise<boolean> {
     try {
+      const session = await this.wahaSession();
+      if (session) return (await wahaApi.getSessionState(session)) === 'open';
       const { client, instance } = await this.getClient();
       const response = await client.get(`/instance/connectionState/${instance}`);
       return response.status === 200;
@@ -82,6 +105,11 @@ export class WhatsAppService {
   }
 
   async listGroups(): Promise<WhatsAppGroupItem[]> {
+    const session = await this.wahaSession();
+    if (session) {
+      const r = this.wahaOk(await wahaApi.fetchAllGroups(session), 'groups');
+      return (r.data as any[]).filter((g) => g.id).map((g) => ({ id: g.id, name: g.subject || g.id }));
+    }
     const { client, instance } = await this.getClient();
     const response = await client.get<EvolutionGroup[]>(
       `/group/fetchAllGroups/${instance}?getParticipants=false`,
@@ -104,6 +132,16 @@ export class WhatsAppService {
   async checkInviteLink(url: string): Promise<{ valid: boolean; groupName?: string }> {
     const code = extractWhatsAppInviteCode(url);
     if (!code) throw new Error(`Not a valid chat.whatsapp.com invite URL: ${url}`);
+
+    const session = await this.wahaSession();
+    if (session) {
+      const r = await wahaApi.inviteInfo(session, code);
+      if (r.ok) return { valid: true, groupName: r.data?.subject };
+      if (r.status === 401 || r.status === 403) throw new Error(`WAHA rejected our credentials while checking invite link (${r.status}) — check waha_api_key`);
+      // Same rule as below: a 4xx about the code = invalid; anything else is inconclusive.
+      if (r.status >= 400 && r.status < 500) return { valid: false };
+      throw new Error(`WAHA join-info check failed (${r.status || '?'}): ${JSON.stringify(r.data).slice(0, 200)}`);
+    }
 
     const { client, instance } = await this.getClient();
     try {
@@ -138,6 +176,11 @@ export class WhatsAppService {
    * mistake an outage for "everyone left".
    */
   async getGroupParticipantIds(groupJid: string): Promise<string[]> {
+    const session = await this.wahaSession();
+    if (session) {
+      const r = this.wahaOk(await wahaApi.groupParticipants(session, groupJid, 60000), 'participants');
+      return (r.data.participants as any[]).map((p) => String(p?.id ?? '')).filter(Boolean);
+    }
     const { client, instance } = await this.getClient();
     try {
       const response = await client.get(`/group/participants/${instance}`, { params: { groupJid } });
@@ -152,6 +195,8 @@ export class WhatsAppService {
 
   /** The instance's current webhook config, or null when none is set. */
   async getWebhook(): Promise<{ enabled: boolean; url: string; events: string[] } | null> {
+    const session = await this.wahaSession();
+    if (session) return wahaApi.getSessionWebhook(session);
     const { client, instance } = await this.getClient();
     const response = await client.get(`/webhook/find/${instance}`);
     const data = response.data;
@@ -165,6 +210,13 @@ export class WhatsAppService {
 
   /** Replaces the instance's (single) webhook config. */
   async setWebhook(cfg: { url: string; events: string[]; headers?: Record<string, string> }): Promise<void> {
+    const session = await this.wahaSession();
+    if (session) {
+      // Always our URL and secret header (WAHA keeps other systems' webhooks alongside).
+      const err = await wahaApi.setSessionWebhook(session, cfg.events);
+      if (err) throw new Error(err);
+      return;
+    }
     const { client, instance } = await this.getClient();
     try {
       await client.post(`/webhook/set/${instance}`, {
@@ -184,6 +236,11 @@ export class WhatsAppService {
   }
 
   async sendText(chatId: string, text: string): Promise<void> {
+    const session = await this.wahaSession();
+    if (session) {
+      this.wahaOk(await wahaApi.sendText(session, chatId, text, 60000), 'sendText');
+      return;
+    }
     const { client, instance } = await this.getClient();
     try {
       const response = await client.post(`/message/sendText/${instance}`, {
@@ -213,6 +270,12 @@ export class WhatsAppService {
     const base64 = fileContent.toString('base64');
     const ext = path.extname(absolutePath).replace('.', '').toLowerCase();
     const mimeType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : `image/${ext}`;
+
+    const session = await this.wahaSession();
+    if (session) {
+      this.wahaOk(await wahaApi.sendFile(session, chatId, 'image', { mimetype: mimeType, filename: path.basename(absolutePath), data: base64 }, caption ?? ''), 'sendImage');
+      return;
+    }
 
     const { client, instance } = await this.getClient();
     try {
@@ -252,6 +315,12 @@ export class WhatsAppService {
     const fileName = path.basename(absolutePath);
     const ext = path.extname(absolutePath).replace('.', '').toLowerCase();
     const mimeType = `application/${ext === 'pdf' ? 'pdf' : 'octet-stream'}`;
+
+    const session = await this.wahaSession();
+    if (session) {
+      this.wahaOk(await wahaApi.sendFile(session, chatId, 'document', { mimetype: mimeType, filename: fileName, data: base64 }, caption ?? ''), 'sendFile');
+      return;
+    }
 
     const { client, instance } = await this.getClient();
     try {

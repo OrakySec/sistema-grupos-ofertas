@@ -1,13 +1,19 @@
 /**
  * /whatsapp — the account's WhatsApp numbers, connected by QR code
  * (whatsapp-qrcode skill flow: create → QR → poll state every 3 s → connected).
- * The Evolution global key never leaves the server.
+ * Each number lives in the Evolution or in WAHA (row.provider, lib/wa.ts); the
+ * API keys never leave the server.
  */
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { requireAuth } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { tenantIdOf } from '../lib/tenant';
-import { checkGlobalKey, createInstanceWithQr, deleteInstance, disconnectReasonText, evoConfig, getQr, logoutInstance } from '../lib/evolution';
+import { checkGlobalKey, disconnectReasonText } from '../lib/evolution';
+import { checkWahaKey } from '../lib/waha';
+import {
+  PROVIDERS, PROVIDER_LABEL, asProvider, createWithQr, defaultProvider, forgetProvider, getQr, logout, providerConfigured, remove,
+  type Provider,
+} from '../lib/wa';
 import {
   MAX_NUMBERS, instanceNameFor, newInstanceId, refreshInstance, registerWebhook, setOffersInstance,
 } from '../lib/whatsappNumbers';
@@ -18,7 +24,7 @@ const PURPOSES = new Set(['OFFERS', 'LEADS']);
 
 function view(row: any, offersToday?: number) {
   return {
-    id: row.id, label: row.label, purpose: row.purpose, name: row.name,
+    id: row.id, label: row.label, purpose: row.purpose, name: row.name, provider: asProvider(row.provider) ?? 'EVOLUTION',
     sendsOffers: !!row.sendsOffers, offersToday: offersToday ?? 0,
     connected: row.connected, number: row.number, profileName: row.profileName,
     lastState: row.liveState ?? row.lastState, lastSeenAt: row.lastSeenAt, createdAt: row.createdAt,
@@ -46,20 +52,29 @@ export const whatsappRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
       _count: { _all: true },
     });
     const sentBy = new Map(sent.map((s) => [s.senderInstance, s._count._all]));
+    const providers = Object.fromEntries(await Promise.all(PROVIDERS.map(async (p) => [p, await providerConfigured(p)]))) as Record<Provider, boolean>;
     return {
-      configured: !!(await evoConfig()),
+      configured: providers.EVOLUTION || providers.WAHA,
+      providers,
+      defaultProvider: await defaultProvider(),
       max: MAX_NUMBERS,
       instances: live.filter(Boolean).map((r: any) => view(r, sentBy.get(r.name) ?? 0)),
     };
   });
 
-  // GET /whatsapp/check — is the Evolution reachable with the GLOBAL key?
-  fastify.get('/check', async () => checkGlobalKey());
+  // GET /whatsapp/check?provider= — is the Evolution (GLOBAL key) / WAHA reachable?
+  fastify.get<{ Querystring: { provider?: string } }>('/check', async (request) => {
+    const p = asProvider(request.query.provider) ?? (await defaultProvider());
+    return p === 'WAHA' ? checkWahaKey() : checkGlobalKey();
+  });
 
-  // POST /whatsapp/instances { label, purpose } — creates the number and returns its QR
-  fastify.post<{ Body: { label?: string; purpose?: string; sendsOffers?: boolean } }>('/instances', async (request, reply) => {
+  // POST /whatsapp/instances { label, purpose, provider? } — creates the number and returns its QR
+  fastify.post<{ Body: { label?: string; purpose?: string; sendsOffers?: boolean; provider?: string } }>('/instances', async (request, reply) => {
     const tenantId = tenantIdOf(request);
-    if (!(await evoConfig())) return reply.code(400).send({ message: 'A Evolution API não está configurada (URL e chave global).' });
+    const provider = asProvider(request.body?.provider) ?? (await defaultProvider());
+    if (!(await providerConfigured(provider))) {
+      return reply.code(400).send({ message: `${PROVIDER_LABEL[provider]} não está configurado (URL e chave em Configurações → WhatsApp).` });
+    }
     const count = await prisma.whatsAppInstance.count({ where: { tenantId } });
     if (count >= MAX_NUMBERS) return reply.code(403).send({ message: `Seu plano permite até ${MAX_NUMBERS} números de WhatsApp.` });
     const label = String(request.body?.label ?? '').trim().slice(0, 60) || `Número ${count + 1}`;
@@ -67,13 +82,13 @@ export const whatsappRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
 
     const id = newInstanceId();
     const name = instanceNameFor(id);
-    const { qrcode, error } = await createInstanceWithQr(name);
+    const { qrcode, error } = await createWithQr(name, purpose, provider);
     if (error && !qrcode) {
-      await deleteInstance(name);
+      await remove(name, provider);
       return reply.code(502).send({ message: error });
     }
     const row = await prisma.whatsAppInstance.create({
-      data: { id, tenantId, name, label, purpose: 'LEADS', sendsOffers: purpose === 'OFFERS' || request.body?.sendsOffers === true },
+      data: { id, tenantId, name, label, provider, purpose: 'LEADS', sendsOffers: purpose === 'OFFERS' || request.body?.sendsOffers === true },
     });
     const whErr = await registerWebhook(name, purpose);
     if (whErr) fastify.log.warn({ name, whErr }, 'WhatsApp number: webhook not registered');
@@ -93,8 +108,8 @@ export const whatsappRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   fastify.get<{ Params: { id: string } }>('/instances/:id/qr', async (request, reply) => {
     const row = await own(request, request.params.id);
     if (!row) return reply.code(404).send({ message: 'Número não encontrado' });
-    const r = await getQr(row.name);
-    if (r.state === 'not_found') return reply.code(404).send({ message: 'Essa conexão não existe mais na Evolution. Clique em "Conectar" de novo.' });
+    const r = await getQr(row.name, asProvider(row.provider) ?? 'EVOLUTION');
+    if (r.state === 'not_found') return reply.code(404).send({ message: `Essa conexão não existe mais no ${PROVIDER_LABEL[asProvider(row.provider) ?? 'EVOLUTION']}. Clique em "Conectar" de novo.` });
     if (r.state === 'open') await refreshInstance(row.id);
     return r;
   });
@@ -106,7 +121,7 @@ export const whatsappRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     if (row.purpose === 'OFFERS' && row.connected && request.body?.confirm !== true) {
       return reply.code(409).send({ message: 'Este número posta as ofertas. Reconectar derruba os envios até escanear o QR de novo.' });
     }
-    const { qrcode, error } = await createInstanceWithQr(row.name);
+    const { qrcode, error } = await createWithQr(row.name, row.purpose, asProvider(row.provider) ?? 'EVOLUTION');
     if (error && !qrcode) return reply.code(502).send({ message: error });
     await prisma.whatsAppInstance.update({ where: { id: row.id }, data: { connected: false, lastState: 'connecting' } });
     const whErr = await registerWebhook(row.name, row.purpose);
@@ -118,9 +133,33 @@ export const whatsappRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
   fastify.post<{ Params: { id: string } }>('/instances/:id/logout', async (request, reply) => {
     const row = await own(request, request.params.id);
     if (!row) return reply.code(404).send({ message: 'Número não encontrado' });
-    await logoutInstance(row.name);
+    await logout(row.name, asProvider(row.provider) ?? 'EVOLUTION');
     await prisma.whatsAppInstance.update({ where: { id: row.id }, data: { connected: false, lastState: 'close' } });
     return { ok: true };
+  });
+
+  // POST /whatsapp/instances/:id/provider { provider, confirm? } — move the number to the other API.
+  // The session can't be carried over: the old one is removed and a new QR is returned.
+  fastify.post<{ Params: { id: string }; Body: { provider?: string; confirm?: boolean } }>('/instances/:id/provider', async (request, reply) => {
+    const row = await own(request, request.params.id);
+    if (!row) return reply.code(404).send({ message: 'Número não encontrado' });
+    const to = asProvider(request.body?.provider);
+    const from = asProvider(row.provider) ?? 'EVOLUTION';
+    if (!to || to === from) return reply.code(400).send({ message: 'Escolha a outra API.' });
+    if (!(await providerConfigured(to))) {
+      return reply.code(400).send({ message: `${PROVIDER_LABEL[to]} não está configurado (URL e chave em Configurações → WhatsApp).` });
+    }
+    if (row.purpose === 'OFFERS' && row.connected && request.body?.confirm !== true) {
+      return reply.code(409).send({ message: 'Este é o número principal. Trocar de API desconecta ele até escanear o QR de novo.' });
+    }
+    await remove(row.name, from).catch(() => null);
+    await prisma.whatsAppInstance.update({ where: { id: row.id }, data: { provider: to, connected: false, lastState: 'connecting' } });
+    forgetProvider(row.name);
+    const { qrcode, error } = await createWithQr(row.name, row.purpose, to);
+    if (error && !qrcode) return reply.code(502).send({ message: error });
+    const whErr = await registerWebhook(row.name, row.purpose);
+    if (whErr) fastify.log.warn({ name: row.name, whErr }, 'WhatsApp number: webhook not registered');
+    return { instance: view(await prisma.whatsAppInstance.findUnique({ where: { id: row.id } })), qrcode };
   });
 
   // PATCH /whatsapp/instances/:id { label?, purpose? }
@@ -154,8 +193,9 @@ export const whatsappRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     if (row.purpose === 'OFFERS' && request.query.force !== '1') {
       return reply.code(409).send({ message: 'Este número posta as ofertas. Remover para os envios para o WhatsApp.' });
     }
-    await deleteInstance(row.name);
+    await remove(row.name, asProvider(row.provider) ?? 'EVOLUTION');
     await prisma.whatsAppInstance.delete({ where: { id: row.id } });
+    forgetProvider(row.name);
     if (row.purpose === 'OFFERS') {
       await prisma.setting.updateMany({ where: { key: 'evolution_instance', value: row.name }, data: { value: '' } });
     }

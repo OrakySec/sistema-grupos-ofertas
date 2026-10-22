@@ -181,6 +181,9 @@ export interface Settings {
   evolutionApiUrl?: string
   evolutionApiKey?: string
   evolutionInstance?: string
+  whatsappProvider?: 'EVOLUTION' | 'WAHA'
+  wahaApiUrl?: string
+  wahaApiKey?: string
   // Affiliate link conversion
   amazonAffiliateTag?: string
   shopeeAffiliateId?: string
@@ -532,11 +535,14 @@ export interface UnidentifiedLinks {
 
 // ── WhatsApp numbers (QR code) & Leads ─────────────────────────────────────
 
+export type WaProvider = 'EVOLUTION' | 'WAHA'
+
 export interface WaNumber {
   id: string
   label: string
   purpose: 'OFFERS' | 'LEADS'
   name: string
+  provider: WaProvider
   sendsOffers: boolean
   offersToday: number
   connected: boolean
@@ -1000,16 +1006,20 @@ class ApiClient {
   }
 
   // ── WhatsApp numbers ──────────────────────────
-  async getWaNumbers(): Promise<{ configured: boolean; max: number; instances: WaNumber[] }> {
+  async getWaNumbers(): Promise<{ configured: boolean; providers: Record<WaProvider, boolean>; defaultProvider: WaProvider; max: number; instances: WaNumber[] }> {
     return this.request('GET', '/whatsapp/instances')
   }
 
-  async checkEvolution(): Promise<{ ok: boolean; message: string }> {
-    return this.request('GET', '/whatsapp/check')
+  async checkEvolution(provider?: WaProvider): Promise<{ ok: boolean; message: string }> {
+    return this.request('GET', `/whatsapp/check${provider ? `?provider=${provider}` : ''}`)
   }
 
-  async createWaNumber(label: string, purpose: 'OFFERS' | 'LEADS', sendsOffers = false): Promise<{ instance: WaNumber; qrcode: string | null }> {
-    return this.request('POST', '/whatsapp/instances', { label, purpose, sendsOffers })
+  async createWaNumber(label: string, purpose: 'OFFERS' | 'LEADS', sendsOffers = false, provider?: WaProvider): Promise<{ instance: WaNumber; qrcode: string | null }> {
+    return this.request('POST', '/whatsapp/instances', { label, purpose, sendsOffers, provider })
+  }
+
+  async switchWaProvider(id: string, provider: WaProvider, confirm = false): Promise<{ instance: WaNumber; qrcode: string | null }> {
+    return this.request('POST', `/whatsapp/instances/${id}/provider`, { provider, confirm })
   }
 
   async getWaNumberState(id: string): Promise<{ instance: WaNumber; status: 'connected' | 'disconnected' | 'not_created' }> {

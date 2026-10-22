@@ -13,7 +13,7 @@
  * Also: reading a group's members to import them as a lead list.
  */
 import prisma from './prisma';
-import { evo } from './evolution';
+import { fetchAllGroups, groupParticipants } from './wa';
 import { DEFAULT_TENANT_ID } from './tenant';
 
 const digits = (s: unknown) => String(s ?? '').replace(/\D/g, '');
@@ -114,7 +114,7 @@ export async function recordMembershipFromWebhook(data: any): Promise<{ left: nu
 export async function readParticipants(groupJid: string, instanceNames: string[]): Promise<{ ok: true; list: any[]; via: string } | { ok: false; error: string }> {
   let lastError = 'nenhum número disponível para ler o grupo';
   for (const name of instanceNames) {
-    const r = await evo('GET', `/group/participants/${name}?groupJid=${encodeURIComponent(groupJid)}`, undefined, 60000);
+    const r = await groupParticipants(name, groupJid, 60000);
     if (r.ok) {
       const list: any[] = Array.isArray(r.data?.participants) ? r.data.participants : Array.isArray(r.data) ? r.data : [];
       return { ok: true, list, via: name };
@@ -190,7 +190,7 @@ export async function groupsOfConnectedNumbers(tenantId: string) {
   const map = new Map<string, { jid: string; name: string; size: number | null; announce: boolean; via: string[]; registeredId: string | null }>();
   const errors: string[] = [];
   await Promise.all(instances.map(async (inst) => {
-    const r = await evo('GET', `/group/fetchAllGroups/${inst.name}?getParticipants=false`, undefined, 90000);
+    const r = await fetchAllGroups(inst.name, 90000);
     if (!r.ok) { errors.push(`${inst.label}: HTTP ${r.status}`); return; }
     const list: any[] = Array.isArray(r.data) ? r.data : [];
     for (const g of list) {

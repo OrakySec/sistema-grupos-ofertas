@@ -9,9 +9,11 @@
  */
 import { randomBytes } from 'crypto';
 import prisma from './prisma';
-import { disconnectReasonText, evo, getInstanceInfo, getState, instanceNameFor, LOGOUT_CODES, type EvoState } from './evolution';
+import { disconnectReasonText, evo, instanceNameFor, LOGOUT_CODES, type EvoState } from './evolution';
 import { alertOwner } from './leadQueue';
-import { getWebhookSecret, getWebhookUrl, WEBHOOK_EVENT, WEBHOOK_TOKEN_HEADER } from './memberTracking';
+import { getWebhookSecret, getWebhookUrl, WEBHOOK_TOKEN_HEADER } from './memberTracking';
+import { getInfo, getState, providerOf, webhookEvents } from './wa';
+import { setSessionWebhook } from './waha';
 
 export const MAX_NUMBERS = Math.max(1, Number(process.env.WHATSAPP_MAX_NUMBERS) || 5);
 
@@ -23,7 +25,8 @@ export { instanceNameFor };
 
 /** Points the instance's (single) webhook at us. Best-effort: returns an error text instead of throwing. */
 export async function registerWebhook(name: string, purpose: string): Promise<string | null> {
-  const events = ['CONNECTION_UPDATE', ...(purpose === 'OFFERS' ? [WEBHOOK_EVENT] : [])];
+  const events = webhookEvents(purpose);
+  if ((await providerOf(name)) === 'WAHA') return setSessionWebhook(name, events);
   const r = await evo('POST', `/webhook/set/${name}`, {
     webhook: {
       enabled: true,
@@ -49,14 +52,17 @@ export async function refreshInstance(id: string) {
     data.lastSeenAt = new Date();
     // Learn the number the first time (or after a reconnect with another phone).
     if (!row.connected || !row.number) {
-      const info = await getInstanceInfo(row.name).catch(() => null);
+      const info = await getInfo(row.name).catch(() => null);
       if (info?.number) data.number = info.number;
       if (info?.profileName) data.profileName = info.profileName;
     }
   } else if (state === 'close') {
-    // Why it dropped (Evolution keeps the last disconnection code).
-    const info = await getInstanceInfo(row.name).catch(() => null);
-    if (info?.disconnectCode) await recordDisconnect(row.id, info.disconnectCode, info.disconnectAt ?? new Date());
+    // Why it dropped (Evolution keeps the last disconnection code with its date;
+    // WAHA has no date, so it only counts when the number was connected).
+    const info = await getInfo(row.name).catch(() => null);
+    if (info?.disconnectCode && (info.disconnectAt || row.connected)) {
+      await recordDisconnect(row.id, info.disconnectCode, info.disconnectAt ?? new Date());
+    }
   }
   const updated = await prisma.whatsAppInstance.update({ where: { id }, data });
   return { ...updated, liveState: state };
@@ -116,6 +122,26 @@ export async function recordConnectionUpdate(instance: string | undefined, data:
     const row = await prisma.whatsAppInstance.findUnique({ where: { name: instance }, select: { id: true } });
     if (row) await recordDisconnect(row.id, code, new Date());
   }
+}
+
+/**
+ * WAHA session.status webhook → row status. FAILED after being connected is
+ * WhatsApp logging the number out (WAHA gives no code — recorded as 401).
+ */
+export async function recordWahaStatus(session: string | undefined, s: { state: EvoState; wuid?: string; failed: boolean }) {
+  if (!session) return;
+  const row = await prisma.whatsAppInstance.findUnique({ where: { name: session } });
+  if (!row) return;
+  if (s.failed && row.connected) await recordDisconnect(row.id, 401, new Date());
+  await prisma.whatsAppInstance.update({
+    where: { id: row.id },
+    data: {
+      connected: s.state === 'open',
+      lastState: s.state,
+      ...(s.state === 'open' ? { lastSeenAt: new Date() } : {}),
+      ...(s.state === 'open' && s.wuid ? { number: s.wuid.split('@')[0].split(':')[0] } : {}),
+    },
+  });
 }
 
 /** The account's number that posts the offers is still read from this setting by WhatsAppService. */

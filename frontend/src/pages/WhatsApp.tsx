@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import api, { type WaNumber } from '../lib/api'
+import api, { type WaNumber, type WaProvider } from '../lib/api'
 import { useToast } from '../lib/toast'
 import Icon from '../components/Icon'
 import Modal from '../components/Modal'
@@ -15,6 +15,8 @@ const fmtPhone = (n: string | null) => {
 }
 
 const PURPOSE_LABEL: Record<WaNumber['purpose'], string> = { OFFERS: 'Principal', LEADS: 'Adiciona leads' }
+const PROVIDER_LABEL: Record<WaProvider, string> = { EVOLUTION: 'Evolution', WAHA: 'WAHA' }
+const PROVIDERS: WaProvider[] = ['EVOLUTION', 'WAHA']
 
 /* ─── QR code flow (whatsapp-qrcode skill): loading → qrcode → connected | error ─── */
 type QrStatus = 'loading' | 'qrcode' | 'connected' | 'error'
@@ -37,11 +39,11 @@ function QrModal({ number, initialQr, onClose, onConnected }: {
     try {
       const r = await api.connectWaNumber(number.id, confirm)
       if (r.qrcode) { setQr(r.qrcode); setStatus('qrcode') }
-      else fail('A Evolution não devolveu o QR Code. Tente "Novo QR" ou "Resetar".')
+      else fail(`O ${PROVIDER_LABEL[number.provider]} não devolveu o QR Code. Tente "Novo QR" ou "Resetar".`)
     } catch (err) {
       fail(err instanceof Error ? err.message : 'Não foi possível conectar.')
     }
-  }, [number.id])
+  }, [number.id, number.provider])
 
   // Opened without a QR in hand ("Conectar" on an existing number): (re)create it now.
   useEffect(() => {
@@ -119,8 +121,10 @@ function QrModal({ number, initialQr, onClose, onConnected }: {
   )
 }
 
-function NewNumberModal({ hasOffers, onClose, onCreated }: {
+function NewNumberModal({ hasOffers, providers, defaultProvider, onClose, onCreated }: {
   hasOffers: boolean
+  providers: Record<WaProvider, boolean>
+  defaultProvider: WaProvider
   onClose: () => void
   onCreated: (n: WaNumber, qr: string | null) => void
 }) {
@@ -128,12 +132,13 @@ function NewNumberModal({ hasOffers, onClose, onCreated }: {
   const [label, setLabel] = useState('')
   const [purpose, setPurpose] = useState<'OFFERS' | 'LEADS'>(hasOffers ? 'LEADS' : 'OFFERS')
   const [alsoOffers, setAlsoOffers] = useState(true)
+  const [provider, setProvider] = useState<WaProvider>(providers[defaultProvider] ? defaultProvider : PROVIDERS.find((p) => providers[p]) ?? defaultProvider)
   const [busy, setBusy] = useState(false)
 
   const create = async () => {
     setBusy(true)
     try {
-      const r = await api.createWaNumber(label.trim(), purpose, purpose === 'OFFERS' || alsoOffers)
+      const r = await api.createWaNumber(label.trim(), purpose, purpose === 'OFFERS' || alsoOffers, provider)
       onCreated(r.instance, r.qrcode)
     } catch (err) {
       addToast(err instanceof Error ? err.message : 'Erro ao criar a conexão', 'error')
@@ -158,6 +163,19 @@ function NewNumberModal({ hasOffers, onClose, onCreated }: {
       <div className="form-group">
         <label className="label">Nome para identificar</label>
         <input className="input" placeholder='Ex.: "Chip leads 1"' value={label} onChange={(e) => setLabel(e.target.value)} maxLength={60} autoFocus />
+      </div>
+      <div className="form-group">
+        <label className="label">API de conexão</label>
+        <div className="tabs">
+          {PROVIDERS.map((p) => (
+            <button key={p} className={`tab${provider === p ? ' active' : ''}`} onClick={() => setProvider(p)} disabled={!providers[p]} title={providers[p] ? undefined : 'Configure em Configurações → WhatsApp'}>
+              {PROVIDER_LABEL[p]}{p === defaultProvider ? ' (padrão)' : ''}
+            </button>
+          ))}
+        </div>
+        {!providers.WAHA && (
+          <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: 8 }}>Para usar o WAHA, preencha a URL e a chave dele em Configurações → WhatsApp.</div>
+        )}
       </div>
       <div className="form-group" style={{ marginBottom: 0 }}>
         <label className="label">Função deste número</label>
@@ -195,8 +213,11 @@ export default function WhatsApp() {
   const check = async () => {
     setChecking(true)
     try {
-      const r = await api.checkEvolution()
-      addToast(r.message, r.ok ? 'success' : 'error')
+      const list = PROVIDERS.filter((p) => data?.providers?.[p])
+      for (const p of list.length ? list : [undefined]) {
+        const r = await api.checkEvolution(p)
+        addToast(r.message, r.ok ? 'success' : 'error')
+      }
     } catch (err) {
       addToast(err instanceof Error ? err.message : 'Erro ao testar', 'error')
     } finally {
@@ -213,13 +234,24 @@ export default function WhatsApp() {
     act(() => api.logoutWaNumber(n.id), 'Número desconectado')
   }
   const remove = (n: WaNumber) => {
-    if (!confirm(`Remover "${n.label}" do sistema e da Evolution?`)) return
+    if (!confirm(`Remover "${n.label}" do sistema e do ${PROVIDER_LABEL[n.provider]}?`)) return
     if (n.purpose === 'OFFERS' && !confirm('Este número posta as ofertas. Remover PARA os envios para o WhatsApp. Confirmar mesmo assim?')) return
     act(() => api.deleteWaNumber(n.id, n.purpose === 'OFFERS'), 'Número removido')
   }
   const makeOffers = (n: WaNumber) => {
     if (!confirm(`Tornar "${n.label}" o número principal (alertas, Analytics e reserva das ofertas)? O principal atual passa a ser de leads.`)) return
     act(() => api.updateWaNumber(n.id, { purpose: 'OFFERS' }), 'Este número agora é o principal')
+  }
+  const switchProvider = async (n: WaNumber) => {
+    const to: WaProvider = n.provider === 'WAHA' ? 'EVOLUTION' : 'WAHA'
+    if (!confirm(`Passar "${n.label}" do ${PROVIDER_LABEL[n.provider]} para o ${PROVIDER_LABEL[to]}?\n\nA conexão atual é apagada e você escaneia um QR Code novo com o mesmo celular. As listas, regras e histórico do número continuam.${n.purpose === 'OFFERS' ? '\n\nATENÇÃO: este é o número principal — os envios param até escanear o QR.' : ''}`)) return
+    try {
+      const r = await api.switchWaProvider(n.id, to, true)
+      await load()
+      setQrFor({ number: r.instance, qr: r.qrcode })
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : 'Erro ao trocar de API', 'error')
+    }
   }
   const reconnect = (n: WaNumber) => {
     if (n.purpose === 'OFFERS' && n.connected && !confirm('Este número posta as ofertas. Reconectar derruba os envios até escanear o QR de novo. Continuar?')) return
@@ -237,7 +269,7 @@ export default function WhatsApp() {
           <p className="page-subtitle">Números conectados por QR Code. As ofertas saem por um número sorteado entre os que têm "Envia ofertas" e são admin do grupo.</p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="btn btn-ghost" onClick={check} disabled={checking}>{checking ? <span className="spinner spinner-sm" /> : <Icon name="activity" />} Testar Evolution</button>
+          <button className="btn btn-ghost" onClick={check} disabled={checking}>{checking ? <span className="spinner spinner-sm" /> : <Icon name="activity" />} Testar APIs</button>
           <button className="btn btn-primary" onClick={() => setCreating(true)} disabled={!data || !data.configured || instances.length >= data.max}>
             <Icon name="qr" /> Conectar novo número
           </button>
@@ -250,7 +282,7 @@ export default function WhatsApp() {
         <>
           {!data.configured && (
             <div className="alert alert-warning" style={{ marginBottom: 16 }}>
-              A Evolution API não está configurada. Preencha a URL e a chave <strong>global</strong> em Configurações → WhatsApp (ou nas variáveis EVOLUTION_API_URL / EVOLUTION_API_KEY do servidor).
+              Nenhuma API de WhatsApp configurada. Preencha em Configurações → WhatsApp a URL e a chave <strong>global</strong> da Evolution ou a URL e a chave do WAHA (ou as variáveis EVOLUTION_API_URL/KEY ou WAHA_API_URL/KEY do servidor).
             </div>
           )}
 
@@ -276,10 +308,13 @@ export default function WhatsApp() {
                           {n.profileName && <span style={{ color: 'var(--text-muted)' }}> · {n.profileName}</span>}
                         </div>
                       </div>
-                      <span className={`badge ${n.purpose === 'OFFERS' ? 'badge-whatsapp' : 'badge-approved'}`}>{PURPOSE_LABEL[n.purpose]}</span>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                        <span className={`badge ${n.purpose === 'OFFERS' ? 'badge-whatsapp' : 'badge-approved'}`}>{PURPOSE_LABEL[n.purpose]}</span>
+                        <span className="badge" title="API por onde este número está conectado">{PROVIDER_LABEL[n.provider]}</span>
+                      </div>
                     </div>
                     <div style={{ fontSize: '0.78rem', color: n.connected ? 'var(--accent-success)' : 'var(--text-muted)' }}>
-                      {n.connected ? 'Online' : n.lastState === 'not_found' ? 'Conexão apagada na Evolution — conecte de novo' : n.lastState === 'connecting' ? 'Aguardando leitura do QR Code' : 'Desconectado'}
+                      {n.connected ? 'Online' : n.lastState === 'not_found' ? `Conexão apagada no ${PROVIDER_LABEL[n.provider]} — conecte de novo` : n.lastState === 'connecting' ? 'Aguardando leitura do QR Code' : 'Desconectado'}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
                       <Toggle checked={n.sendsOffers} onChange={(v) => act(() => api.updateWaNumber(n.id, { sendsOffers: v }), v ? 'Este número passa a postar ofertas' : 'Este número não posta mais ofertas')} label="Envia ofertas" />
@@ -298,6 +333,11 @@ export default function WhatsApp() {
                       )}
                       {n.connected && <button className="btn btn-ghost btn-sm" onClick={() => reconnect(n)}>Reconectar</button>}
                       {n.purpose === 'LEADS' && <button className="btn btn-ghost btn-sm" onClick={() => makeOffers(n)} title="Principal: manda os alertas e coleta o Analytics">Tornar principal</button>}
+                      {data.providers[n.provider === 'WAHA' ? 'EVOLUTION' : 'WAHA'] && (
+                        <button className="btn btn-ghost btn-sm" onClick={() => switchProvider(n)} title="Apaga a conexão atual e gera um QR Code na outra API">
+                          Mudar para {PROVIDER_LABEL[n.provider === 'WAHA' ? 'EVOLUTION' : 'WAHA']}
+                        </button>
+                      )}
                       <button className="btn btn-ghost btn-sm" onClick={() => remove(n)} style={{ color: '#ff8a8e' }}><Icon name="trash" size={15} /></button>
                     </div>
                   </div>
@@ -316,6 +356,8 @@ export default function WhatsApp() {
       {creating && (
         <NewNumberModal
           hasOffers={hasOffers}
+          providers={data?.providers ?? { EVOLUTION: true, WAHA: false }}
+          defaultProvider={data?.defaultProvider ?? 'EVOLUTION'}
           onClose={() => setCreating(false)}
           onCreated={(n, qr) => { setCreating(false); load(); setQrFor({ number: n, qr }) }}
         />

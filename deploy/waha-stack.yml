@@ -1,0 +1,63 @@
+# WAHA (WhatsApp HTTP API) — the alternative to the Evolution API.
+# Portainer → Stacks → Add stack → name "waha" → paste this file.
+# Replace every XXXX before deploying (never commit the real values).
+#
+# After it's up, in the panel: Configurações → WhatsApp → WAHA
+#   URL:     https://waha.ykaromarques.com
+#   API Key: the same value as WAHA_API_KEY below
+version: '3.8'
+
+services:
+  waha:
+    image: devlikeapro/waha:latest
+    environment:
+      # Key every API call must send (X-Api-Key). Long and random.
+      WAHA_API_KEY: XXXX
+      # Engine: GOWS (Go/whatsmeow — trusted-contact tokens, 463 handling, light on RAM)
+      WHATSAPP_DEFAULT_ENGINE: GOWS
+      # Bring the connected sessions back after a restart / redeploy
+      WHATSAPP_RESTART_ALL_SESSIONS: "True"
+      WAHA_RESTART_ALL_SESSIONS: "True"
+      # Web dashboard (https://waha.ykaromarques.com/dashboard)
+      WAHA_DASHBOARD_ENABLED: "true"
+      WAHA_DASHBOARD_USERNAME: admin
+      WAHA_DASHBOARD_PASSWORD: XXXX
+      WHATSAPP_SWAGGER_USERNAME: admin
+      WHATSAPP_SWAGGER_PASSWORD: XXXX
+      WAHA_BASE_URL: https://waha.ykaromarques.com
+      WAHA_PRINT_QR: "False"
+      WAHA_LOG_FORMAT: JSON
+      WAHA_LOG_LEVEL: info
+      TZ: America/Sao_Paulo
+    volumes:
+      - waha_sessions:/app/.sessions
+      - waha_media:/app/.media
+    networks:
+      - YkaroNET
+    deploy:
+      replicas: 1
+      # Never two copies at once: two live connections of the same WhatsApp
+      # session is one of the things that gets a number restricted.
+      update_config:
+        order: stop-first
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+      resources:
+        limits:
+          memory: 1024M
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=YkaroNET"
+        - "traefik.http.routers.waha.rule=Host(`waha.ykaromarques.com`)"
+        - "traefik.http.routers.waha.entrypoints=websecure"
+        - "traefik.http.routers.waha.tls.certresolver=letsencryptresolver"
+        - "traefik.http.services.waha.loadbalancer.server.port=3000"
+
+volumes:
+  waha_sessions:
+  waha_media:
+
+networks:
+  YkaroNET:
+    external: true

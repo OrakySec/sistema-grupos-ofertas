@@ -11,7 +11,7 @@
  * number (evolution_instance), exactly as before.
  */
 import prisma from './prisma';
-import { evo } from './evolution';
+import { groupParticipants } from './wa';
 import { participantPhone, samePhone } from './leadBlocks';
 
 const TTL_MS = 60 * 60 * 1000;
@@ -22,7 +22,7 @@ async function roleIn(inst: { name: string; number: string | null }, groupJid: s
   const key = `${inst.name}|${groupJid}`;
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.role;
-  const r = await evo('GET', `/group/participants/${inst.name}?groupJid=${encodeURIComponent(groupJid)}`, undefined, 30000);
+  const r = await groupParticipants(inst.name, groupJid, 30000);
   let role: Role = 'none';
   if (r.ok) {
     const list: any[] = Array.isArray(r.data?.participants) ? r.data.participants : Array.isArray(r.data) ? r.data : [];

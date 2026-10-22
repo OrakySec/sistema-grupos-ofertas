@@ -514,8 +514,9 @@ model LeadBlock {
 model WhatsAppInstance {
   id                 String    @id
   tenantId           String
-  name               String    @unique // Evolution instance name: <prefix>_<id>
+  name               String    @unique // Evolution instance / WAHA session name: <prefix>_<id>
   label              String
+  provider           String    @default("EVOLUTION") // EVOLUTION | WAHA — the API this number is connected through (lib/wa.ts)
   purpose            String    @default("LEADS") // OFFERS (main number: alerts, analytics, link checks) | LEADS (adds leads to groups)
   // Takes part in posting the offers: each WhatsApp group gets them from a
   // random connected number that is admin there (warms numbers up too).

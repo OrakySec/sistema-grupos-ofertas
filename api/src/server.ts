@@ -20,7 +20,8 @@ import { hunterRoutes } from './routes/hunter';
 import { adsRoutes } from './routes/ads';
 import { whatsappRoutes } from './routes/whatsapp';
 import { leadsRoutes, leadsIntakeRoutes } from './routes/leads';
-import { isConnectionEvent, recordConnectionUpdate } from './lib/whatsappNumbers';
+import { isConnectionEvent, recordConnectionUpdate, recordWahaStatus } from './lib/whatsappNumbers';
+import { isWahaWebhook, WAHA_EVENTS, wahaParticipantsToEvo, wahaStatusToEvo } from './lib/waha';
 import { recordMembershipFromWebhook } from './lib/leadBlocks';
 import { recordCouponMessage } from './lib/coupons';
 import { parseCookies, resolveFbc, resolveFbp, sendViewContent, COOKIE_MAX_AGE_S } from './lib/metaCapi';
@@ -206,6 +207,24 @@ async function buildApp() {
       return reply.status(401).send({ error: 'Unauthorized' });
     }
     const body = request.body as { event?: string; instance?: string; data?: unknown } | undefined;
+    // WAHA posts to the same URL with its own payloads ({ event: "session.status", session, payload }).
+    if (isWahaWebhook(body)) {
+      const w = body as any;
+      if (w.event === WAHA_EVENTS.connection) {
+        recordWahaStatus(w.session, wahaStatusToEvo(w))
+          .catch((err) => server.log.error({ err }, 'Failed to record WAHA session status'));
+      } else if (w.event === WAHA_EVENTS.participants) {
+        const data = wahaParticipantsToEvo(w.payload);
+        if (data) {
+          recordMembershipFromWebhook(data)
+            .catch((err) => server.log.error({ err }, 'Failed to record lead membership'));
+          recordParticipantsUpdate(data)
+            .then((r) => server.log.info({ result: r }, 'WhatsApp participants update recorded (WAHA)'))
+            .catch((err) => server.log.error({ err }, 'Failed to record WhatsApp participants update'));
+        }
+      }
+      return reply.send({ ok: true });
+    }
     if (isConnectionEvent(body?.event)) {
       // A WhatsApp number connected by QR code came online / dropped.
       recordConnectionUpdate(body?.instance, body?.data)

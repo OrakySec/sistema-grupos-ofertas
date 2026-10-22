@@ -77,6 +77,10 @@ export default function Settings() {
   const refEvolutionUrl  = useRef<HTMLInputElement>(null)
   const refEvolutionKey  = useRef<HTMLInputElement>(null)
   const refEvolutionInst = useRef<HTMLInputElement>(null)
+  const refWahaUrl       = useRef<HTMLInputElement>(null)
+  const refWahaKey       = useRef<HTMLInputElement>(null)
+  const [waProvider, setWaProvider] = useState<'EVOLUTION' | 'WAHA'>('EVOLUTION')
+  const [testWaha, setTestWaha] = useState<TestStatus>('idle')
   // Affiliate refs
   const refAmazonTag     = useRef<HTMLInputElement>(null)
   const refShopeeId      = useRef<HTMLInputElement>(null)
@@ -126,6 +130,7 @@ export default function Settings() {
       setMarketplaceMercadoLivreEnabled(s.marketplaceMercadoLivreEnabled ?? true)
       setMlSessionActive(s.mlSessionActive ?? false)
       setLinkMonitorEnabled(s.linkMonitorEnabled ?? false)
+      setWaProvider(s.whatsappProvider === 'WAHA' ? 'WAHA' : 'EVOLUTION')
       if (s.telegramAuthenticated) setAuthStep('done')
     } catch {
       // silent
@@ -178,20 +183,32 @@ export default function Settings() {
     setTimeout(() => setTestTgBot('idle'), 5000)
   }
 
+  const handleTestWaha = async () => {
+    setTestWaha('loading')
+    try {
+      const res = await api.checkEvolution('WAHA')
+      setTestWaha(res.ok ? 'success' : 'error')
+      addToast(res.message, res.ok ? 'success' : 'error')
+    } catch (err) {
+      setTestWaha('error')
+      addToast(err instanceof Error ? err.message : 'Erro ao testar o WAHA', 'error')
+    }
+  }
+
   const handleTestWa = async () => {
     setTestWa('loading')
     try {
       const res = await api.testWhatsApp()
       if (res.success) {
         setTestWa('success')
-        addToast('Conexão com a Evolution API (WhatsApp) realizada com sucesso!', 'success')
+        addToast('Número principal do WhatsApp conectado e respondendo!', 'success')
       } else {
         setTestWa('error')
-        addToast('Falha na conexão com a Evolution API.', 'error')
+        addToast('O número principal não respondeu (confira a API dele e se está conectado).', 'error')
       }
     } catch (err) {
       setTestWa('error')
-      addToast(err instanceof Error ? err.message : 'Erro ao testar conexão com a Evolution API', 'error')
+      addToast(err instanceof Error ? err.message : 'Erro ao testar o número principal', 'error')
     }
     setTimeout(() => setTestWa('idle'), 5000)
   }
@@ -657,9 +674,22 @@ export default function Settings() {
       {/* ── Seção 4: WhatsApp ──────────────── */}
       <div className="settings-section">
         <div className="settings-section-header">
-          <div className="settings-section-title"><span className="icon-chip"><Icon name="message" /></span>WhatsApp (Evolution API)</div>
-          <div className="settings-section-desc">Integração com Evolution API para envio de mensagens WhatsApp</div>
+          <div className="settings-section-title"><span className="icon-chip"><Icon name="message" /></span>WhatsApp (Evolution API / WAHA)</div>
+          <div className="settings-section-desc">As APIs que conectam os números de WhatsApp. Cada número fica na API em que foi conectado; dá para mudar um número de API pelo card dele em <strong>WhatsApp</strong>.</div>
         </div>
+
+        <div className="form-group">
+          <label className="label">API para os números novos</label>
+          <div className="tabs">
+            <button type="button" className={`tab${waProvider === 'EVOLUTION' ? ' active' : ''}`} onClick={() => setWaProvider('EVOLUTION')}>Evolution API</button>
+            <button type="button" className={`tab${waProvider === 'WAHA' ? ' active' : ''}`} onClick={() => setWaProvider('WAHA')}>WAHA</button>
+          </div>
+          <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.5 }}>
+            Vale para os números conectados daqui pra frente. Os que já existem continuam na API deles até você usar "Mudar para…" no card.
+          </div>
+        </div>
+
+        <div style={{ fontWeight: 600, fontSize: '0.86rem', margin: '18px 0 10px' }}>Evolution API</div>
 
         <div className="form-group">
           <label className="label">URL da Evolution API</label>
@@ -708,14 +738,53 @@ export default function Settings() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 16 }}>
-          <TestButton label="Testar conexão" onTest={handleTestWa} status={testWa} />
+          <TestButton label="Testar número principal" onTest={handleTestWa} status={testWa} />
+        </div>
+
+        <div style={{ fontWeight: 600, fontSize: '0.86rem', margin: '22px 0 10px' }}>WAHA</div>
+        <div className="grid-2">
+          <div className="form-group">
+            <label className="label">URL do WAHA</label>
+            <input
+              ref={refWahaUrl}
+              defaultValue={settingsData?.wahaApiUrl ?? ''}
+              className="input"
+              placeholder="https://waha.seudominio.com"
+              type="text"
+              autoComplete="off"
+              data-lpignore="true"
+              data-form-type="other"
+              name={`waha-url-${Date.now()}`}
+            />
+          </div>
+          <div className="form-group">
+            <label className="label">API Key do WAHA</label>
+            <input
+              ref={refWahaKey}
+              defaultValue={settingsData?.wahaApiKey ? '***' : ''}
+              className="input font-mono"
+              placeholder="WAHA_API_KEY do stack"
+              type="text"
+              autoComplete="new-password"
+              data-lpignore="true"
+              data-form-type="other"
+              name={`waha-key-${Date.now()}`}
+            />
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 16, flexWrap: 'wrap' }}>
+          <TestButton label="Testar WAHA" onTest={handleTestWaha} status={testWaha} />
           <button
             type="button"
             className="btn btn-primary btn-sm"
             onClick={() => save({
+              whatsappProvider: waProvider,
               evolutionApiUrl:  refEvolutionUrl.current?.value,
               evolutionApiKey:  refEvolutionKey.current?.value,
               evolutionInstance: refEvolutionInst.current?.value,
+              wahaApiUrl: refWahaUrl.current?.value,
+              wahaApiKey: refWahaKey.current?.value,
             })}
             disabled={saving}
           >
