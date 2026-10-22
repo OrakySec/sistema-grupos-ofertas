@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import api, { type LeadCampaignItem, type LeadImportResult, type LeadQueueStatus, type LeadSafety, type LeadStatus } from '../lib/api'
+import api, { type LeadCampaignItem, type LeadImportResult, type LeadMode, type LeadQueueStatus, type LeadSafety, type LeadStatus, type ManualBatch } from '../lib/api'
 import { useToast } from '../lib/toast'
 import Icon from '../components/Icon'
 import Modal from '../components/Modal'
@@ -26,13 +26,14 @@ const STATUS: Record<LeadStatus, { label: string; cls: string; color: string }> 
   ADDED: { label: 'Adicionado', cls: 'badge-sent', color: '#4fe0a4' },
   INVITED: { label: 'Convite enviado', cls: 'badge-approved', color: '#8fb4ff' },
   INVITE_PENDING: { label: 'Convite amanhã', cls: 'badge-pending', color: 'var(--accent-warning)' },
+  MANUAL_PENDING: { label: 'No lote (adicionar pelo celular)', cls: 'badge-pending', color: '#f5c26b' },
   ALREADY_MEMBER: { label: 'Já estava', cls: '', color: 'var(--text-muted)' },
   NO_WHATSAPP: { label: 'Sem WhatsApp', cls: '', color: 'var(--text-muted)' },
   BLOCKED: { label: 'Saiu antes', cls: '', color: '#c9a0ff' },
   DUPLICATE: { label: 'Já feito em outra lista', cls: '', color: 'var(--text-muted)' },
   FAILED: { label: 'Falhou', cls: 'badge-failed', color: '#ff8a8e' },
 }
-const STATUS_ORDER: LeadStatus[] = ['QUEUED', 'ADDED', 'INVITED', 'INVITE_PENDING', 'ALREADY_MEMBER', 'NO_WHATSAPP', 'BLOCKED', 'DUPLICATE', 'FAILED']
+const STATUS_ORDER: LeadStatus[] = ['QUEUED', 'ADDED', 'INVITED', 'INVITE_PENDING', 'MANUAL_PENDING', 'ALREADY_MEMBER', 'NO_WHATSAPP', 'BLOCKED', 'DUPLICATE', 'FAILED']
 
 const WEEKDAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 
@@ -82,20 +83,120 @@ type NumberOption = { id: string; label: string; purpose: string; connected: boo
 
 /** Private invite messages to non-contacts are what got the lead numbers logged out (401 device_removed). */
 /** How the list puts people in the group. */
-function ModePicker({ value, onChange }: { value: 'ADD' | 'INVITE'; onChange: (m: 'ADD' | 'INVITE') => void }) {
+function ModePicker({ value, onChange }: { value: LeadMode; onChange: (m: LeadMode) => void }) {
   return (
     <div>
       <div className="label" style={{ marginBottom: 6 }}>Como colocar as pessoas no grupo</div>
       <div className="tabs">
         <button type="button" className={`tab${value === 'INVITE' ? ' active' : ''}`} onClick={() => onChange('INVITE')}><Icon name="send" size={15} /> Só convite (link no privado)</button>
+        <button type="button" className={`tab${value === 'MANUAL' ? ' active' : ''}`} onClick={() => onChange('MANUAL')}><Icon name="smartphone" size={15} /> Adicionar pelo celular</button>
         <button type="button" className={`tab${value === 'ADD' ? ' active' : ''}`} onClick={() => onChange('ADD')}><Icon name="userPlus" size={15} /> Adicionar direto</button>
       </div>
       <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.5 }}>
         {value === 'INVITE'
           ? 'Ninguém é adicionado: cada pessoa recebe a mensagem de convite com o link do grupo (texto e limite por dia em Segurança → "Convites no privado"). Quem entrar pelo link aparece em Resultados.'
-          : 'Tenta adicionar direto ao grupo. Atenção: tentar adicionar quem não tem você nos contatos derrubou os números (Evolution e WAHA).'}
+          : value === 'MANUAL'
+            ? 'O sistema monta o lote do dia e o arquivo de contatos; você adiciona pelo app do celular (que não derruba o número) e o sistema confere sozinho quem entrou. Os números só leem a lista de membros.'
+            : 'Tenta adicionar direto ao grupo. Atenção: tentar adicionar quem não tem você nos contatos derrubou os números (Evolution e WAHA).'}
       </div>
     </div>
+  )
+}
+
+/* ─── "Adicionar pelo celular": today's batch ─── */
+function ManualBatchModal({ campaign, onClose }: { campaign: LeadCampaignItem; onClose: () => void }) {
+  const { addToast } = useToast()
+  const [b, setB] = useState<ManualBatch | null>(null)
+  const [size, setSize] = useState(10)
+  const [busy, setBusy] = useState<string | null>(null)
+  const reload = useCallback(() => api.getManualBatch(campaign.id).then(setB).catch((err) => addToast(err instanceof Error ? err.message : 'Erro', 'error')), [campaign.id, addToast])
+  useEffect(() => { reload() }, [reload])
+
+  const run = async (key: string, fn: () => Promise<string | void>) => {
+    setBusy(key)
+    try { const msg = await fn(); if (msg) addToast(msg, 'success'); await reload() }
+    catch (err) { addToast(err instanceof Error ? err.message : 'Erro', 'error') }
+    finally { setBusy(null) }
+  }
+  const make = () => run('make', async () => {
+    const r = await api.makeManualBatch(campaign.id, size)
+    const sk = r.skipped.blocked + r.skipped.member + r.skipped.duplicate
+    return `${r.batch.length} pessoa(s) no lote${sk ? ` · ${sk} pulada(s) (saíram antes, já estão no grupo ou repetidas)` : ''}${r.groupsFull ? ' · os grupos da lista estão cheios' : ''}`
+  })
+  const download = () => run('vcf', async () => {
+    const v = await api.getManualVcard(campaign.id)
+    const url = URL.createObjectURL(new Blob([v.vcf], { type: 'text/vcard' }))
+    const a = document.createElement('a')
+    a.href = url; a.download = v.filename; a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 2000)
+    return `${v.count} contatos no arquivo`
+  })
+  const check = () => run('check', async () => {
+    const r = await api.checkManualBatch(campaign.id)
+    const joined = r.results.reduce((s, x) => s + (x.joined ?? 0), 0)
+    const skipped = r.results.find((x) => x.skipped)
+    if (skipped) addToast(`${skipped.group}: ${skipped.skipped}`, 'error')
+    return `${joined} pessoa(s) encontradas no grupo agora`
+  })
+  const copy = (phone: string) => { navigator.clipboard?.writeText(`+${phone}`).then(() => addToast('Número copiado', 'success')).catch(() => null) }
+
+  return (
+    <Modal isOpen onClose={onClose} title={`Lote do dia · ${campaign.name}`} width={680}>
+      {!b ? <Skeleton height={160} /> : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {b.pending.length === 0 ? (
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="label">Quantas pessoas neste lote</label>
+                <input className="input" type="number" min={1} max={100} value={size} onChange={(e) => setSize(Number(e.target.value))} style={{ width: 120 }} />
+              </div>
+              <button className="btn btn-primary" onClick={make} disabled={!!busy || !b.queued}>{busy === 'make' ? <span className="spinner spinner-sm" /> : <Icon name="users" size={15} />} Gerar lote</button>
+              <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{int(b.queued)} na fila</span>
+            </div>
+          ) : (
+            <>
+              <ol style={{ margin: 0, paddingLeft: 18, fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+                <li><strong>Baixe os contatos</strong> e abra o arquivo no celular para salvar todos de uma vez.</li>
+                <li>No grupo: <strong>Adicionar participantes</strong> → busque <strong className="mono">{b.prefix}</strong> e marque os do lote (de 5 em 5, com calma).</li>
+                <li>O sistema confere sozinho quem entrou (a cada 15 min) — ou clique em "Conferir agora".</li>
+              </ol>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button className="btn btn-primary btn-sm" onClick={download} disabled={!!busy}>{busy === 'vcf' ? <span className="spinner spinner-sm" /> : <Icon name="download" size={14} />} Baixar contatos (.vcf)</button>
+                <button className="btn btn-secondary btn-sm" onClick={check} disabled={!!busy}>{busy === 'check' ? <span className="spinner spinner-sm" /> : <Icon name="refresh" size={14} />} Conferir agora</button>
+                <button className="btn btn-ghost btn-sm" onClick={() => confirm('Marcar todos os pendentes como adicionados? Use só se você adicionou e o sistema não consegue ver os números do grupo.') && run('mark', async () => `${(await api.markManualAdded(campaign.id)).marked} marcados como adicionados`)} disabled={!!busy}>Marcar todos como adicionados</button>
+                <button className="btn btn-ghost btn-sm" onClick={() => confirm('Devolver os pendentes para a fila? Eles entram num próximo lote.') && run('requeue', async () => `${(await api.requeueManualBatch(campaign.id)).requeued} de volta para a fila`)} disabled={!!busy}>Devolver pendentes à fila</button>
+              </div>
+            </>
+          )}
+
+          {(b.pending.length > 0 || b.added.length > 0) && (
+            <div className="table-wrap" style={{ maxHeight: 340, overflow: 'auto' }}>
+              <table className="table">
+                <thead><tr><th>Pessoa</th><th>Grupo</th><th>Situação</th><th></th></tr></thead>
+                <tbody>
+                  {[...b.pending, ...b.added].map((l) => (
+                    <tr key={l.id}>
+                      <td>
+                        <div>{l.name || '—'}</div>
+                        <div className="mono" style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>{fmtPhone(l.phone)}</div>
+                      </td>
+                      <td style={{ fontSize: '0.8rem' }}>{l.group ?? '—'}</td>
+                      <td>{l.status === 'ADDED'
+                        ? <span className="badge badge-sent">Entrou {when(l.at)}</span>
+                        : <span className="badge badge-pending">Falta adicionar</span>}</td>
+                      <td>{l.status === 'PENDING' && <button className="btn btn-ghost btn-sm" onClick={() => copy(l.phone)} title="Copiar número"><Icon name="copy" size={14} /></button>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+            O lote já vem sem quem saiu de um dos seus grupos antes, sem quem já está no grupo e sem quem outra lista já colocou. Adicione pelo app do celular — os números conectados só leem a lista de membros.
+          </div>
+        </div>
+      )}
+    </Modal>
   )
 }
 
@@ -132,7 +233,7 @@ function NumbersModal({ campaign, onClose, onSaved }: { campaign: LeadCampaignIt
   const [opts, setOpts] = useState<NumberOption[] | null>(null)
   const [ids, setIds] = useState<string[]>(campaign.instances.map((i) => i.id))
   const [invite, setInvite] = useState(campaign.inviteFallback)
-  const [mode, setMode] = useState<'ADD' | 'INVITE'>(campaign.mode)
+  const [mode, setMode] = useState<LeadMode>(campaign.mode)
   const [busy, setBusy] = useState(false)
   useEffect(() => { api.getLeadOptions().then((o) => setOpts(o.instances)).catch(() => setOpts([])) }, [])
   const save = async () => {
@@ -150,7 +251,7 @@ function NumbersModal({ campaign, onClose, onSaved }: { campaign: LeadCampaignIt
           <NumberPicker instances={opts} value={ids} onChange={setIds} />
           <ModePicker value={mode} onChange={setMode} />
           {mode === 'ADD' && <Toggle checked={invite} onChange={setInvite} label="Mandar o link do grupo no privado para quem a privacidade não deixar adicionar" />}
-          {(mode === 'INVITE' || invite) && <InviteRiskNote />}
+          {(mode === 'INVITE' || (mode === 'ADD' && invite)) && <InviteRiskNote />}
           <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
             Os números marcados dividem a fila desta lista: cada pessoa é pega por um só, e cada número respeita os próprios limites (botão Segurança).
             Quem já foi adicionado ou convidado para o mesmo grupo por outra lista é pulado.
@@ -170,7 +271,7 @@ function NewCampaignModal({ onClose, onCreated }: { onClose: () => void; onCreat
   const [nicheId, setNicheId] = useState('')
   const [groupIds, setGroupIds] = useState<string[]>([])
   const [inviteFallback, setInviteFallback] = useState(true)
-  const [mode, setMode] = useState<'ADD' | 'INVITE'>('INVITE')
+  const [mode, setMode] = useState<LeadMode>('INVITE')
   const [phones, setPhones] = useState('')
   const [source, setSource] = useState<'LIST' | 'GROUP'>('LIST')
   const [sourceGroupId, setSourceGroupId] = useState('') // group JID
@@ -288,7 +389,7 @@ function NewCampaignModal({ onClose, onCreated }: { onClose: () => void; onCreat
 
           <ModePicker value={mode} onChange={setMode} />
           {mode === 'ADD' && <Toggle checked={inviteFallback} onChange={setInviteFallback} label="Se a privacidade da pessoa não deixar adicionar, mandar o link do grupo no privado" />}
-          {(mode === 'INVITE' || inviteFallback) && <InviteRiskNote />}
+          {(mode === 'INVITE' || (mode === 'ADD' && inviteFallback)) && <InviteRiskNote />}
 
           <div>
             <div className="label" style={{ marginBottom: 6 }}>De onde vêm os contatos</div>
@@ -608,6 +709,7 @@ export default function Leads() {
   const [creating, setCreating] = useState(false)
   const [adding, setAdding] = useState<LeadCampaignItem | null>(null)
   const [viewing, setViewing] = useState<LeadCampaignItem | null>(null)
+  const [manualFor, setManualFor] = useState<LeadCampaignItem | null>(null)
   const [intake, setIntake] = useState<LeadCampaignItem | null>(null)
   const [safety, setSafety] = useState<{ id: string; label: string } | null>(null)
   const [tab, setTab] = useState<'lists' | 'results'>('lists')
@@ -691,13 +793,14 @@ export default function Leads() {
                 </thead>
                 <tbody>
                   {data.campaigns.map((c) => {
-                    const done = c.total - c.counts.QUEUED - c.counts.INVITE_PENDING
+                    const done = c.total - c.counts.QUEUED - c.counts.INVITE_PENDING - (c.counts.MANUAL_PENDING ?? 0)
                     const pct = c.total ? Math.round((done / c.total) * 100) : 0
                     return (
                       <tr key={c.id}>
                         <td className="primary">
                           {c.name}
                           {c.mode === 'INVITE' && <span className="badge" style={{ marginLeft: 6 }} title="Ninguém é adicionado: cada pessoa recebe o link do grupo no privado">Só convite</span>}
+                          {c.mode === 'MANUAL' && <span className="badge" style={{ marginLeft: 6 }} title="Você adiciona pelo celular; o sistema prepara o lote e confere quem entrou">Pelo celular</span>}
                           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{int(c.total)} leads · criada {new Date(c.createdAt).toLocaleDateString('pt-BR')}</div>
                         </td>
                         <td style={{ fontSize: '0.8rem' }}>
@@ -738,6 +841,7 @@ export default function Leads() {
                             {c.status === 'ACTIVE'
                               ? <button className="btn btn-ghost btn-sm" onClick={() => act(() => api.updateLeadCampaign(c.id, { status: 'PAUSED' }), 'Lista pausada')}><Icon name="pause" size={14} /></button>
                               : <button className="btn btn-ghost btn-sm" onClick={() => act(() => api.updateLeadCampaign(c.id, { status: 'ACTIVE' }), 'Lista retomada')}><Icon name="play" size={14} /></button>}
+                            {c.mode === 'MANUAL' && <button className="btn btn-primary btn-sm" onClick={() => setManualFor(c)}><Icon name="smartphone" size={14} /> Lote do dia</button>}
                             <button className="btn btn-ghost btn-sm" onClick={() => setViewing(c)}>Ver leads</button>
                             <button className="btn btn-ghost btn-sm" onClick={() => setAdding(c)}>+ Leads</button>
                             <button className="btn btn-ghost btn-sm" onClick={() => setIntake(c)} title="Link de webhook"><Icon name="link" size={14} /></button>
@@ -762,6 +866,7 @@ export default function Leads() {
       {creating && <NewCampaignModal onClose={() => setCreating(false)} onCreated={load} />}
       {adding && <AddLeadsModal campaign={adding} onClose={() => setAdding(null)} onDone={load} />}
       {viewing && <LeadsListModal campaign={viewing} onClose={() => setViewing(null)} />}
+      {manualFor && <ManualBatchModal campaign={manualFor} onClose={() => { setManualFor(null); load() }} />}
       {intake && <IntakeModal campaign={intake} onClose={() => setIntake(null)} />}
       {numbersFor && <NumbersModal campaign={numbersFor} onClose={() => setNumbersFor(null)} onSaved={load} />}
       {safety && <SafetyModal instanceId={safety.id} label={safety.label} onClose={() => setSafety(null)} onSaved={load} />}

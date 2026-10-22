@@ -7,6 +7,7 @@ import { expireCoupons } from './lib/coupons';
 import { scheduleAdsSync, scheduleLeadsTick } from './lib/queue';
 import { leadsTick } from './lib/leadQueue';
 import { autoReconnect } from './lib/autoReconnect';
+import { checkManualJoins } from './lib/leadManual';
 import { detectLeadLeaves } from './lib/leadBlocks';
 import { forgetSender, sendersFor } from './lib/offerSenders';
 import { metaConfig, syncMeta } from './lib/metaAds';
@@ -600,6 +601,9 @@ linkMonitorWorker.on('error', (err) => {
 // Every 2 min the same tick also tries to bring dropped numbers back without a QR.
 const RECONNECT_EVERY_MS = 2 * 60 * 1000;
 let lastReconnectAt = 0;
+// …and every 15 min, who of the "add from the phone" batches is in the group now.
+const MANUAL_CHECK_EVERY_MS = 15 * 60 * 1000;
+let lastManualCheckAt = 0;
 const leadsWorker = new Worker(
   'leads',
   async () => {
@@ -607,6 +611,11 @@ const leadsWorker = new Worker(
       lastReconnectAt = Date.now();
       const back = await autoReconnect().catch((err) => [{ number: '?', result: `erro: ${err.message}` }]);
       if (back.length) console.log('[Worker] WhatsApp reconnect:', JSON.stringify(back));
+    }
+    if (Date.now() - lastManualCheckAt >= MANUAL_CHECK_EVERY_MS) {
+      lastManualCheckAt = Date.now();
+      const joined = await checkManualJoins().catch((err) => [{ group: '?', skipped: `erro: ${err.message}` }]);
+      if (joined.length) console.log('[Worker] Manual batches:', JSON.stringify(joined));
     }
     const results = await leadsTick();
     if (results.length) console.log('[Worker] Leads:', JSON.stringify(results));

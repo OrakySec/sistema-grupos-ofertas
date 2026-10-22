@@ -590,7 +590,13 @@ export interface LeadQueueStatus {
   lastResult: string | null
 }
 
-export type LeadStatus = 'QUEUED' | 'ADDED' | 'INVITED' | 'INVITE_PENDING' | 'ALREADY_MEMBER' | 'NO_WHATSAPP' | 'BLOCKED' | 'DUPLICATE' | 'FAILED'
+/** ADD = the queue adds; INVITE = link in private only; MANUAL = the owner adds from the phone. */
+export type LeadMode = 'ADD' | 'INVITE' | 'MANUAL'
+
+export type LeadStatus = 'QUEUED' | 'ADDED' | 'INVITED' | 'INVITE_PENDING' | 'MANUAL_PENDING' | 'ALREADY_MEMBER' | 'NO_WHATSAPP' | 'BLOCKED' | 'DUPLICATE' | 'FAILED'
+
+export interface ManualBatchRow { id: string; phone: string; name: string | null; group: string | null; status: 'PENDING' | 'ADDED'; at: string | null }
+export interface ManualBatch { prefix: string | null; pending: ManualBatchRow[]; added: ManualBatchRow[]; queued: number }
 
 export interface LeadCampaignItem {
   id: string
@@ -602,7 +608,7 @@ export interface LeadCampaignItem {
   instance: { id: string; label: string; connected: boolean; number: string | null }
   instances: Array<{ id: string; label: string; connected: boolean; number: string | null }>
   inviteFallback: boolean
-  mode: 'ADD' | 'INVITE'
+  mode: LeadMode
   counts: Record<LeadStatus, number>
   total: number
   left: number
@@ -1092,7 +1098,7 @@ class ApiClient {
     return this.request('GET', '/leads/overview')
   }
 
-  async createLeadCampaign(data: { name: string; nicheId: string | null; instanceIds: string[]; groupIds: string[]; inviteFallback: boolean; mode?: 'ADD' | 'INVITE'; phones?: string; sourceGroupId?: string; sourceGroupName?: string; consent: boolean }): Promise<LeadImportResult & { id: string }> {
+  async createLeadCampaign(data: { name: string; nicheId: string | null; instanceIds: string[]; groupIds: string[]; inviteFallback: boolean; mode?: LeadMode; phones?: string; sourceGroupId?: string; sourceGroupName?: string; consent: boolean }): Promise<LeadImportResult & { id: string }> {
     return this.request('POST', '/leads/campaigns', data)
   }
 
@@ -1100,7 +1106,32 @@ class ApiClient {
     return this.request('POST', `/leads/campaigns/${id}/leads`, { phones, consent })
   }
 
-  async updateLeadCampaign(id: string, data: { status?: 'ACTIVE' | 'PAUSED'; name?: string; groupIds?: string[]; inviteFallback?: boolean; mode?: 'ADD' | 'INVITE'; instanceIds?: string[] }): Promise<unknown> {
+  // ── "Adicionar pelo celular" batches ──
+  async getManualBatch(id: string): Promise<ManualBatch> {
+    return this.request('GET', `/leads/campaigns/${id}/manual`)
+  }
+
+  async makeManualBatch(id: string, size: number): Promise<{ prefix: string; batch: Array<{ id: string; phone: string; name: string | null; group: string }>; skipped: { blocked: number; member: number; duplicate: number }; groupsFull: boolean }> {
+    return this.request('POST', `/leads/campaigns/${id}/manual/batch`, { size })
+  }
+
+  async getManualVcard(id: string): Promise<{ filename: string; vcf: string; count: number }> {
+    return this.request('GET', `/leads/campaigns/${id}/manual/vcard`)
+  }
+
+  async checkManualBatch(id: string): Promise<{ results: Array<{ group: string; joined?: number; pending?: number; skipped?: string }> }> {
+    return this.request('POST', `/leads/campaigns/${id}/manual/check`, {})
+  }
+
+  async requeueManualBatch(id: string): Promise<{ requeued: number }> {
+    return this.request('POST', `/leads/campaigns/${id}/manual/requeue`, {})
+  }
+
+  async markManualAdded(id: string, ids?: string[]): Promise<{ marked: number }> {
+    return this.request('POST', `/leads/campaigns/${id}/manual/mark-added`, { ids })
+  }
+
+  async updateLeadCampaign(id: string, data: { status?: 'ACTIVE' | 'PAUSED'; name?: string; groupIds?: string[]; inviteFallback?: boolean; mode?: LeadMode; instanceIds?: string[] }): Promise<unknown> {
     return this.request('PATCH', `/leads/campaigns/${id}`, data)
   }
 

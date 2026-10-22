@@ -539,7 +539,7 @@ export async function queueStatus(instanceId: string, now = new Date()) {
   const modes = await prisma.leadCampaign.findMany({
     where: { status: 'ACTIVE', numbers: { some: { instanceId } } }, select: { mode: true }, distinct: ['mode'],
   });
-  const usesAdd = modes.some((m) => m.mode !== 'INVITE');
+  const usesAdd = modes.some((m) => m.mode === 'ADD'); // MANUAL lists are added from the phone, not by the queue
   const usesInvite = modes.some((m) => m.mode === 'INVITE');
   const quotaFull = (usesAdd || usesInvite)
     && (!usesAdd || addsToday >= limit) && (!usesInvite || invitesToday >= s.inviteDailyLimit);

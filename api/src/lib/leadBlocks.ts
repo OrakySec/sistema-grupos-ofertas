@@ -67,15 +67,23 @@ async function block(tenantId: string, phone: string, reason: 'LEFT' | 'REMOVED'
   return true;
 }
 
-/** An invited lead showed up in the group → record when they got in. */
+/**
+ * An invited lead showed up in the group → record when they got in. A lead of
+ * an "add from the phone" batch (MANUAL_PENDING) showing up = the owner added them.
+ */
 async function markJoined(tenantId: string, phone: string, groupId: string, at: Date) {
   const leads = await prisma.lead.findMany({
-    where: { tenantId, phone: { endsWith: phone.slice(-8) }, joinedAt: null, status: { in: ['INVITED', 'INVITE_PENDING'] } },
-    select: { id: true, phone: true, groupId: true },
+    where: { tenantId, phone: { endsWith: phone.slice(-8) }, joinedAt: null, status: { in: ['INVITED', 'INVITE_PENDING', 'MANUAL_PENDING'] } },
+    select: { id: true, phone: true, groupId: true, status: true },
   });
   const hits = leads.filter((l) => samePhone(l.phone, phone) && (!l.groupId || l.groupId === groupId));
   for (const l of hits) {
-    await prisma.lead.update({ where: { id: l.id }, data: { joinedAt: at, status: 'INVITED', groupId } });
+    await prisma.lead.update({
+      where: { id: l.id },
+      data: l.status === 'MANUAL_PENDING'
+        ? { joinedAt: at, status: 'ADDED', groupId, detail: 'Adicionado pelo celular (entrou no grupo)' }
+        : { joinedAt: at, status: 'INVITED', groupId },
+    });
   }
   return hits.length;
 }

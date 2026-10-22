@@ -12,8 +12,12 @@ import { parseLeadLines, queueStatus } from '../lib/leadQueue';
 import { shortenerDomain } from '../lib/shortener';
 import { findBlock, groupsOfConnectedNumbers, membersForImport, samePhone } from '../lib/leadBlocks';
 import { leadResults } from '../lib/leadStats';
+import { checkManualJoins, makeManualBatch, manualBatch, manualVcard, markManualAdded, requeueManual } from '../lib/leadManual';
 
-const STATUSES = ['QUEUED', 'ADDED', 'INVITED', 'INVITE_PENDING', 'ALREADY_MEMBER', 'NO_WHATSAPP', 'BLOCKED', 'DUPLICATE', 'FAILED'] as const;
+const MODES = new Set(['ADD', 'INVITE', 'MANUAL']);
+const modeOf = (v: unknown) => (MODES.has(String(v)) ? String(v) : 'ADD');
+
+const STATUSES = ['QUEUED', 'ADDED', 'INVITED', 'INVITE_PENDING', 'MANUAL_PENDING', 'ALREADY_MEMBER', 'NO_WHATSAPP', 'BLOCKED', 'DUPLICATE', 'FAILED'] as const;
 const MAX_IMPORT = 20000;
 
 /** The account's numbers among the given ids, in the given order. */
@@ -125,7 +129,7 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
           instance: c.instance,
           instances: c.numbers.length ? c.numbers.map((n) => n.instance) : [c.instance],
           inviteFallback: c.inviteFallback,
-          mode: c.mode === 'INVITE' ? 'INVITE' : 'ADD',
+          mode: modeOf(c.mode),
           counts: byStatus, total: Object.values(byStatus).reduce((a, b) => a + b, 0),
           left: leftCounts.find((r) => r.campaignId === c.id)?._count._all ?? 0,
           intakeUrl: await intakeUrl(c.intakeToken), createdAt: c.createdAt,
@@ -177,7 +181,7 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       const campaign = await prisma.leadCampaign.create({
         data: {
           tenantId, name, nicheId: b.nicheId || null, instanceId: instance.id, groupIds: ordered,
-          inviteFallback: b.inviteFallback !== false, mode: b.mode === 'INVITE' ? 'INVITE' : 'ADD', intakeToken: randomBytes(18).toString('hex'),
+          inviteFallback: b.inviteFallback !== false, mode: modeOf(b.mode), intakeToken: randomBytes(18).toString('hex'),
           numbers: { create: numbers.map((n) => ({ instanceId: n.id })) },
         },
       });
@@ -219,7 +223,11 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       }
       if (typeof b.name === 'string' && b.name.trim()) data.name = b.name.trim().slice(0, 80);
       if (typeof b.inviteFallback === 'boolean') data.inviteFallback = b.inviteFallback;
-      if (b.mode === 'ADD' || b.mode === 'INVITE') data.mode = b.mode;
+      if (typeof b.mode === 'string' && MODES.has(b.mode)) {
+        data.mode = b.mode;
+        // Leaving "add from the phone": the open batch goes back to the queue.
+        if (c.mode === 'MANUAL' && b.mode !== 'MANUAL') await requeueManual(c.id);
+      }
       if (Array.isArray(b.groupIds)) {
         const ids = b.groupIds.map(String);
         const valid = await prisma.destinationGroup.findMany({ where: { id: { in: ids }, type: 'WHATSAPP' }, select: { id: true } });
@@ -246,6 +254,41 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
     if (!c) return reply.code(404).send({ message: 'Campanha não encontrada' });
     await prisma.leadCampaign.delete({ where: { id: c.id } });
     return { ok: true };
+  });
+
+  // ── "Adicionar pelo celular" lists (lib/leadManual.ts) ──────────────────
+  fastify.get<{ Params: { id: string } }>('/campaigns/:id/manual', async (request, reply) => {
+    const b = await manualBatch(tenantIdOf(request), request.params.id);
+    return b ?? reply.code(404).send({ message: 'Lista não encontrada' });
+  });
+
+  fastify.post<{ Params: { id: string }; Body: { size?: number } }>('/campaigns/:id/manual/batch', async (request, reply) => {
+    const r = await makeManualBatch(tenantIdOf(request), request.params.id, Number(request.body?.size ?? 10));
+    return r.ok ? r : reply.code(400).send({ message: r.error });
+  });
+
+  fastify.get<{ Params: { id: string } }>('/campaigns/:id/manual/vcard', async (request, reply) => {
+    const v = await manualVcard(tenantIdOf(request), request.params.id);
+    return v ?? reply.code(404).send({ message: 'Não há ninguém no lote para baixar.' });
+  });
+
+  fastify.post<{ Params: { id: string } }>('/campaigns/:id/manual/check', async (request, reply) => {
+    const c = await ownCampaign(request, request.params.id);
+    if (!c) return reply.code(404).send({ message: 'Lista não encontrada' });
+    return { results: await checkManualJoins(c.tenantId, c.id) };
+  });
+
+  fastify.post<{ Params: { id: string } }>('/campaigns/:id/manual/requeue', async (request, reply) => {
+    const c = await ownCampaign(request, request.params.id);
+    if (!c) return reply.code(404).send({ message: 'Lista não encontrada' });
+    return { requeued: await requeueManual(c.id) };
+  });
+
+  fastify.post<{ Params: { id: string }; Body: { ids?: string[] } }>('/campaigns/:id/manual/mark-added', async (request, reply) => {
+    const c = await ownCampaign(request, request.params.id);
+    if (!c) return reply.code(404).send({ message: 'Lista não encontrada' });
+    const ids = Array.isArray(request.body?.ids) ? request.body.ids.map(String) : undefined;
+    return { marked: await markManualAdded(c.id, ids) };
   });
 
   // POST /leads/campaigns/:id/retry — failed (and optionally no-WhatsApp) leads back to the queue
