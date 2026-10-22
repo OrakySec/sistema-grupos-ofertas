@@ -23,7 +23,7 @@
  * /group/updateParticipant (action "add"), /group/inviteCode, /message/sendText.
  */
 import prisma from './prisma';
-import { evo, getState } from './evolution';
+import { evo, getInstanceInfo, getState } from './evolution';
 import { brtDayStart, toBrt } from './time';
 import { WhatsAppService } from '../services/whatsapp.service';
 import { findBlock, samePhone } from './leadBlocks';
@@ -259,7 +259,7 @@ async function sendPrivate(instance: string, phone: string, text: string): Promi
   return r.ok ? null : `HTTP ${r.status}: ${JSON.stringify(r.data).slice(0, 200)}`;
 }
 
-async function alertOwner(text: string) {
+export async function alertOwner(text: string) {
   const row = await prisma.setting.findUnique({ where: { key: 'link_monitor_alert_number' } });
   const number = row?.value?.trim();
   if (!number) return;
@@ -331,6 +331,12 @@ async function processInstance(instanceId: string, now: Date): Promise<string | 
   const state = await getState(inst.name);
   if (state !== 'open') {
     await prisma.whatsAppInstance.update({ where: { id: instanceId }, data: { connected: false, lastState: state, leadLastResult: 'Número desconectado — conecte de novo em WhatsApp' } });
+    // Logged out by WhatsApp (device removed…) → pause this number's queue and alert.
+    const info = state === 'close' ? await getInstanceInfo(inst.name).catch(() => null) : null;
+    if (info?.disconnectCode) {
+      const { recordDisconnect } = await import('./whatsappNumbers');
+      await recordDisconnect(instanceId, info.disconnectCode, info.disconnectAt ?? new Date());
+    }
     return 'número desconectado';
   }
 

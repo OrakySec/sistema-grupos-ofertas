@@ -274,6 +274,11 @@ export default function WhatsApp() {
                     <div style={{ fontSize: '0.78rem', color: n.connected ? 'var(--accent-success)' : 'var(--text-muted)' }}>
                       {n.connected ? 'Online' : n.lastState === 'not_found' ? 'Conexão apagada na Evolution — conecte de novo' : n.lastState === 'connecting' ? 'Aguardando leitura do QR Code' : 'Desconectado'}
                     </div>
+                    {n.lastDisconnectAt && (
+                      <div style={{ fontSize: '0.74rem', color: [401, 402, 403, 406].includes(n.lastDisconnectCode ?? 0) ? '#ff8a8e' : 'var(--text-muted)', lineHeight: 1.45 }}>
+                        Última queda: {new Date(n.lastDisconnectAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} — {n.lastDisconnectText}
+                      </div>
+                    )}
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                       {n.connected ? (
                         <button className="btn btn-secondary btn-sm" onClick={() => logout(n)}>Desconectar</button>

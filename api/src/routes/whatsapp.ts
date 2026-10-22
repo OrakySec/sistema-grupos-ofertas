@@ -7,7 +7,7 @@ import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { requireAuth } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { tenantIdOf } from '../lib/tenant';
-import { checkGlobalKey, createInstanceWithQr, deleteInstance, evoConfig, getQr, logoutInstance } from '../lib/evolution';
+import { checkGlobalKey, createInstanceWithQr, deleteInstance, disconnectReasonText, evoConfig, getQr, logoutInstance } from '../lib/evolution';
 import {
   MAX_NUMBERS, instanceNameFor, newInstanceId, refreshInstance, registerWebhook, setOffersInstance,
 } from '../lib/whatsappNumbers';
@@ -20,6 +20,9 @@ function view(row: any) {
     id: row.id, label: row.label, purpose: row.purpose, name: row.name,
     connected: row.connected, number: row.number, profileName: row.profileName,
     lastState: row.liveState ?? row.lastState, lastSeenAt: row.lastSeenAt, createdAt: row.createdAt,
+    lastDisconnectAt: row.lastDisconnectAt ?? null,
+    lastDisconnectCode: row.lastDisconnectCode ?? null,
+    lastDisconnectText: row.lastDisconnectCode ? disconnectReasonText(row.lastDisconnectCode) : null,
   };
 }
 

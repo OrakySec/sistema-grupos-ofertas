@@ -136,14 +136,42 @@ export async function getState(name: string): Promise<EvoState> {
   return (r.data?.instance?.state ?? r.data?.state ?? 'close') as EvoState;
 }
 
-/** Connected number + profile name, from fetchInstances (shape differs between v2 releases). */
-export async function getInstanceInfo(name: string): Promise<{ number: string | null; profileName: string | null }> {
+/**
+ * Connected number + profile name, and why WhatsApp last closed the session
+ * (disconnectionReasonCode / disconnectionAt — stored by Evolution v2.x),
+ * from fetchInstances (shape differs between v2 releases).
+ */
+export async function getInstanceInfo(name: string): Promise<{
+  number: string | null; profileName: string | null; disconnectCode: number | null; disconnectAt: Date | null;
+}> {
   const r = await evo('GET', `/instance/fetchInstances?instanceName=${encodeURIComponent(name)}`, undefined, 15000);
   const list: any[] = Array.isArray(r.data) ? r.data : r.data ? [r.data] : [];
   const row = list.find((x) => (x?.name ?? x?.instance?.instanceName) === name) ?? list[0];
   const jid: string | undefined = row?.ownerJid ?? row?.instance?.owner ?? row?.owner;
   const number = jid ? String(jid).split('@')[0].split(':')[0] : row?.number ?? null;
-  return { number: number || null, profileName: row?.profileName ?? row?.instance?.profileName ?? null };
+  const code = Number(row?.disconnectionReasonCode);
+  const at = row?.disconnectionAt ? new Date(row.disconnectionAt) : null;
+  return {
+    number: number || null,
+    profileName: row?.profileName ?? row?.instance?.profileName ?? null,
+    disconnectCode: Number.isFinite(code) && code > 0 ? code : null,
+    disconnectAt: at && !Number.isNaN(at.getTime()) ? at : null,
+  };
+}
+
+/** Disconnect codes after which WhatsApp won't let the session come back by itself. */
+export const LOGOUT_CODES = new Set([401, 402, 403, 406]);
+
+export function disconnectReasonText(code: number | null | undefined): string {
+  switch (code) {
+    case 401: return 'o WhatsApp removeu o aparelho conectado (device_removed)';
+    case 403: return 'o WhatsApp bloqueou o acesso desta conta (403)';
+    case 402: case 406: return `o WhatsApp encerrou a sessão (${code})`;
+    case 440: return 'a sessão foi aberta em outro lugar (440)';
+    case 428: return 'a conexão caiu e a Evolution está reconectando (428)';
+    case 515: return 'reinício normal da conexão (515)';
+    default: return code ? `código ${code}` : 'motivo não informado';
+  }
 }
 
 /** True when the configured key can list every instance (i.e. it's the global key). */

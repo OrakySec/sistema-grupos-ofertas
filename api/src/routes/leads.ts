@@ -273,9 +273,10 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       prisma.lead.count({ where }),
     ]);
     const groupNames = new Map((await prisma.destinationGroup.findMany({ select: { id: true, name: true } })).map((g) => [g.id, g.name]));
+    const numberNames = new Map((await prisma.whatsAppInstance.findMany({ where: { tenantId: c.tenantId }, select: { id: true, label: true } })).map((i) => [i.id, i.label]));
     return {
       total, page, pages: Math.max(1, Math.ceil(total / take)),
-      rows: rows.map((l) => ({ id: l.id, phone: l.phone, name: l.name, status: l.status, source: l.source, detail: l.detail, group: l.groupId ? groupNames.get(l.groupId) ?? null : null, processedAt: l.processedAt, leftAt: l.leftAt, createdAt: l.createdAt })),
+      rows: rows.map((l) => ({ id: l.id, phone: l.phone, name: l.name, status: l.status, source: l.source, detail: l.detail, group: l.groupId ? groupNames.get(l.groupId) ?? null : null, number: l.instanceId ? numberNames.get(l.instanceId) ?? null : null, processedAt: l.processedAt, leftAt: l.leftAt, createdAt: l.createdAt })),
     };
   });
 };

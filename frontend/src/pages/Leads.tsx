@@ -80,6 +80,16 @@ function ConsentBox({ checked, onChange, fromGroup = false }: { checked: boolean
 
 type NumberOption = { id: string; label: string; purpose: string; connected: boolean; number: string | null }
 
+/** Private invite messages to non-contacts are what got the lead numbers logged out (401 device_removed). */
+function InviteRiskNote() {
+  return (
+    <div style={{ fontSize: '0.74rem', color: 'var(--accent-warning)', lineHeight: 1.5 }}>
+      Atenção: mensagem com link de grupo para quem não tem você nos contatos é a ação que mais faz o WhatsApp desconectar o número
+      (foi o que derrubou os chips em 22/10). Use só com leads que pediram para entrar (página de captura).
+    </div>
+  )
+}
+
 /** Several numbers can work the same list — toggle chips. */
 function NumberPicker({ instances, value, onChange }: { instances: NumberOption[]; value: string[]; onChange: (ids: string[]) => void }) {
   return (
@@ -103,20 +113,24 @@ function NumbersModal({ campaign, onClose, onSaved }: { campaign: LeadCampaignIt
   const { addToast } = useToast()
   const [opts, setOpts] = useState<NumberOption[] | null>(null)
   const [ids, setIds] = useState<string[]>(campaign.instances.map((i) => i.id))
+  const [invite, setInvite] = useState(campaign.inviteFallback)
   const [busy, setBusy] = useState(false)
   useEffect(() => { api.getLeadOptions().then((o) => setOpts(o.instances)).catch(() => setOpts([])) }, [])
   const save = async () => {
     setBusy(true)
-    try { await api.updateLeadCampaign(campaign.id, { instanceIds: ids }); addToast('Números da lista atualizados', 'success'); onSaved(); onClose() }
+    try { await api.updateLeadCampaign(campaign.id, { instanceIds: ids, inviteFallback: invite }); addToast('Ajustes da lista salvos', 'success'); onSaved(); onClose() }
     catch (err) { addToast(err instanceof Error ? err.message : 'Erro ao salvar', 'error') }
     finally { setBusy(false) }
   }
   return (
-    <Modal isOpen onClose={onClose} title={`Números · ${campaign.name}`} width={560}
+    <Modal isOpen onClose={onClose} title={`Ajustes · ${campaign.name}`} width={560}
       footer={<><button className="btn btn-ghost" onClick={onClose}>Cancelar</button><button className="btn btn-primary" onClick={save} disabled={busy || !ids.length}>{busy ? <span className="spinner spinner-sm" /> : null} Salvar</button></>}>
       {!opts ? <Skeleton height={80} /> : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="label" style={{ marginBottom: -4 }}>Números que trabalham nesta lista</div>
           <NumberPicker instances={opts} value={ids} onChange={setIds} />
+          <Toggle checked={invite} onChange={setInvite} label="Mandar o link do grupo no privado para quem a privacidade não deixar adicionar" />
+          {invite && <InviteRiskNote />}
           <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
             Os números marcados dividem a fila desta lista: cada pessoa é pega por um só, e cada número respeita os próprios limites (botão Segurança).
             Quem já foi adicionado ou convidado para o mesmo grupo por outra lista é pulado.
@@ -252,12 +266,13 @@ function NewCampaignModal({ onClose, onCreated }: { onClose: () => void; onCreat
           </div>
 
           <Toggle checked={inviteFallback} onChange={setInviteFallback} label="Se a privacidade da pessoa não deixar adicionar, mandar o link do grupo no privado" />
+          {inviteFallback && <InviteRiskNote />}
 
           <div>
             <div className="label" style={{ marginBottom: 6 }}>De onde vêm os contatos</div>
             <div className="tabs">
               <button className={`tab${source === 'LIST' ? ' active' : ''}`} onClick={() => { setSource('LIST'); setConsent(false) }}><Icon name="inbox" size={15} /> Telefones / página de captura</button>
-              <button className={`tab${source === 'GROUP' ? ' active' : ''}`} onClick={() => { setSource('GROUP'); setConsent(false) }}><Icon name="users" size={15} /> Membros de um grupo meu</button>
+              <button className={`tab${source === 'GROUP' ? ' active' : ''}`} onClick={() => { setSource('GROUP'); setConsent(false); setInviteFallback(false) }}><Icon name="users" size={15} /> Membros de um grupo meu</button>
             </div>
           </div>
 
@@ -413,7 +428,10 @@ function LeadsListModal({ campaign, onClose }: { campaign: LeadCampaignItem; onC
                       <span className={`badge ${STATUS[l.status]?.cls ?? ''}`}>{STATUS[l.status]?.label ?? l.status}</span>
                       {l.leftAt && <div style={{ fontSize: '0.7rem', color: '#c9a0ff', marginTop: 3, whiteSpace: 'nowrap' }}>saiu {when(l.leftAt)} · bloqueado</div>}
                     </td>
-                    <td style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{l.detail ?? (l.group ? l.group : '—')}</td>
+                    <td style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                      {l.detail ?? (l.group ? l.group : '—')}
+                      {l.number && <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>por {l.number}</div>}
+                    </td>
                     <td className="tabular" style={{ whiteSpace: 'nowrap', fontSize: '0.78rem' }}>{when(l.processedAt ?? l.createdAt)}</td>
                   </tr>
                 ))}
@@ -667,7 +685,7 @@ export default function Leads() {
                           {c.instances.map((i) => (
                             <div key={i.id} style={{ whiteSpace: 'nowrap' }}><span className={`status-dot ${i.connected ? 'online' : 'offline'}`} style={{ marginRight: 6 }} />{i.label}</div>
                           ))}
-                          <button className="btn btn-ghost btn-sm" style={{ paddingLeft: 0, fontSize: '0.74rem' }} onClick={() => setNumbersFor(c)}>Números</button>
+                          <button className="btn btn-ghost btn-sm" style={{ paddingLeft: 0, fontSize: '0.74rem' }} onClick={() => setNumbersFor(c)}>Ajustes</button>
                         </td>
                         <td style={{ minWidth: 220 }}>
                           <div className="health-bar" title={`${pct}% processados`}>

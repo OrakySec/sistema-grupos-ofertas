@@ -543,6 +543,9 @@ export interface WaNumber {
   lastState: string | null
   lastSeenAt: string | null
   createdAt: string
+  lastDisconnectAt: string | null
+  lastDisconnectCode: number | null
+  lastDisconnectText: string | null
 }
 
 export interface LeadSafety {
@@ -1098,7 +1101,7 @@ class ApiClient {
 
   async getCampaignLeads(id: string, params: { status?: string; q?: string; page?: number }): Promise<{
     total: number; page: number; pages: number
-    rows: Array<{ id: string; phone: string; name: string | null; status: LeadStatus; source: 'LIST' | 'INTAKE' | 'GROUP'; detail: string | null; group: string | null; processedAt: string | null; leftAt: string | null; createdAt: string }>
+    rows: Array<{ id: string; phone: string; name: string | null; status: LeadStatus; source: 'LIST' | 'INTAKE' | 'GROUP'; detail: string | null; group: string | null; number: string | null; processedAt: string | null; leftAt: string | null; createdAt: string }>
   }> {
     const qs = new URLSearchParams()
     if (params.status) qs.set('status', params.status)

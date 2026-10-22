@@ -508,16 +508,20 @@ model LeadBlock {
 
 // A WhatsApp number connected by QR code (one Evolution instance each).
 model WhatsAppInstance {
-  id          String    @id
-  tenantId    String
-  name        String    @unique // Evolution instance name: <prefix>_<id>
-  label       String
-  purpose     String    @default("LEADS") // OFFERS (posts the offers) | LEADS (adds leads to groups)
-  connected   Boolean   @default(false)
-  number      String?
-  profileName String?
-  lastState   String?
-  lastSeenAt  DateTime?
+  id                 String    @id
+  tenantId           String
+  name               String    @unique // Evolution instance name: <prefix>_<id>
+  label              String
+  purpose            String    @default("LEADS") // OFFERS (posts the offers) | LEADS (adds leads to groups)
+  connected          Boolean   @default(false)
+  number             String?
+  profileName        String?
+  lastState          String?
+  lastSeenAt         DateTime?
+  // Last time WhatsApp closed the session, and why (Evolution statusReason:
+  // 401 = device removed / logged out, 403 = forbidden, 440 = replaced…).
+  lastDisconnectAt   DateTime?
+  lastDisconnectCode Int?
 
   // Lead-adding safety settings (lib/leadQueue.ts → LeadSafety) and queue state.
   leadSafety       Json?
