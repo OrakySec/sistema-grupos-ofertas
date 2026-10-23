@@ -645,6 +645,8 @@ export interface LeadCampaignItem {
   instances: Array<{ id: string; label: string; connected: boolean; number: string | null }>
   inviteFallback: boolean
   mode: LeadMode
+  /** Made from a group's members: that group, and whether new members join the queue daily */
+  source: { jid: string; name: string | null; sync: boolean; syncedAt: string | null; result: string | null } | null
   counts: Record<LeadStatus, number>
   total: number
   left: number
@@ -1134,7 +1136,7 @@ class ApiClient {
     return this.request('GET', '/leads/overview')
   }
 
-  async createLeadCampaign(data: { name: string; nicheId: string | null; instanceIds: string[]; groupIds: string[]; inviteFallback: boolean; mode?: LeadMode; phones?: string; sourceGroupId?: string; sourceGroupName?: string; consent: boolean }): Promise<LeadImportResult & { id: string }> {
+  async createLeadCampaign(data: { name: string; nicheId: string | null; instanceIds: string[]; groupIds: string[]; inviteFallback: boolean; mode?: LeadMode; phones?: string; sourceGroupId?: string; sourceGroupName?: string; sourceSync?: boolean; consent: boolean }): Promise<LeadImportResult & { id: string }> {
     return this.request('POST', '/leads/campaigns', data)
   }
 
@@ -1192,12 +1194,16 @@ class ApiClient {
     return this.request('POST', `/leads/campaigns/${id}/manual/mark-added`, { ids })
   }
 
-  async updateLeadCampaign(id: string, data: { status?: 'ACTIVE' | 'PAUSED'; name?: string; groupIds?: string[]; inviteFallback?: boolean; mode?: LeadMode; instanceIds?: string[] }): Promise<unknown> {
+  async updateLeadCampaign(id: string, data: { status?: 'ACTIVE' | 'PAUSED'; name?: string; groupIds?: string[]; inviteFallback?: boolean; mode?: LeadMode; instanceIds?: string[]; sourceSync?: boolean; sourceGroupJid?: string | null; sourceGroupName?: string }): Promise<unknown> {
     return this.request('PATCH', `/leads/campaigns/${id}`, data)
   }
 
   async deleteLeadCampaign(id: string): Promise<{ ok: boolean }> {
     return this.request('DELETE', `/leads/campaigns/${id}`)
+  }
+
+  async syncLeadSource(id: string): Promise<{ ok: boolean; added: number; result: string }> {
+    return this.request('POST', `/leads/campaigns/${id}/sync-source`, {})
   }
 
   async retryLeads(id: string, includeNoWhatsApp = false): Promise<{ requeued: number }> {

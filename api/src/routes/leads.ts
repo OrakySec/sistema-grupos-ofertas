@@ -10,10 +10,11 @@ import { tenantIdOf } from '../lib/tenant';
 import { normalizePhoneBR } from '../lib/evolution';
 import { parseLeadLines, queueStatus } from '../lib/leadQueue';
 import { shortenerDomain } from '../lib/shortener';
-import { findBlock, groupsOfConnectedNumbers, membersForImport, samePhone } from '../lib/leadBlocks';
+import { findBlock, groupsOfConnectedNumbers, membersForImport, samePhone, withoutBlocked } from '../lib/leadBlocks';
 import { leadResults } from '../lib/leadStats';
 import { checkManualJoins, makeManualBatch, manualBatch, manualVcard, markManualAdded, requeueManual } from '../lib/leadManual';
 import { DEFAULT_HELPER_SAFETY, helperSafetyOf, helperView, sendHelperBatch } from '../lib/leadHelpers';
+import { syncSourceGroup } from '../lib/leadSourceSync';
 
 const MODES = new Set(['ADD', 'INVITE', 'MANUAL']);
 const modeOf = (v: unknown) => (MODES.has(String(v)) ? String(v) : 'ADD');
@@ -27,17 +28,6 @@ async function ownNumbers(tenantId: string, ids: unknown) {
   if (!list.length) return [];
   const rows = await prisma.whatsAppInstance.findMany({ where: { tenantId, id: { in: list } } });
   return list.map((id) => rows.find((r) => r.id === id)).filter(Boolean) as typeof rows;
-}
-
-/** Drops people who already left one of the account's groups (they're never re-added). */
-async function withoutBlocked<T extends { phone: string }>(tenantId: string, leads: T[]): Promise<{ keep: T[]; blocked: number }> {
-  if (!leads.length) return { keep: leads, blocked: 0 };
-  const blocks = await prisma.leadBlock.findMany({ where: { tenantId }, select: { phone: true } });
-  if (!blocks.length) return { keep: leads, blocked: 0 };
-  const byTail = new Map<string, string[]>();
-  for (const b of blocks) byTail.set(b.phone.slice(-8), [...(byTail.get(b.phone.slice(-8)) ?? []), b.phone]);
-  const keep = leads.filter((l) => !(byTail.get(l.phone.slice(-8)) ?? []).some((p) => samePhone(p, l.phone)));
-  return { keep, blocked: leads.length - keep.length };
 }
 
 async function intakeUrl(token: string) {
@@ -131,6 +121,7 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
           instances: c.numbers.length ? c.numbers.map((n) => n.instance) : [c.instance],
           inviteFallback: c.inviteFallback,
           mode: modeOf(c.mode),
+          source: c.sourceGroupJid ? { jid: c.sourceGroupJid, name: c.sourceGroupName, sync: c.sourceSync, syncedAt: c.sourceSyncedAt, result: c.sourceSyncResult } : null,
           counts: byStatus, total: Object.values(byStatus).reduce((a, b) => a + b, 0),
           left: leftCounts.find((r) => r.campaignId === c.id)?._count._all ?? 0,
           intakeUrl: await intakeUrl(c.intakeToken), createdAt: c.createdAt,
@@ -142,7 +133,7 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
 
   // POST /leads/campaigns — new campaign + its leads, from a pasted list or
   // from the members of one of the account's WhatsApp groups (sourceGroupId).
-  fastify.post<{ Body: { name?: string; nicheId?: string | null; instanceId?: string; instanceIds?: string[]; groupIds?: string[]; inviteFallback?: boolean; mode?: string; phones?: string; sourceGroupId?: string; sourceGroupName?: string; consent?: boolean } }>(
+  fastify.post<{ Body: { name?: string; nicheId?: string | null; instanceId?: string; instanceIds?: string[]; groupIds?: string[]; inviteFallback?: boolean; mode?: string; phones?: string; sourceGroupId?: string; sourceGroupName?: string; sourceSync?: boolean; consent?: boolean } }>(
     '/campaigns',
     async (request, reply) => {
       const tenantId = tenantIdOf(request);
@@ -163,12 +154,14 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       let source: 'LIST' | 'GROUP' = 'LIST';
       let incoming: Array<{ phone: string; name: string | null }>;
       let report: { duplicates: number; invalid: number; invalidSamples: string[]; fromGroup?: { group: string; total: number; hidden: number; admins: number; own: number } };
+      let sourceGroup: { jid: string; name: string } | null = null;
       if (b.sourceGroupId) {
         const m = await membersForImport(tenantId, String(b.sourceGroupId), instance.id, b.sourceGroupName);
         if (!m.ok) return reply.code(502).send({ message: m.error });
         const targets = await prisma.destinationGroup.findMany({ where: { id: { in: ordered } }, select: { chatId: true } });
         if (targets.some((t) => t.chatId === m.chatId)) return reply.code(400).send({ message: 'O grupo de origem não pode ser também um dos destinos.' });
         source = 'GROUP';
+        sourceGroup = { jid: m.chatId, name: m.groupName };
         incoming = m.phones.map((phone) => ({ phone, name: null }));
         report = { duplicates: 0, invalid: 0, invalidSamples: [], fromGroup: { group: m.groupName, total: m.total, hidden: m.hidden, admins: m.admins, own: m.own } };
       } else {
@@ -183,6 +176,8 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
         data: {
           tenantId, name, nicheId: b.nicheId || null, instanceId: instance.id, groupIds: ordered,
           inviteFallback: b.inviteFallback !== false, mode: modeOf(b.mode), intakeToken: randomBytes(18).toString('hex'),
+          // Keeps following the source group (new members join the queue daily) unless turned off.
+          ...(sourceGroup ? { sourceGroupJid: sourceGroup.jid, sourceGroupName: sourceGroup.name, sourceSync: b.sourceSync !== false, sourceSyncedAt: new Date() } : {}),
           numbers: { create: numbers.map((n) => ({ instanceId: n.id })) },
         },
       });
@@ -211,7 +206,7 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
   });
 
   // PATCH /leads/campaigns/:id { status?, name?, groupIds?, inviteFallback?, mode?, instanceIds? }
-  fastify.patch<{ Params: { id: string }; Body: { status?: string; name?: string; groupIds?: string[]; inviteFallback?: boolean; mode?: string; instanceIds?: string[] } }>(
+  fastify.patch<{ Params: { id: string }; Body: { status?: string; name?: string; groupIds?: string[]; inviteFallback?: boolean; mode?: string; instanceIds?: string[]; sourceSync?: boolean; sourceGroupJid?: string | null; sourceGroupName?: string } }>(
     '/campaigns/:id',
     async (request, reply) => {
       const c = await ownCampaign(request, request.params.id);
@@ -224,6 +219,15 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       }
       if (typeof b.name === 'string' && b.name.trim()) data.name = b.name.trim().slice(0, 80);
       if (typeof b.inviteFallback === 'boolean') data.inviteFallback = b.inviteFallback;
+      // Following a source group: turn on/off, or pick the group (lists made before this existed).
+      if (typeof b.sourceGroupJid === 'string' && b.sourceGroupJid.endsWith('@g.us')) {
+        data.sourceGroupJid = b.sourceGroupJid;
+        data.sourceGroupName = String(b.sourceGroupName ?? '').slice(0, 100) || null;
+        data.sourceSyncedAt = null; // first sync on the next tick
+      } else if (b.sourceGroupJid === null) {
+        data.sourceGroupJid = null; data.sourceGroupName = null; data.sourceSync = false;
+      }
+      if (typeof b.sourceSync === 'boolean' && b.sourceGroupJid !== null) data.sourceSync = b.sourceSync;
       if (typeof b.mode === 'string' && MODES.has(b.mode)) {
         data.mode = b.mode;
         // Leaving "add from the phone": the open batch goes back to the queue.
@@ -290,6 +294,15 @@ export const leadsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
     if (!c) return reply.code(404).send({ message: 'Lista não encontrada' });
     const ids = Array.isArray(request.body?.ids) ? request.body.ids.map(String) : undefined;
     return { marked: await markManualAdded(c.id, ids) };
+  });
+
+  // POST /leads/campaigns/:id/sync-source — read the source group now and queue whoever is new
+  fastify.post<{ Params: { id: string } }>('/campaigns/:id/sync-source', async (request, reply) => {
+    const c = await ownCampaign(request, request.params.id);
+    if (!c) return reply.code(404).send({ message: 'Lista não encontrada' });
+    if (!c.sourceGroupJid) return reply.code(400).send({ message: 'Escolha o grupo de origem em Ajustes.' });
+    const r = await syncSourceGroup(c.id);
+    return r.ok ? r : reply.code(502).send({ message: r.result });
   });
 
   // POST /leads/campaigns/:id/retry — failed (and optionally no-WhatsApp) leads back to the queue

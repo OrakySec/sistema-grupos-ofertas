@@ -239,11 +239,25 @@ function NumbersModal({ campaign, onClose, onSaved }: { campaign: LeadCampaignIt
   const [ids, setIds] = useState<string[]>(campaign.instances.map((i) => i.id))
   const [invite, setInvite] = useState(campaign.inviteFallback)
   const [mode, setMode] = useState<LeadMode>(campaign.mode)
+  const [follow, setFollow] = useState(campaign.source?.sync ?? false)
+  const [srcPick, setSrcPick] = useState<{ jid: string; name: string } | null>(null)
+  const [srcGroups, setSrcGroups] = useState<Array<{ jid: string; name: string }> | null>(null)
+  const [syncing, setSyncing] = useState(false)
   const [busy, setBusy] = useState(false)
   useEffect(() => { api.getLeadOptions().then((o) => setOpts(o.instances)).catch(() => setOpts([])) }, [])
+  const loadSrcGroups = () => {
+    setSrcGroups([])
+    api.getLeadSourceGroups().then((r) => setSrcGroups(r.groups.map((g) => ({ jid: g.jid, name: g.name })))).catch((err) => { addToast(err instanceof Error ? err.message : 'Erro ao buscar os grupos', 'error'); setSrcGroups(null) })
+  }
+  const syncNow = async () => {
+    setSyncing(true)
+    try { const r = await api.syncLeadSource(campaign.id); addToast(r.result, 'success'); onSaved() }
+    catch (err) { addToast(err instanceof Error ? err.message : 'Erro ao atualizar', 'error') }
+    finally { setSyncing(false) }
+  }
   const save = async () => {
     setBusy(true)
-    try { await api.updateLeadCampaign(campaign.id, { instanceIds: ids, inviteFallback: invite, mode }); addToast('Ajustes da lista salvos', 'success'); onSaved(); onClose() }
+    try { await api.updateLeadCampaign(campaign.id, { instanceIds: ids, inviteFallback: invite, mode, sourceSync: follow, ...(srcPick ? { sourceGroupJid: srcPick.jid, sourceGroupName: srcPick.name } : {}) }); addToast('Ajustes da lista salvos', 'success'); onSaved(); onClose() }
     catch (err) { addToast(err instanceof Error ? err.message : 'Erro ao salvar', 'error') }
     finally { setBusy(false) }
   }
@@ -257,6 +271,28 @@ function NumbersModal({ campaign, onClose, onSaved }: { campaign: LeadCampaignIt
           <ModePicker value={mode} onChange={setMode} />
           {mode === 'ADD' && <Toggle checked={invite} onChange={setInvite} label="Mandar o link do grupo no privado para quem a privacidade não deixar adicionar" />}
           {(mode === 'INVITE' || (mode === 'ADD' && invite)) && <InviteRiskNote />}
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div className="label" style={{ marginBottom: 0 }}>Grupo de origem</div>
+            {campaign.source || srcPick ? (
+              <>
+                <div style={{ fontSize: '0.82rem' }}>{srcPick?.name ?? campaign.source?.name ?? 'Grupo'}</div>
+                <Toggle checked={follow} onChange={setFollow} label="Acompanhar todo dia: quem entrar nesse grupo vai para a fila desta lista" />
+                {campaign.source?.result && <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>Última leitura: {campaign.source.result}</div>}
+                {campaign.source && !srcPick && (
+                  <div><button type="button" className="btn btn-secondary btn-sm" onClick={syncNow} disabled={syncing}>{syncing ? <span className="spinner spinner-sm" /> : <Icon name="refresh" size={14} />} Atualizar agora</button></div>
+                )}
+              </>
+            ) : srcGroups === null ? (
+              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                Esta lista não acompanha nenhum grupo. <button type="button" className="btn btn-ghost btn-sm" onClick={loadSrcGroups}>Escolher grupo de origem</button>
+              </div>
+            ) : srcGroups.length === 0 ? <Skeleton height={40} /> : (
+              <select className="input" defaultValue="" onChange={(e) => { const g = srcGroups.find((x) => x.jid === e.target.value); if (g) { setSrcPick(g); setFollow(true) } }}>
+                <option value="" disabled>Escolha o grupo de onde vêm as pessoas…</option>
+                {srcGroups.map((g) => <option key={g.jid} value={g.jid}>{g.name}</option>)}
+              </select>
+            )}
+          </div>
           <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
             Os números marcados dividem a fila desta lista: cada pessoa é pega por um só, e cada número respeita os próprios limites (botão Segurança).
             Quem já foi adicionado ou convidado para o mesmo grupo por outra lista é pulado.
@@ -283,6 +319,7 @@ function NewCampaignModal({ onClose, onCreated }: { onClose: () => void; onCreat
   const [srcGroups, setSrcGroups] = useState<Awaited<ReturnType<typeof api.getLeadSourceGroups>> | null>(null)
   const [srcLoading, setSrcLoading] = useState(false)
   const [srcFilter, setSrcFilter] = useState('')
+  const [follow, setFollow] = useState(true) // keep following the source group
   const srcGroup = srcGroups?.groups.find((g) => g.jid === sourceGroupId) ?? null
 
   // Every group the connected numbers are in — fetched live when this source is picked.
@@ -317,7 +354,7 @@ function NewCampaignModal({ onClose, onCreated }: { onClose: () => void; onCreat
     try {
       const r = await api.createLeadCampaign({
         name: name.trim(), nicheId: nicheId || null, instanceIds, groupIds, inviteFallback, mode, consent,
-        ...(source === 'GROUP' ? { sourceGroupId, sourceGroupName: srcGroup?.name } : { phones }),
+        ...(source === 'GROUP' ? { sourceGroupId, sourceGroupName: srcGroup?.name, sourceSync: follow } : { phones }),
       })
       setResult(r)
       onCreated()
@@ -462,6 +499,9 @@ function NewCampaignModal({ onClose, onCreated }: { onClose: () => void; onCreat
               <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.5 }}>
                 O sistema lê os membros na hora de criar. Admins e os seus próprios números ficam de fora, e quem já saiu de algum grupo seu também.
                 Membros com o número oculto pelo WhatsApp não têm como ser adicionados.
+              </div>
+              <div style={{ marginTop: 10 }}>
+                <Toggle checked={follow} onChange={setFollow} label="Acompanhar este grupo: todo dia, quem entrar nele vai para a fila desta lista" />
               </div>
             </div>
           )}
@@ -806,6 +846,7 @@ export default function Leads() {
                         <td className="primary">
                           {c.name}
                           {c.mode === 'INVITE' && <span className="badge" style={{ marginLeft: 6 }} title="Ninguém é adicionado: cada pessoa recebe o link do grupo no privado">Só convite</span>}
+                          {c.source?.sync && <span className="badge" style={{ marginLeft: 6 }} title={`Todo dia, quem entrar em "${c.source.name ?? 'grupo de origem'}" vai para a fila${c.source.result ? `\nÚltima leitura: ${c.source.result}` : ''}`}>↻ acompanha grupo</span>}
                           {c.mode === 'MANUAL' && <span className="badge" style={{ marginLeft: 6 }} title="Você adiciona pelo celular; o sistema prepara o lote e confere quem entrou">Pelo celular</span>}
                           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{int(c.total)} leads · criada {new Date(c.createdAt).toLocaleDateString('pt-BR')}</div>
                         </td>

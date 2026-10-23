@@ -47,6 +47,17 @@ export function samePhone(a: string, b: string): boolean {
   return x.ddd === y.ddd && x.tail === y.tail;
 }
 
+/** Drops people who already left one of the account's groups (they're never re-added). */
+export async function withoutBlocked<T extends { phone: string }>(tenantId: string, leads: T[]): Promise<{ keep: T[]; blocked: number }> {
+  if (!leads.length) return { keep: leads, blocked: 0 };
+  const blocks = await prisma.leadBlock.findMany({ where: { tenantId }, select: { phone: true } });
+  if (!blocks.length) return { keep: leads, blocked: 0 };
+  const byTail = new Map<string, string[]>();
+  for (const b of blocks) byTail.set(b.phone.slice(-8), [...(byTail.get(b.phone.slice(-8)) ?? []), b.phone]);
+  const keep = leads.filter((l) => !(byTail.get(l.phone.slice(-8)) ?? []).some((p) => samePhone(p, l.phone)));
+  return { keep, blocked: leads.length - keep.length };
+}
+
 export async function findBlock(tenantId: string, phone: string) {
   const rows = await prisma.leadBlock.findMany({ where: { tenantId, phone: { endsWith: phone.slice(-8) } } });
   return rows.find((r) => samePhone(r.phone, phone)) ?? null;

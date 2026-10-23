@@ -9,6 +9,7 @@ import { leadsTick } from './lib/leadQueue';
 import { autoReconnect } from './lib/autoReconnect';
 import { checkManualJoins } from './lib/leadManual';
 import { helpersTick } from './lib/leadHelpers';
+import { sourceSyncTick } from './lib/leadSourceSync';
 import { detectLeadLeaves } from './lib/leadBlocks';
 import { forgetSender, sendersFor } from './lib/offerSenders';
 import { metaConfig, syncMeta } from './lib/metaAds';
@@ -607,6 +608,9 @@ const MANUAL_CHECK_EVERY_MS = 15 * 60 * 1000;
 let lastManualCheckAt = 0;
 const HELPERS_EVERY_MS = 5 * 60 * 1000;
 let lastHelpersAt = 0;
+// Lists that follow a source group: new members join the queue once a day.
+const SOURCE_SYNC_EVERY_MS = 30 * 60 * 1000;
+let lastSourceSyncAt = 0;
 const leadsWorker = new Worker(
   'leads',
   async () => {
@@ -619,6 +623,11 @@ const leadsWorker = new Worker(
       lastManualCheckAt = Date.now();
       const joined = await checkManualJoins().catch((err) => [{ group: '?', skipped: `erro: ${err.message}` }]);
       if (joined.length) console.log('[Worker] Manual batches:', JSON.stringify(joined));
+    }
+    if (Date.now() - lastSourceSyncAt >= SOURCE_SYNC_EVERY_MS) {
+      lastSourceSyncAt = Date.now();
+      const synced = await sourceSyncTick().catch((err) => [{ list: '?', result: `erro: ${err.message}` }]);
+      if (synced.length) console.log('[Worker] Source groups:', JSON.stringify(synced));
     }
     // Phones that add by hand: each gets its daily batch at its send hour.
     if (Date.now() - lastHelpersAt >= HELPERS_EVERY_MS) {

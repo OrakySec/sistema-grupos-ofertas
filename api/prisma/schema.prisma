@@ -580,6 +580,13 @@ model LeadCampaign {
   // ADD = add to the group (link in private only when privacy refuses);
   // INVITE = never add, everyone gets the group link in private (invite daily limit).
   mode           String   @default("ADD")
+  // List made from the members of one of the account's groups: that group is
+  // re-read once a day and whoever joined it since goes into the queue.
+  sourceGroupJid   String?
+  sourceGroupName  String?
+  sourceSync       Boolean   @default(false)
+  sourceSyncedAt   DateTime?
+  sourceSyncResult String?
   status         String   @default("ACTIVE") // ACTIVE | PAUSED | DONE
   pausedReason   String?
   intakeToken    String   @unique // public webhook: POST /api/leads/intake/<token>
