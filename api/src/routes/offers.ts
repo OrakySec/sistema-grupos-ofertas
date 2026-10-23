@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { addNewOfferJob, addSendOfferJob } from '../lib/queue';
 import { classifyOfferProblem } from '../lib/failureReason';
+import { brtDayStart, toBrt } from '../lib/time';
 
 const JWT_SECRET = process.env.JWT_SECRET ?? 'changeme-jwt-secret';
 const INTERNAL_TOKEN = 'sistema-grupos-ofertas-internal-token-fallback-key-2026';
@@ -12,6 +13,7 @@ interface ListOffersQuery {
   page?: number;
   limit?: number;
   status?: string;
+  dateRange?: 'today' | 'week' | 'month' | 'all';
 }
 
 interface CreateOfferBody {
@@ -244,6 +246,7 @@ export const offersRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
               type: 'string',
               enum: ['PENDING', 'APPROVED', 'REJECTED', 'SENT', 'FAILED'],
             },
+            dateRange: { type: 'string', enum: ['today', 'week', 'month', 'all'] },
           },
         },
       },
@@ -252,9 +255,17 @@ export const offersRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
       const page = request.query.page ?? 1;
       const limit = request.query.limit ?? 20;
       const skip = (page - 1) * limit;
-      const where = request.query.status
-        ? { status: request.query.status as 'PENDING' | 'APPROVED' | 'REJECTED' | 'SENT' | 'FAILED' }
-        : {};
+      // Period, in Brasília days: today / the last 7 days / this month.
+      const now = new Date();
+      const b = toBrt(now);
+      const since = request.query.dateRange === 'today' ? brtDayStart(0, now)
+        : request.query.dateRange === 'week' ? brtDayStart(6, now)
+        : request.query.dateRange === 'month' ? brtDayStart(b.getUTCDate() - 1, now)
+        : null;
+      const where = {
+        ...(request.query.status ? { status: request.query.status as 'PENDING' | 'APPROVED' | 'REJECTED' | 'SENT' | 'FAILED' } : {}),
+        ...(since ? { createdAt: { gte: since } } : {}),
+      };
 
       const [offers, total] = await Promise.all([
         prisma.offer.findMany({
@@ -287,6 +298,8 @@ export const offersRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
 
       return reply.send({
         data: serialized,
+        // Top-level fields are what the panel reads (PaginatedResponse); `pagination` is kept for older callers.
+        total, page, limit, totalPages: Math.ceil(total / limit),
         pagination: {
           page,
           limit,

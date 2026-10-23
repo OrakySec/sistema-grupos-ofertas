@@ -39,7 +39,7 @@ export default function History() {
 
       const res = await api.getOffers(params)
       setOffers(res.data)
-      setTotal(res.total)
+      setTotal(res.total ?? 0)
     } catch {
       // silent
     } finally {
