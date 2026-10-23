@@ -40,8 +40,13 @@ model SourceGroup {
   // TELEGRAM = a real channel the listener reads. SHOPEE = the virtual source
   // behind a niche's automatic Shopee search (no Telegram chat behind it; it
   // exists so its offers reuse destinations, footer, health and analytics).
+  // WHATSAPP = a WhatsApp group one of the account's numbers is in: its
+  // messages arrive through that number's webhook and go through the same
+  // listener pipeline (telegramId is then a synthetic id, never a real chat).
   kind       String   @default("TELEGRAM")
   telegramId BigInt   @unique
+  whatsappJid    String? @unique // …@g.us (kind WHATSAPP)
+  readerInstance String? // the number (instance name) whose webhook delivers its messages
   name       String
   username   String?
   isActive   Boolean  @default(true)

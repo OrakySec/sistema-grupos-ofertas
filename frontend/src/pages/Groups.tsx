@@ -14,6 +14,85 @@ import { useToast } from '../lib/toast'
 
 const BASE_URL = (import.meta.env.VITE_API_URL as string) || '/api'
 
+/* ─── WhatsApp group as a source ────────────── */
+function WhatsAppSourceModal({ isOpen, onClose, onSaved }: { isOpen: boolean; onClose: () => void; onSaved: (warning?: string) => void }) {
+  const [opts, setOpts] = useState<Awaited<ReturnType<typeof api.getWhatsAppSourceOptions>> | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [filter, setFilter] = useState('')
+  const [pick, setPick] = useState<{ jid: string; name: string; via: string[]; viaInstances: string[] } | null>(null)
+  const [name, setName] = useState('')
+  const [reader, setReader] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (!isOpen) return
+    setOpts(null); setError(null); setPick(null); setFilter('')
+    api.getWhatsAppSourceOptions().then(setOpts).catch((err) => setError(err instanceof Error ? err.message : 'Erro ao buscar os grupos'))
+  }, [isOpen])
+
+  const choose = (g: { jid: string; name: string; via: string[]; viaInstances: string[] }) => {
+    setPick(g); setName(g.name); setReader(g.viaInstances[0] ?? '')
+  }
+  const save = async () => {
+    if (!pick) return
+    setSaving(true); setError(null)
+    try {
+      const r = await api.createWhatsAppSourceGroup({ jid: pick.jid, name: name.trim() || pick.name, readerInstance: reader })
+      onSaved(r.warning); onClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao cadastrar')
+    } finally {
+      setSaving(false)
+    }
+  }
+  const list = (opts?.groups ?? []).filter((g) => !filter.trim() || g.name.toLowerCase().includes(filter.trim().toLowerCase()))
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="Adicionar grupo do WhatsApp como fonte" width={620}
+      footer={<><button className="btn btn-ghost" onClick={onClose}>Cancelar</button><button className="btn btn-primary" onClick={save} disabled={!pick || !reader || saving}>{saving ? <span className="spinner spinner-sm" /> : null} Adicionar</button></>}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+          As mensagens desse grupo passam pelo mesmo processo do Telegram: troca dos links pelos seus de afiliado, foto do produto no mockup e envio para os grupos destino vinculados.
+          O sistema só <strong>lê</strong> o grupo pelo número escolhido — não manda nada lá.
+        </div>
+        {error && <div className="alert alert-error"><div>{error}</div></div>}
+        {!opts && !error ? <Skeleton height={160} /> : opts && (
+          <>
+            <input className="input" placeholder="Buscar grupo…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+            <div style={{ maxHeight: 280, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {list.length === 0 && <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Nenhum grupo encontrado nos números conectados.</div>}
+              {list.map((g) => (
+                <button key={g.jid} type="button" disabled={g.alreadySource}
+                  className={`btn btn-sm ${pick?.jid === g.jid ? 'btn-primary' : 'btn-secondary'}`}
+                  style={{ justifyContent: 'space-between', textAlign: 'left' }}
+                  onClick={() => choose(g)}>
+                  <span>{g.name}{g.alreadySource ? ' (já é fonte)' : ''}</span>
+                  <span style={{ fontSize: '0.72rem', opacity: 0.8 }}>{g.size ? `${g.size} membros · ` : ''}{g.via.join(', ')}</span>
+                </button>
+              ))}
+            </div>
+            {opts.errors.length > 0 && <div style={{ fontSize: '0.74rem', color: 'var(--accent-warning)' }}>Não consegui ler: {opts.errors.join(' · ')}</div>}
+          </>
+        )}
+        {pick && (
+          <div className="grid-2">
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="label">Nome no painel</label>
+              <input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={100} />
+            </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="label">Ler pelo número</label>
+              <select className="input" value={reader} onChange={(e) => setReader(e.target.value)}>
+                {pick.viaInstances.map((n, i) => <option key={n} value={n}>{pick.via[i] ?? n}</option>)}
+              </select>
+            </div>
+          </div>
+        )}
+      </div>
+    </Modal>
+  )
+}
+
 /* ─── Link Destinations Modal ────────────── */
 interface LinkDestinationsModalProps {
   isOpen: boolean
@@ -1142,6 +1221,7 @@ export default function Groups() {
   const [showAddSrc, setShowAddSrc] = useState(false)
   const [showAddDest, setShowAddDest] = useState(false)
   const [editingSource, setEditingSource] = useState<SourceGroup | null>(null)
+  const [showAddWa, setShowAddWa] = useState(false)
   const [editingDest, setEditingDest] = useState<DestinationGroup | null>(null)
   const [showAddNiche, setShowAddNiche] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
@@ -1165,7 +1245,7 @@ export default function Groups() {
         api.getNiches(),
       ])
       // The virtual source behind a niche's Shopee search is managed in Busca Shopee, not here.
-      setSourceGroups(src.filter((g) => (g.kind ?? 'TELEGRAM') === 'TELEGRAM'))
+      setSourceGroups(src.filter((g) => (g.kind ?? 'TELEGRAM') !== 'SHOPEE'))
       setDestGroups(dest)
       setNiches(nch)
       setLoadingNiches(false)
@@ -1319,6 +1399,14 @@ export default function Groups() {
 
   return (
     <div style={{ animation: 'fadeIn 0.3s ease' }}>
+      <WhatsAppSourceModal
+        isOpen={showAddWa}
+        onClose={() => setShowAddWa(false)}
+        onSaved={(warning) => {
+          fetchAll()
+          addToast(warning ?? 'Grupo do WhatsApp adicionado! Vincule os grupos destino no 🔗.', warning ? 'error' : 'success')
+        }}
+      />
       <SourceGroupModal
         isOpen={showAddSrc || editingSource !== null}
         editing={editingSource}
@@ -1464,12 +1552,15 @@ export default function Groups() {
           <h2 className="section-title" style={{ marginBottom: 0 }}>
             📡 Grupos Fonte (Origem)
           </h2>
-          <button
-            className="btn btn-primary btn-sm"
-            onClick={() => setShowAddSrc(true)}
-          >
-            + Adicionar
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-secondary btn-sm" onClick={() => setShowAddWa(true)}>+ Grupo do WhatsApp</button>
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={() => setShowAddSrc(true)}
+            >
+              + Telegram
+            </button>
+          </div>
         </div>
 
         {loadingSrc ? (
@@ -1483,7 +1574,7 @@ export default function Groups() {
             <span className="empty-state-icon">📡</span>
             <span className="empty-state-title">Nenhum grupo fonte</span>
             <span className="empty-state-desc">
-              Adicione grupos do Telegram para monitorar.
+              Adicione grupos do Telegram ou do WhatsApp para monitorar.
             </span>
           </div>
         ) : (
@@ -1493,7 +1584,7 @@ export default function Groups() {
                 <tr>
                   <th>Nome</th>
                   <th>Username</th>
-                  <th>Telegram ID</th>
+                  <th>Origem</th>
                   <th>Nicho</th>
                   <th>Destinos vinculados</th>
                   <th>Status</th>
@@ -1512,7 +1603,9 @@ export default function Groups() {
                       )}
                     </td>
                     <td>
-                      <span className="mono">{g.telegramId}</span>
+                      {g.kind === 'WHATSAPP'
+                        ? <span className="badge badge-whatsapp" title={g.whatsappJid ?? ''}>WhatsApp</span>
+                        : <span className="mono">{g.telegramId}</span>}
                     </td>
                     <td>
                       <select
@@ -1568,13 +1661,15 @@ export default function Groups() {
                     </td>
                     <td>
                       <div style={{ display: 'flex', gap: 6 }}>
-                        <button
-                          className="icon-btn"
-                          onClick={() => setEditingSource(g)}
-                          title="Editar"
-                        >
-                          ✏️
-                        </button>
+                        {g.kind !== 'WHATSAPP' && (
+                          <button
+                            className="icon-btn"
+                            onClick={() => setEditingSource(g)}
+                            title="Editar"
+                          >
+                            ✏️
+                          </button>
+                        )}
                         <button
                           className="icon-btn danger"
                           onClick={() => deleteSource(g.id)}

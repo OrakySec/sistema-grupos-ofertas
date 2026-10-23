@@ -206,7 +206,7 @@ export async function groupsOfConnectedNumbers(tenantId: string) {
   const instances = await prisma.whatsAppInstance.findMany({ where: { tenantId, connected: true }, orderBy: { createdAt: 'asc' } });
   const registered = await prisma.destinationGroup.findMany({ where: { type: 'WHATSAPP' }, select: { id: true, chatId: true } });
   const regByJid = new Map(registered.map((r) => [r.chatId, r.id]));
-  const map = new Map<string, { jid: string; name: string; size: number | null; announce: boolean; via: string[]; registeredId: string | null }>();
+  const map = new Map<string, { jid: string; name: string; size: number | null; announce: boolean; via: string[]; viaInstances: string[]; registeredId: string | null }>();
   const errors: string[] = [];
   await Promise.all(instances.map(async (inst) => {
     const r = await fetchAllGroups(inst.name, 90000);
@@ -217,9 +217,10 @@ export async function groupsOfConnectedNumbers(tenantId: string) {
       if (!jid.endsWith('@g.us') || g?.isCommunity) continue; // a community's parent has no members of its own
       const row = map.get(jid) ?? {
         jid, name: String(g?.subject ?? jid), size: Number.isFinite(Number(g?.size)) ? Number(g.size) : null,
-        announce: !!g?.isCommunityAnnounce, via: [], registeredId: regByJid.get(jid) ?? null,
+        announce: !!g?.isCommunityAnnounce, via: [], viaInstances: [], registeredId: regByJid.get(jid) ?? null,
       };
       if (!row.via.includes(inst.label)) row.via.push(inst.label);
+      if (!row.viaInstances.includes(inst.name)) row.viaInstances.push(inst.name);
       map.set(jid, row);
     }
   }));

@@ -379,8 +379,9 @@ async def _make_message_handler(http_session: aiohttp.ClientSession):
         message = event.message
         chat_id = event.chat_id  # may be negative for groups/channels
 
-        # Resolve the UUID for this group
-        uuid = state.source_groups.get(chat_id)
+        # Resolve the UUID for this group (WhatsApp messages, from
+        # POST /whatsapp/message, carry their source group directly).
+        uuid = getattr(event, "source_uuid", None) or state.source_groups.get(chat_id)
         if uuid is None:
             # Try with the positive form (some channels use positive IDs internally)
             uuid = state.source_groups.get(abs(chat_id))
@@ -391,7 +392,7 @@ async def _make_message_handler(http_session: aiohttp.ClientSession):
         # Per-niche overrides for this source group (ml_own_list_url / mockup
         # template) — empty dict when the group has no custom config, which
         # falls back to the exact behavior that existed before niches.
-        group_config = state.source_group_configs.get(uuid, {})
+        group_config = getattr(event, "source_config", None) or state.source_group_configs.get(uuid, {})
 
         # Live update and catch-up poller can both see the same message; only
         # the first one gets to process it.
@@ -1127,6 +1128,50 @@ async def route_ml_session_upload(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=500)
 
 
+async def route_whatsapp_message(request: web.Request) -> web.Response:
+    """
+    POST /whatsapp/message { sourceGroupId, chatId, messageId, text, senderName, timestamp, niche }
+    A message from a WhatsApp source group — the API gets it from the
+    Evolution/WAHA webhook. It goes through the same pipeline as a Telegram
+    message (affiliate conversion, product mockup, word strip → offer). Text
+    only: the offer photo always comes from the product page anyway.
+    """
+    if request.headers.get("X-Internal-Key") != INTERNAL_TOKEN:
+        return web.json_response({"error": "Unauthorized"}, status=401)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+    uuid = body.get("sourceGroupId")
+    text = (body.get("text") or "").strip()
+    try:
+        chat_id = int(body.get("chatId"))
+        message_id = int(body.get("messageId"))
+    except (TypeError, ValueError):
+        return web.json_response({"error": "chatId and messageId must be integers"}, status=400)
+    if not uuid or not text:
+        return web.json_response({"error": "sourceGroupId and text are required"}, status=400)
+
+    ts = body.get("timestamp")
+    date = datetime.fromtimestamp(int(ts), tz=timezone.utc) if ts else datetime.now(timezone.utc)
+    sender = SimpleNamespace(first_name=str(body.get("senderName") or ""), last_name="", username=None, id="whatsapp")
+
+    async def get_sender():
+        return sender
+
+    # Shaped like a Telethon NewMessage event, so the Telegram handler runs as is.
+    event = SimpleNamespace(
+        message=SimpleNamespace(id=message_id, message=text, media=None, date=date),
+        chat_id=chat_id,
+        get_sender=get_sender,
+        source_uuid=str(uuid),
+        source_config=_extract_niche_config({"niche": body.get("niche")}),
+    )
+    handler = await _make_message_handler(request.app["http_session"])
+    asyncio.create_task(handler(event))
+    return web.json_response({"ok": True})
+
+
 async def route_hunter_image(request: web.Request) -> web.Response:
     """
     POST /hunter/image { image_url, template: {template_path, box, corner_radius} | null, name }
@@ -1304,6 +1349,7 @@ def build_app() -> web.Application:
     app.router.add_post("/shopee/test", route_shopee_test)
     app.router.add_post("/hunter/image", route_hunter_image)
     app.router.add_post("/resolve", route_resolve)
+    app.router.add_post("/whatsapp/message", route_whatsapp_message)
 
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)

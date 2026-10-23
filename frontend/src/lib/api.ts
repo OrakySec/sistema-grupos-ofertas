@@ -145,8 +145,11 @@ export interface Niche {
 
 export interface SourceGroup {
   id: string
-  // TELEGRAM = real channel; SHOPEE = virtual source of a niche's automatic search
-  kind?: 'TELEGRAM' | 'SHOPEE'
+  // TELEGRAM = real channel; SHOPEE = virtual source of a niche's automatic search;
+  // WHATSAPP = a WhatsApp group read through one of the connected numbers
+  kind?: 'TELEGRAM' | 'SHOPEE' | 'WHATSAPP'
+  whatsappJid?: string | null
+  readerInstance?: string | null
   name: string
   username?: string | null
   telegramId: string
@@ -817,6 +820,15 @@ class ApiClient {
     username?: string
   }): Promise<SourceGroup> {
     return this.request('POST', '/groups/source', data)
+  }
+
+  // WhatsApp groups the connected numbers are in, to register as sources
+  async getWhatsAppSourceOptions(): Promise<{ groups: Array<{ jid: string; name: string; size: number | null; via: string[]; viaInstances: string[]; alreadySource: boolean }>; errors: string[] }> {
+    return this.request('GET', '/groups/source/whatsapp-options')
+  }
+
+  async createWhatsAppSourceGroup(data: { jid: string; name: string; readerInstance: string }): Promise<SourceGroup & { warning?: string }> {
+    return this.request('POST', '/groups/source/whatsapp', data)
   }
 
   async updateSourceGroup(

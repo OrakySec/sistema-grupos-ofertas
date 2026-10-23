@@ -25,7 +25,8 @@ export { instanceNameFor };
 
 /** Points the instance's (single) webhook at us. Best-effort: returns an error text instead of throwing. */
 export async function registerWebhook(name: string, purpose: string): Promise<string | null> {
-  const events = webhookEvents(purpose);
+  const { readsSourceGroups } = await import('./waSourceGroups');
+  const events = webhookEvents(purpose, await readsSourceGroups(name));
   if ((await providerOf(name)) === 'WAHA') return setSessionWebhook(name, events);
   const r = await evo('POST', `/webhook/set/${name}`, {
     webhook: {

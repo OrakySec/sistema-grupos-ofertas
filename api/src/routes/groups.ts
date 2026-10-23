@@ -2,6 +2,9 @@ import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import axios from 'axios';
 import { requireAuth } from '../middleware/auth';
 import prisma from '../lib/prisma';
+import { tenantIdOf } from '../lib/tenant';
+import { groupsOfConnectedNumbers } from '../lib/leadBlocks';
+import { ensureGroupReader, forgetSourceCache, syntheticTelegramId } from '../lib/waSourceGroups';
 
 const TELEGRAM_LISTENER_URL = process.env.TELEGRAM_LISTENER_URL ?? 'http://telegram-listener:8080';
 
@@ -136,6 +139,35 @@ export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
     },
   );
 
+  // GET /groups/source/whatsapp-options — every WhatsApp group the connected numbers are in
+  fastify.get('/source/whatsapp-options', async (request) => {
+    const r = await groupsOfConnectedNumbers(tenantIdOf(request));
+    const taken = new Set((await prisma.sourceGroup.findMany({ where: { kind: 'WHATSAPP' }, select: { whatsappJid: true } })).map((g) => g.whatsappJid));
+    return { ...r, groups: r.groups.map((g) => ({ ...g, alreadySource: taken.has(g.jid) })) };
+  });
+
+  // POST /groups/source/whatsapp { jid, name, readerInstance } — a WhatsApp group as an offer source
+  fastify.post<{ Body: { jid?: string; name?: string; readerInstance?: string } }>('/source/whatsapp', async (request, reply) => {
+    const jid = String(request.body?.jid ?? '').trim();
+    if (!jid.endsWith('@g.us')) return reply.code(400).send({ message: 'Escolha um grupo de WhatsApp da lista.' });
+    const reader = await prisma.whatsAppInstance.findFirst({ where: { name: String(request.body?.readerInstance ?? ''), tenantId: tenantIdOf(request) } });
+    if (!reader) return reply.code(400).send({ message: 'Escolha por qual número conectado o sistema vai ler esse grupo.' });
+    const existing = await prisma.sourceGroup.findUnique({ where: { whatsappJid: jid } });
+    if (existing) return reply.code(409).send({ message: `Esse grupo já está cadastrado como "${existing.name}".` });
+    const name = String(request.body?.name ?? '').trim().slice(0, 100) || 'Grupo do WhatsApp';
+    const group = await prisma.sourceGroup.create({
+      data: { kind: 'WHATSAPP', telegramId: syntheticTelegramId(jid), whatsappJid: jid, readerInstance: reader.name, name },
+      include: { niche: true },
+    });
+    forgetSourceCache();
+    const err = await ensureGroupReader(reader.name);
+    if (err) request.log.warn({ reader: reader.name, err }, 'WhatsApp source group: reader not fully set up');
+    return reply.code(201).send({
+      ...group, telegramId: group.telegramId.toString(),
+      warning: err ? `O grupo foi cadastrado, mas não consegui ligar a leitura de mensagens no número "${reader.label}": ${err}` : undefined,
+    });
+  });
+
   // PATCH /groups/source/:id
   fastify.patch<{ Params: { id: string }; Body: UpdateSourceGroupBody }>(
     '/source/:id',
@@ -199,6 +231,11 @@ export const groupsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
         data,
         include: { niche: true },
       });
+      if (updated.kind === 'WHATSAPP') {
+        forgetSourceCache();
+        // Turned back on: make sure its number still delivers group messages.
+        if (rest.isActive === true && updated.readerInstance) await ensureGroupReader(updated.readerInstance).catch(() => null);
+      }
       return reply.send({ ...updated, telegramId: updated.telegramId.toString(), warning });
     },
   );

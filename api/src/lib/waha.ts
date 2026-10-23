@@ -92,7 +92,7 @@ async function webhookConfig(events: string[]) {
   };
 }
 
-export const WAHA_EVENTS = { connection: 'session.status', participants: 'group.v2.participants' } as const;
+export const WAHA_EVENTS = { connection: 'session.status', participants: 'group.v2.participants', message: 'message' } as const;
 
 async function getSession(name: string) {
   return waha('GET', `/api/sessions/${enc(name)}`, undefined, 15000);
@@ -222,11 +222,13 @@ function toWahaEvent(e: string) {
   const k = e.replace(/[._-]/g, '').toLowerCase();
   if (k === 'connectionupdate') return WAHA_EVENTS.connection;
   if (k === 'groupparticipantsupdate') return WAHA_EVENTS.participants;
+  if (k === 'messagesupsert') return WAHA_EVENTS.message;
   return e;
 }
 function fromWahaEvent(e: string) {
   if (e === WAHA_EVENTS.connection) return 'CONNECTION_UPDATE';
   if (e === WAHA_EVENTS.participants) return 'GROUP_PARTICIPANTS_UPDATE';
+  if (e === WAHA_EVENTS.message) return 'MESSAGES_UPSERT';
   return e;
 }
 

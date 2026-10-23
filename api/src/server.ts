@@ -22,6 +22,7 @@ import { whatsappRoutes } from './routes/whatsapp';
 import { leadsRoutes, leadsIntakeRoutes } from './routes/leads';
 import { isConnectionEvent, recordConnectionUpdate, recordWahaStatus } from './lib/whatsappNumbers';
 import { isWahaWebhook, WAHA_EVENTS, wahaParticipantsToEvo, wahaStatusToEvo } from './lib/waha';
+import { handleGroupMessage, parseEvolutionUpsert, parseWahaMessage } from './lib/waSourceGroups';
 import { recordMembershipFromWebhook } from './lib/leadBlocks';
 import { recordCouponMessage } from './lib/coupons';
 import { parseCookies, resolveFbc, resolveFbp, sendViewContent, COOKIE_MAX_AGE_S } from './lib/metaCapi';
@@ -222,6 +223,10 @@ async function buildApp() {
             .then((r) => server.log.info({ result: r }, 'WhatsApp participants update recorded (WAHA)'))
             .catch((err) => server.log.error({ err }, 'Failed to record WhatsApp participants update'));
         }
+      } else if (w.event === WAHA_EVENTS.message) {
+        // A message in a group one of our numbers reads → maybe an offer from a WhatsApp source group.
+        handleGroupMessage(parseWahaMessage(w.session, w.payload))
+          .catch((err) => server.log.error({ err }, 'Failed to handle WhatsApp source message (WAHA)'));
       }
       return reply.send({ ok: true });
     }
@@ -236,6 +241,10 @@ async function buildApp() {
       recordParticipantsUpdate(body?.data)
         .then((r) => server.log.info({ result: r }, 'WhatsApp participants update recorded'))
         .catch((err) => server.log.error({ err }, 'Failed to record WhatsApp participants update'));
+    } else if (String(body?.event ?? '').replace(/[._-]/g, '').toLowerCase() === 'messagesupsert') {
+      // A message in a group one of our numbers reads → maybe an offer from a WhatsApp source group.
+      handleGroupMessage(parseEvolutionUpsert(body?.instance, body?.data))
+        .catch((err) => server.log.error({ err }, 'Failed to handle WhatsApp source message'));
     }
     return reply.send({ ok: true });
   });

@@ -54,9 +54,29 @@ const enc = encodeURIComponent;
 
 // ── Connection ──────────────────────────────────────────────────────────────
 
-/** Events of our webhook, by the number's role (Evolution names; translated for WAHA). */
-export function webhookEvents(purpose: string): string[] {
-  return ['CONNECTION_UPDATE', ...(purpose === 'OFFERS' ? ['GROUP_PARTICIPANTS_UPDATE'] : [])];
+/**
+ * Events of our webhook, by the number's role (Evolution names; translated for WAHA).
+ * readsGroups: the number reads WhatsApp source groups → it also sends its messages.
+ */
+export function webhookEvents(purpose: string, readsGroups = false): string[] {
+  return ['CONNECTION_UPDATE', ...(purpose === 'OFFERS' ? ['GROUP_PARTICIPANTS_UPDATE'] : []), ...(readsGroups ? ['MESSAGES_UPSERT'] : [])];
+}
+
+/**
+ * Lets the number receive group messages. Our Evolution instances are created
+ * with groupsIgnore: true; WAHA delivers group messages by default.
+ */
+export async function allowGroupMessages(name: string): Promise<string | null> {
+  if (await isWaha(name)) return null;
+  const cur = await evolution.evo('GET', `/settings/find/${name}`, undefined, 15000);
+  if (cur.ok && cur.data && cur.data.groupsIgnore === false) return null;
+  const base = cur.ok && cur.data && typeof cur.data === 'object' ? cur.data : {};
+  const r = await evolution.evo('POST', `/settings/set/${name}`, {
+    rejectCall: !!base.rejectCall, msgCall: base.msgCall ?? '', alwaysOnline: !!base.alwaysOnline,
+    readMessages: !!base.readMessages, readStatus: !!base.readStatus, syncFullHistory: !!base.syncFullHistory,
+    groupsIgnore: false,
+  }, 15000);
+  return r.ok ? null : `settings/set falhou (HTTP ${r.status}): ${JSON.stringify(r.data).slice(0, 200)}`;
 }
 
 export async function createWithQr(name: string, purpose: string, provider?: Provider) {
