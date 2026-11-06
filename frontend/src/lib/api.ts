@@ -1063,6 +1063,29 @@ class ApiClient {
     return this.request('PUT', '/ads/taxes', data)
   }
 
+  // ── Product finder (Tráfego pago → Produtos para anúncio) ──
+  async getFinderSettings(): Promise<FinderInfo> {
+    return this.request('GET', '/ads/finder/settings')
+  }
+
+  async saveFinderSettings(data: { terms?: string; cpc?: number; cvrPct?: number; filters?: Partial<FinderFilters> }): Promise<FinderSettings> {
+    return this.request('PUT', '/ads/finder/settings', data)
+  }
+
+  async runFinderScan(): Promise<{ queued: boolean; running?: boolean }> {
+    return this.request('POST', '/ads/finder/scan', {})
+  }
+
+  async getFinderProducts(params: Partial<FinderFilters> & { cpc?: number; cvrPct?: number }): Promise<FinderResult> {
+    const qs = new URLSearchParams()
+    for (const [k, v] of Object.entries(params)) qs.set(k, v === null || v === undefined ? '' : String(v))
+    return this.request('GET', `/ads/finder/products?${qs.toString()}`)
+  }
+
+  async getTestedProducts(): Promise<{ rows: TestedProduct[]; real: FinderReal }> {
+    return this.request('GET', '/ads/finder/tested')
+  }
+
   async addManualSpend(data: { subCode: string; startDate: string; endDate: string; amount: number; note?: string }): Promise<unknown> {
     return this.request('POST', '/ads/manual-spend', data)
   }
@@ -1375,4 +1398,112 @@ export interface SalesAnalysis {
   taxes: { metaTaxPct: number; revenueTaxPct: number }
   hasItemDetail: boolean
   lastSync: { at?: string; error?: string; days?: number; fields?: string } | null
+}
+
+// ── Product finder ──
+export interface FinderFilters {
+  minPrice: number | null
+  maxPrice: number | null
+  minCommission: number | null
+  maxCommission: number | null
+  minRating: number
+  minSales: number
+  minSalesPerDay: number
+  exclude: string
+  officialOnly: boolean
+  onlyProfitable: boolean
+  q: string
+  sort: 'salesPerDay' | 'sales' | 'commission' | 'profit' | 'trend'
+}
+
+export interface FinderSettings {
+  terms: string[]
+  cpc: number
+  cvrPct: number
+  filters: FinderFilters
+}
+
+export interface FinderScan {
+  at?: string
+  startedAt?: string
+  running?: boolean
+  calls?: number
+  found?: number
+  saved?: number
+  fields?: string
+  errors?: string[]
+}
+
+export interface FinderReal {
+  days: number
+  cpc: number | null
+  cpcClicks: number
+  cvrPct: number | null
+  cvrClicks: number
+  day1Orders: number
+  day1PerClick: number | null
+}
+
+export interface FinderInfo {
+  settings: FinderSettings
+  defaults: FinderSettings
+  taxes: { metaTaxPct: number; revenueTaxPct: number }
+  scan: FinderScan
+  real: FinderReal
+  breakEvenCommission: number | null
+}
+
+export interface FinderProduct {
+  id: string
+  itemId: string
+  shopId: string
+  name: string
+  imageUrl: string | null
+  link: string
+  shopName: string | null
+  isOfficial: boolean
+  rating: number | null
+  price: number
+  commission: number
+  commissionPct: number | null
+  sales: number | null
+  salesPerDay: number | null
+  trend: number | null
+  maxCpc: number
+  profitPer100: number | null
+  tested: boolean
+  seenAt: string
+}
+
+export interface FinderResult {
+  filters: FinderFilters
+  assumptions: { cpc: number; cvrPct: number; metaTaxPct: number; revenueTaxPct: number }
+  breakEvenCommission: number | null
+  total: number
+  items: FinderProduct[]
+  catalog: number
+  withRate: number
+  scan: FinderScan
+}
+
+export interface TestedProduct {
+  itemId: string | null
+  name: string
+  imageUrl: string | null
+  price: number | null
+  commissionNow: number | null
+  links: number
+  ads: number
+  since: string
+  spend: number
+  cost: number
+  clicks: number
+  cpc: number | null
+  orders: number
+  day1Orders: number
+  commission: number
+  day1Commission: number
+  day1CvrPct: number | null
+  day1Profit: number
+  profit: number
 }

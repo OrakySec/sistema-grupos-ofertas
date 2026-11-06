@@ -313,11 +313,36 @@ model ShopeeProduct {
   lastDiscountPct Float?
   lastSeenAt      DateTime @default(now())
   createdAt       DateTime @default(now())
+  // Product finder (lib/productFinder.ts)
+  commissionValue Float? // R$ per sale as Shopee reports it ("commission"), when it does
+  categoryIds     String? // productCatIds, comma-separated
+  salesPerDay     Float? // from the daily snapshots; null until two readings ~1 day apart
+  salesTrend      Float? // sales/day of the last ~2 days ÷ sales/day of the week (1 = steady)
+  finderSeenAt    DateTime? // last time the finder's own scan returned it
 
   prices     ShopeePricePoint[]
   candidates HunterCandidate[]
+  snapshots  ShopeeSalesSnapshot[]
 
   @@unique([shopId, itemId])
+  @@index([finderSeenAt])
+}
+
+// One reading a day of a product's total "sales" count. Shopee only gives the
+// lifetime total, so two readings a day apart give sales per day.
+model ShopeeSalesSnapshot {
+  id            String   @id @default(cuid())
+  productId     String
+  day           String // YYYY-MM-DD (Brasília)
+  at            DateTime @default(now())
+  sales         Int
+  price         Float
+  commissionPct Float?
+
+  product ShopeeProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, day])
+  @@index([at])
 }
 
 model ShopeePricePoint {

@@ -72,8 +72,12 @@ function filtersOf(h: Hunter): HunterFilters {
 
 // ── Search ──────────────────────────────────────────────────────────────────
 
-async function upsertProduct(p: ShopeeProductOffer) {
+/** Saves the product's latest numbers, a price point and today's sales reading. Shared with the product finder. */
+export async function upsertProduct(p: ShopeeProductOffer, extra: { finderSeenAt?: Date } = {}) {
   const data = {
+    ...(p.commissionValue !== null && { commissionValue: p.commissionValue }),
+    ...(p.categoryIds !== null && { categoryIds: p.categoryIds.join(',') }),
+    ...extra,
     name: p.name,
     imageUrl: p.imageUrl,
     productLink: p.productLink,
@@ -97,6 +101,16 @@ async function upsertProduct(p: ShopeeProductOffer) {
   const last = await prisma.shopeePricePoint.findFirst({ where: { productId: product.id }, orderBy: { createdAt: 'desc' } });
   if (!last || Math.abs(last.price - p.priceMin) > 0.009 || Date.now() - last.createdAt.getTime() > 6 * 3600000) {
     await prisma.shopeePricePoint.create({ data: { productId: product.id, price: p.priceMin, discountPct: p.discountPct } });
+  }
+  // One sales reading per Brasília day (the latest of the day wins) → sales per day.
+  if (p.sales !== null) {
+    const day = toBrt(new Date()).toISOString().slice(0, 10);
+    const reading = { sales: Math.round(p.sales), price: p.priceMin, commissionPct: p.commissionPct, at: new Date() };
+    await prisma.shopeeSalesSnapshot.upsert({
+      where: { productId_day: { productId: product.id, day } },
+      update: reading,
+      create: { ...reading, productId: product.id, day },
+    });
   }
   return product;
 }
@@ -276,6 +290,7 @@ export async function createOfferFromCandidate(candidateId: string, approved: bo
     itemId: p.itemId, shopId: p.shopId, name: p.name, imageUrl: p.imageUrl, productLink: p.productLink, offerLink: p.offerLink,
     shopName: p.shopName, isOfficial: p.isOfficial, priceMin: c.price, priceMax: Math.max(p.lastPriceMax ?? c.price, c.price),
     discountPct: p.lastDiscountPct, rating: p.ratingStar, sales: p.sales, commissionPct: p.commissionPct,
+    commissionValue: p.commissionValue, categoryIds: null,
   };
   const coupon = c.hunter.useCoupons && (await couponsEnabled()) ? await bestCouponFor(c.price) : null;
   if (coupon) log.push({ ts: new Date().toISOString(), step: 'coupon', status: 'ok', label: 'Cupom', detail: `${coupon.code}: ${c.price.toFixed(2)} → ${coupon.finalPrice.toFixed(2)}` });

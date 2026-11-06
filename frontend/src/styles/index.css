@@ -1708,6 +1708,7 @@ code {
 .font-semibold { font-weight: 600; }
 .font-medium { font-weight: 500; }
 .tabular { font-variant-numeric: tabular-nums; }
+th.num, td.num { text-align: right; }
 
 .text-sm { font-size: 0.875rem; }
 .text-xs { font-size: 0.75rem; }

@@ -12,6 +12,8 @@ import { createShortUrl } from '../lib/shortener';
 import { sendViewContent } from '../lib/metaCapi';
 import { salesAnalysis, taxConfig } from '../lib/salesAnalysis';
 import { tenantIdOf } from '../lib/tenant';
+import { finderSettings, saveFinderSettings, finderProducts, testedProducts, scanState, markScanQueued, DEFAULT_SETTINGS, breakEvenCommission } from '../lib/productFinder';
+import { linkMonitorQueue } from '../lib/queue';
 
 const LEVELS = ['CAMPAIGN', 'ADSET', 'AD'] as const;
 const DAY_MS = 86400000;
@@ -432,6 +434,37 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
       }),
     };
   });
+
+  // ── Product finder (lib/productFinder.ts) ─────────────────────────────────
+
+  fastify.get('/finder/settings', async (request) => {
+    const tenantId = tenantIdOf(request);
+    const [settings, taxes, scan, tested] = await Promise.all([finderSettings(tenantId), taxConfig(), scanState(), testedProducts(30)]);
+    const a = { cpc: settings.cpc, cvrPct: settings.cvrPct, ...taxes };
+    return { settings, defaults: DEFAULT_SETTINGS, taxes, scan, real: tested.real, breakEvenCommission: breakEvenCommission(a) };
+  });
+
+  fastify.put<{ Body: { terms?: string | string[]; cpc?: number; cvrPct?: number; filters?: Record<string, unknown> } }>('/finder/settings', async (request, reply) => {
+    try {
+      return await saveFinderSettings(tenantIdOf(request), request.body ?? {});
+    } catch (err) {
+      return reply.code(400).send({ message: err instanceof Error ? err.message : 'Valores inválidos' });
+    }
+  });
+
+  fastify.post('/finder/scan', async (request, reply) => {
+    const s = await scanState();
+    if (s.running && s.startedAt && Date.now() - Date.parse(s.startedAt) < 15 * 60000) return { queued: false, running: true };
+    const creds = await prisma.setting.count({ where: { key: { in: ['shopee_app_id', 'shopee_app_secret'] }, value: { not: '' } } });
+    if (creds < 2) return reply.code(400).send({ message: 'Configure o App ID e o Secret da Shopee (Configurações → Links de Afiliado)' });
+    await markScanQueued();
+    await linkMonitorQueue.add('product-finder-scan', {}, { removeOnComplete: true });
+    return { queued: true };
+  });
+
+  fastify.get<{ Querystring: Record<string, string> }>('/finder/products', async (request) => finderProducts(tenantIdOf(request), request.query ?? {}));
+
+  fastify.get('/finder/tested', async () => testedProducts(30));
 
   // ── Ad links ──────────────────────────────────────────────────────────────
 

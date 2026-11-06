@@ -4,7 +4,8 @@ import prisma from './lib/prisma';
 import { addSendOfferJob, scheduleLinkMonitor, scheduleSilentGroupCheck, scheduleMemberSnapshot, scheduleShopeeHunter } from './lib/queue';
 import { hunterTick } from './lib/shopeeHunter';
 import { expireCoupons } from './lib/coupons';
-import { scheduleAdsSync, scheduleLeadsTick } from './lib/queue';
+import { scheduleAdsSync, scheduleLeadsTick, scheduleProductFinder } from './lib/queue';
+import { finderTick } from './lib/productFinder';
 import { leadsTick } from './lib/leadQueue';
 import { autoReconnect } from './lib/autoReconnect';
 import { checkManualJoins } from './lib/leadManual';
@@ -571,6 +572,10 @@ const linkMonitorWorker = new Worker(
       await expireCoupons();
       const results = await hunterTick();
       if (results.length) console.log('[Worker] Shopee search:', JSON.stringify(results));
+    } else if (job.name === 'product-finder-tick' || job.name === 'product-finder-scan') {
+      // The tick scans when the last scan is 6 h old; the panel's button forces one.
+      const r = await finderTick(job.name === 'product-finder-scan');
+      if (r) console.log('[Worker] Product finder scan:', JSON.stringify({ calls: r.calls, found: r.found, saved: r.saved, errors: r.errors }));
     } else if (job.name === 'snapshot-wa-members') {
       const results = await snapshotWhatsAppGroups();
       console.log('[Worker] WhatsApp member snapshot:', JSON.stringify(results));
@@ -663,6 +668,10 @@ scheduleMemberSnapshot().catch((err) => {
 
 scheduleShopeeHunter().catch((err) => {
   console.error('[Worker] Failed to schedule Shopee search job:', err);
+});
+
+scheduleProductFinder().catch((err) => {
+  console.error('[Worker] Failed to schedule product finder job:', err);
 });
 
 scheduleAdsSync().catch((err) => {

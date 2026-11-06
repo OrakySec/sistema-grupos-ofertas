@@ -169,12 +169,12 @@ export function itemsOf(node: any, key: string, base: { purchaseTime: Date; clic
 }
 
 /** `Cannot query field "referrer" on type …` → "referrer". */
-function unknownField(err: unknown): string | null {
+export function unknownField(err: unknown): string | null {
   const m = /cannot query field ["'`]?(\w+)["'`]?/i.exec(String(err));
   return m ? m[1] : null;
 }
 
-const dropField = (fields: string, name: string) => fields.replace(new RegExp(`\\b${name}\\b`, 'g'), ' ').replace(/[ \t]+/g, ' ');
+export const dropField = (fields: string, name: string) => fields.replace(new RegExp(`\\b${name}\\b`, 'g'), ' ').replace(/[ \t]+/g, ' ');
 
 export async function syncShopeeConversions(days = 30): Promise<{ nodes: number; saved: number; days?: number; fields?: string; error?: string }> {
   // History for the reports: the first successful run pulls 90 days.

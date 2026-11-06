@@ -83,6 +83,10 @@ export interface ShopeeProductOffer {
   rating: number | null;
   sales: number | null;
   commissionPct: number | null;
+  /** R$ per sale as Shopee reports it — only when the query asked for "commission". */
+  commissionValue: number | null;
+  /** productCatIds, when asked for. */
+  categoryIds: string[] | null;
 }
 
 const num = (v: unknown): number | null => {
@@ -114,6 +118,8 @@ export function parseProductNode(n: any): ShopeeProductOffer | null {
     sales: num(n.sales),
     // Comes as a fraction ("0.08") — tolerate a percentage too.
     commissionPct: commission === null ? null : commission <= 1 ? commission * 100 : commission,
+    commissionValue: (() => { const v = num(n.commission); return v !== null && v > 0 ? v : null; })(),
+    categoryIds: Array.isArray(n.productCatIds) ? n.productCatIds.map(String) : null,
   };
 }
 
