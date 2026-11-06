@@ -91,32 +91,6 @@ function profitPer100(commission: number, cpc: number | null, cvrPct: number | n
   return Math.round(((100 / cpc) * perClick - 100 * factor) * 100) / 100
 }
 
-/* ─── Terms ─── */
-function TermsModal({ terms, defaults, onClose, onSaved }: { terms: string[]; defaults: string[]; onClose: () => void; onSaved: () => void }) {
-  const { addToast } = useToast()
-  const [text, setText] = useState(terms.join('\n'))
-  const [busy, setBusy] = useState(false)
-  const save = async () => {
-    setBusy(true)
-    try {
-      await api.saveFinderSettings({ terms: text })
-      addToast('Termos salvos — valem a partir da próxima busca', 'success'); onSaved(); onClose()
-    } catch (err) {
-      addToast(err instanceof Error ? err.message : 'Erro ao salvar', 'error')
-    } finally { setBusy(false) }
-  }
-  return (
-    <Modal isOpen onClose={onClose} title="Termos da busca" width={520}
-      footer={<><button className="btn btn-ghost" onClick={() => setText(defaults.join('\n'))}>Restaurar padrão</button><button className="btn btn-primary" onClick={save} disabled={busy}>{busy ? <span className="spinner spinner-sm" /> : null} Salvar</button></>}>
-      <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: 0 }}>
-        Além dos mais vendidos da Shopee em geral, a busca procura os mais vendidos de cada termo abaixo, um por linha.
-        Use termos amplos e variados, porque o buscador não é preso a um nicho.
-      </p>
-      <textarea className="input" rows={12} value={text} onChange={(e) => setText(e.target.value)} style={{ fontFamily: 'inherit', resize: 'vertical' }} />
-    </Modal>
-  )
-}
-
 /* ─── Ad link ─── */
 type LinkProduct = { name: string; imageUrl: string | null; link: string; price: number; commission: number | null }
 
@@ -350,7 +324,6 @@ export default function ProductFinder() {
   const [f, setF] = useState<FinderFilters | null>(null)
   const [loading, setLoading] = useState(false)
   const [savingDefaults, setSavingDefaults] = useState(false)
-  const [editingTerms, setEditingTerms] = useState(false)
   const [linkFor, setLinkFor] = useState<LinkProduct | null>(null)
   const [view, setView] = useState<'all' | 'fav'>('all')
   const [favorites, setFavorites] = useState<FavoritesResult | null>(null)
@@ -442,7 +415,7 @@ export default function ProductFinder() {
   const scanNow = async () => {
     try {
       const r = await api.runFinderScan()
-      addToast(r.queued ? 'Busca iniciada — leva de 10 a 15 minutos' : 'Já tem uma busca rodando', 'success')
+      addToast(r.queued ? 'Varredura iniciada — leva até uns 40 minutos' : 'Já tem uma varredura rodando', 'success')
       await loadInfo()
     } catch (err) {
       addToast(err instanceof Error ? err.message : 'Erro ao iniciar a busca', 'error')
@@ -517,18 +490,23 @@ export default function ProductFinder() {
         <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
           <span>
             {running
-              ? <><span className="spinner spinner-sm" /> Buscando produtos na Shopee… {scan.calls ? `${int(scan.calls)} consultas, ${int(scan.saved ?? 0)} produtos até agora` : ''} (leva de 10 a 15 minutos)</>
-              : <>Última busca na Shopee: {ago(scan.at)}{scan.saved != null && ` · ${int(scan.saved)} produtos lidos`}</>}
+              ? <><span className="spinner spinner-sm" /> Varrendo a Shopee… {scan.calls ? `${int(scan.calls)} consultas, ${int(scan.saved ?? 0)} produtos e ${int(scan.categoriesScanned ?? 0)} categorias até agora` : ''} (leva até uns 40 minutos)</>
+              : <>Última varredura: {ago(scan.at)}{scan.saved != null && ` · ${int(scan.saved)} produtos lidos`}{scan.categoriesScanned != null && scan.mode === 'categories' && ` em ${int(scan.categoriesScanned)} categorias`}</>}
           </span>
           {result && <span>Catálogo: {int(result.catalog)} produtos · {int(result.withRate)} já com vendas por dia</span>}
-          <span>Busca sozinha a cada 6 horas.</span>
+          {scan.categories != null && scan.mode === 'categories' && (
+            <span title="As categorias são descobertas pelos próprios produtos. Cada varredura passa primeiro pelas que nunca foram varridas, depois pelas mais antigas.">
+              Categorias: {int(scan.categories)} encontradas{scan.categoriesLeft ? ` · ${int(scan.categoriesLeft)} ainda na fila` : ' · todas já varridas'}
+            </span>
+          )}
+          {scan.mode === 'terms' && <span title="A sua conta não envia as categorias dos produtos, então a varredura usa palavras amplas no lugar">Varredura por palavras amplas (a Shopee não enviou categorias)</span>}
+          <span>Varre sozinho a cada 6 horas.</span>
           {scan.fields && <span>A Shopee não enviou: {scan.fields.replace(/^sem /, '')}</span>}
           {scan.errors && scan.errors.length > 0 && !running && <span style={{ color: '#ff8a8e' }}>Erro: {scan.errors[0]}</span>}
           {scan.warnings && scan.warnings.length > 0 && !running && <span title={scan.warnings.slice(1).join('\n')}>{scan.warnings[0]}</span>}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-ghost btn-sm" onClick={() => setEditingTerms(true)}><Icon name="settings" size={14} /> Termos da busca</button>
-          <button className="btn btn-secondary btn-sm" onClick={scanNow} disabled={running}><Icon name="refresh" size={14} /> Buscar na Shopee agora</button>
+          <button className="btn btn-secondary btn-sm" onClick={scanNow} disabled={running}><Icon name="refresh" size={14} /> Varrer a Shopee agora</button>
         </div>
       </div>
 
@@ -575,7 +553,7 @@ export default function ProductFinder() {
               ) : result.items.length === 0 ? (
                 <tr><td colSpan={10} style={{ textAlign: 'center', padding: 28, color: 'var(--text-muted)' }}>
                   {result.catalog === 0
-                    ? <>Ainda não há produtos. Clique em <b>Buscar na Shopee agora</b>. A primeira busca leva de 1 a 3 minutos.</>
+                    ? <>Ainda não há produtos. Clique em <b>Varrer a Shopee agora</b>. Os primeiros produtos aparecem em poucos minutos.</>
                     : 'Nenhum produto passa nesses filtros. Afrouxe a faixa de preço ou de comissão.'}
                 </td></tr>
               ) : result.items.map((p) => {
@@ -637,7 +615,6 @@ export default function ProductFinder() {
       <TestedPanel rows={tested?.rows ?? null} real={tested?.real ?? null} />
       </>)}
 
-      {editingTerms && <TermsModal terms={info.settings.terms} defaults={info.defaults.terms} onClose={() => setEditingTerms(false)} onSaved={() => loadInfo().catch(() => {})} />}
       {linkFor && <LinkModal product={linkFor} onClose={() => { setLinkFor(null); api.getTestedProducts().then(setTested).catch(() => {}); loadFavorites() }} />}
     </div>
   )

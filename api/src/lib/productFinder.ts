@@ -1,9 +1,11 @@
 /**
  * Product finder for direct traffic (Tráfego pago → Produtos para anúncio).
  *
- *   runFinderScan    — searches the whole Shopee catalog (best sellers, top
- *                      performing, and a varied list of broad terms), saves
- *                      each product and one sales reading per day
+ *   runFinderScan    — sweeps Shopee: the general best-seller / highest-
+ *                      commission lists, then category after category (the
+ *                      categories come from the products themselves, least
+ *                      recently scanned first); saves each product and one
+ *                      sales reading per day
  *   finderProducts   — the catalog filtered and ranked, with the day-1 math
  *   testedProducts   — products already run as ads (AdLinks): real spend,
  *                      clicks and same-day sales, so the assumptions are learnt
@@ -30,44 +32,22 @@ const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCa
 export const SCAN_EVERY_MS = 6 * 3600000;
 const STATE_KEY = 'finder_scan_state';
 const settingsKey = (tenantId: string) => `finder_settings:${tenantId}`;
-const MAX_CALLS = 700;
+const MAX_CALLS = 1500;
+const MAX_SCAN_MS = 50 * 60000;
 const PAGE_SIZE = 50;
 const CALL_GAP_MS = 300;
-const GENERAL_PAGES = 10; // pages of the term-less lists (best sellers, highest commission…)
-const TERM_PAGES = 3; // pages per term, per order (most sold / highest commission)
+const GENERAL_PAGES = 10; // pages of the general lists (best sellers, highest commission…)
+const CATEGORY_PAGES = 2; // pages per category, per order (most sold / highest commission)
 
-/** The first default list — saved settings equal to it get the current defaults. */
-const OLD_DEFAULT_TERMS = [
-  'casa', 'cozinha', 'organizador', 'limpeza', 'banheiro', 'decoração', 'luminária led', 'ferramentas',
-  'carro', 'acessórios celular', 'fone bluetooth', 'beleza', 'maquiagem', 'skincare', 'cabelo',
-  'moda feminina', 'moda masculina', 'bolsa', 'relógio', 'infantil', 'brinquedo', 'bebê', 'pet',
-  'fitness', 'papelaria', 'jardim', 'viagem', 'presente', 'utilidades', 'gadgets',
-];
-
-/** Varied on purpose — the finder is not tied to a niche. */
-export const DEFAULT_TERMS = [
-  // casa
-  'casa', 'cozinha', 'utensílios de cozinha', 'organizador', 'organizador de geladeira', 'pote hermético', 'limpeza', 'banheiro',
-  'lavanderia', 'decoração', 'quarto', 'cama mesa e banho', 'tapete', 'cortina', 'luminária led', 'fita led', 'lâmpada',
-  'ferramentas', 'jardim', 'garrafa térmica', 'copo térmico', 'marmita', 'air fryer acessórios', 'churrasco',
-  // eletrônicos
-  'acessórios celular', 'capinha', 'película', 'carregador', 'cabo usb', 'fone bluetooth', 'caixa de som', 'smartwatch',
-  'suporte celular', 'mouse', 'teclado', 'gamer', 'câmera', 'ring light', 'gadgets',
-  // carro e moto
-  'carro', 'acessórios para carro', 'moto', 'bicicleta',
-  // beleza e saúde
-  'beleza', 'maquiagem', 'skincare', 'cabelo', 'unha', 'perfume', 'barbeador', 'massageador', 'saúde', 'suplemento',
-  // moda
-  'moda feminina', 'moda masculina', 'vestido', 'camiseta', 'calça', 'pijama', 'lingerie', 'meia', 'tênis', 'chinelo',
-  'bolsa', 'mochila', 'carteira', 'relógio', 'óculos', 'bijuteria', 'boné',
-  // família e pet
-  'infantil', 'brinquedo', 'bebê', 'escolar', 'papelaria', 'pet', 'cachorro', 'gato',
-  // esporte e lazer
-  'fitness', 'academia', 'yoga', 'camping', 'pesca', 'viagem', 'festa', 'presente', 'utilidades', 'achadinhos',
+/** Only used when the account doesn't send product categories (or rejects the category filter). */
+const FALLBACK_TERMS = [
+  'casa', 'cozinha', 'organizador', 'limpeza', 'banheiro', 'decoração', 'luminária led', 'ferramentas', 'jardim',
+  'acessórios celular', 'fone bluetooth', 'carregador', 'smartwatch', 'carro', 'moto', 'beleza', 'maquiagem', 'skincare',
+  'cabelo', 'perfume', 'moda feminina', 'moda masculina', 'tênis', 'bolsa', 'relógio', 'infantil', 'brinquedo', 'bebê',
+  'pet', 'fitness', 'papelaria', 'camping', 'viagem', 'festa', 'presente', 'utilidades',
 ];
 
 export interface FinderSettings {
-  terms: string[];
   cpc: number; // R$ per link click, before Meta's tax
   cvrPct: number; // same-day sales per 100 link clicks
   filters: FinderFilters;
@@ -103,7 +83,7 @@ export const DEFAULT_FILTERS: FinderFilters = {
   sort: 'salesPerDay',
 };
 
-export const DEFAULT_SETTINGS: FinderSettings = { terms: DEFAULT_TERMS, cpc: 0.15, cvrPct: 3, filters: DEFAULT_FILTERS };
+export const DEFAULT_SETTINGS: FinderSettings = { cpc: 0.15, cvrPct: 3, filters: DEFAULT_FILTERS };
 
 // ── Pure helpers ────────────────────────────────────────────────────────────
 
@@ -304,25 +284,20 @@ export async function finderSettings(tenantId: string): Promise<FinderSettings> 
   const row = await prisma.setting.findUnique({ where: { key: settingsKey(tenantId) } });
   let saved: any = {};
   try { saved = row ? JSON.parse(row.value) : {}; } catch { saved = {}; }
-  const savedTerms: string[] | null = Array.isArray(saved.terms) ? saved.terms.map(String).filter(Boolean) : null;
-  const isOldDefault = savedTerms !== null && savedTerms.length === OLD_DEFAULT_TERMS.length && savedTerms.every((t, i) => t === OLD_DEFAULT_TERMS[i]);
-  const terms = savedTerms && !isOldDefault ? savedTerms : DEFAULT_TERMS;
   return {
-    terms,
     cpc: num(saved.cpc, DEFAULT_SETTINGS.cpc)!,
     cvrPct: num(saved.cvrPct, DEFAULT_SETTINGS.cvrPct)!,
     filters: cleanFilters(saved.filters ?? {}),
   };
 }
 
-export async function saveFinderSettings(tenantId: string, patch: { terms?: string | string[]; cpc?: unknown; cvrPct?: unknown; filters?: Record<string, unknown> }) {
+export async function saveFinderSettings(tenantId: string, patch: { cpc?: unknown; cvrPct?: unknown; filters?: Record<string, unknown> }) {
   const cur = await finderSettings(tenantId);
-  const terms = patch.terms === undefined ? cur.terms : (Array.isArray(patch.terms) ? patch.terms : parseTerms(patch.terms)).map((t) => String(t).trim().slice(0, 60)).filter(Boolean).slice(0, 60);
   const cpc = num(patch.cpc, cur.cpc)!;
   const cvrPct = num(patch.cvrPct, cur.cvrPct)!;
   if (!(cpc > 0 && cpc < 50)) throw new Error('CPC inválido');
   if (!(cvrPct > 0 && cvrPct <= 100)) throw new Error('Conversão inválida (use de 0,1 a 100%)');
-  const next: FinderSettings = { terms, cpc, cvrPct, filters: patch.filters ? cleanFilters(patch.filters, cur.filters) : cur.filters };
+  const next: FinderSettings = { cpc, cvrPct, filters: patch.filters ? cleanFilters(patch.filters, cur.filters) : cur.filters };
   const value = JSON.stringify(next);
   await prisma.setting.upsert({ where: { key: settingsKey(tenantId) }, update: { value }, create: { key: settingsKey(tenantId), value } });
   return next;
@@ -340,6 +315,10 @@ export interface ScanState {
   fields?: string;
   errors?: string[]; // the scan stopped (credentials, network…)
   warnings?: string[]; // single searches that failed — the rest went on
+  categories?: number; // categories known so far
+  categoriesScanned?: number; // swept in this scan
+  categoriesLeft?: number; // never swept yet
+  mode?: 'categories' | 'terms'; // terms = fallback when the account has no categories
 }
 
 export async function scanState(): Promise<ScanState> {
@@ -361,7 +340,7 @@ const FIELDS = `itemId shopId productName imageUrl productLink offerLink shopNam
   priceMin priceMax priceDiscountRate ratingStar sales commissionRate commission productCatIds`;
 
 function buildQuery(fields: string, vars: Record<string, unknown>) {
-  const types: Record<string, string> = { keyword: 'String', sortType: 'Int', page: 'Int', limit: 'Int', listType: 'Int' };
+  const types: Record<string, string> = { keyword: 'String', sortType: 'Int', page: 'Int', limit: 'Int', listType: 'Int', productCatId: 'Int' };
   const keys = Object.keys(vars).filter((k) => types[k]);
   return `query Finder(${keys.map((k) => `$${k}: ${types[k]}`).join(', ')}) {
   productOfferV2(${keys.map((k) => `${k}: $${k}`).join(', ')}) {
@@ -373,44 +352,46 @@ function buildQuery(fields: string, vars: Record<string, unknown>) {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Every tenant's search terms (the catalog is shared). */
-async function allTerms(): Promise<string[]> {
-  const rows = await prisma.setting.findMany({ where: { key: { startsWith: 'finder_settings:' } } });
-  const terms = new Set<string>();
-  for (const r of rows) for (const t of (await finderSettings(r.key.slice('finder_settings:'.length))).terms) terms.add(t);
-  if (rows.length === 0) DEFAULT_TERMS.forEach((t) => terms.add(t));
-  return [...terms];
-}
+type Step = { label: string; vars: Record<string, unknown>; pages: number };
 
 export async function runFinderScan(): Promise<ScanState> {
-  const started = new Date();
-  // Most sold AND highest commission: cheap products paying R$2–5 are mostly in the second list.
-  const plan: Array<{ label: string; vars: Record<string, unknown>; pages: number }> = [
-    { label: 'mais vendidos', vars: { sortType: 2 }, pages: GENERAL_PAGES },
-    { label: 'maior comissão', vars: { sortType: 5 }, pages: GENERAL_PAGES },
-    { label: 'lista maior comissão', vars: { listType: 1 }, pages: 5 },
-    { label: 'lista em alta', vars: { listType: 2 }, pages: 5 },
-  ];
-  for (const t of await allTerms()) {
-    plan.push({ label: t, vars: { keyword: t, sortType: 2 }, pages: TERM_PAGES });
-    plan.push({ label: `${t} (comissão)`, vars: { keyword: t, sortType: 5 }, pages: TERM_PAGES });
-  }
+  const started = Date.now();
   let fields = FIELDS;
   let drops = 0;
   let calls = 0;
   let found = 0;
+  let steps = 0;
+  let failedSteps = 0;
+  let rateLimitStreak = 0;
+  let stopped = false;
   const seen = new Set<string>();
   const errors: string[] = [];
   const warnings: string[] = [];
-  let failedSteps = 0;
-  const prevAt = (await scanState()).at; // kept, so a crashed scan isn't retried every tick
-  const progress = () => saveState({ running: true, startedAt: started.toISOString(), at: prevAt, calls, found, saved: seen.size });
-  await progress();
 
-  outer: for (const step of plan) {
+  // Categories known so far: never swept first, then the least recently swept.
+  const known = await prisma.shopeeCategory.findMany({ select: { id: true, lastScannedAt: true }, orderBy: { lastScannedAt: { sort: 'asc', nulls: 'first' } } });
+  const knownIds = new Set(known.map((c) => c.id));
+  const neverScanned = known.filter((c) => !c.lastScannedAt).map((c) => c.id);
+  const scannedBefore = known.filter((c) => c.lastScannedAt).map((c) => c.id);
+  const discovered: string[] = []; // new in this scan
+  let newCats: Array<{ id: string; level: number }> = [];
+  let categoriesScanned = 0;
+
+  const prevAt = (await scanState()).at; // kept, so a crashed scan isn't retried every tick
+  const progress = () => saveState({
+    running: true, startedAt: new Date(started).toISOString(), at: prevAt, calls, found, saved: seen.size,
+    categories: knownIds.size, categoriesScanned, mode: 'categories',
+  });
+  await progress();
+  const outOfBudget = () => stopped || calls >= MAX_CALLS || Date.now() - started > MAX_SCAN_MS;
+
+  /** Runs one search through its pages; returns how many products came back, or null if it failed. */
+  const runStep = async (step: Step): Promise<{ count: number; error?: string } > => {
+    steps++;
     let retried = false;
+    let count = 0;
     for (let page = 1; page <= step.pages; page++) {
-      if (calls >= MAX_CALLS) break outer;
+      if (outOfBudget()) break;
       if (calls > 0) await sleep(CALL_GAP_MS);
       calls++;
       if (calls % 20 === 0) await progress();
@@ -421,6 +402,7 @@ export async function runFinderScan(): Promise<ScanState> {
         const data = await shopeeGraphql<any>(buildQuery(fields, vars), vars);
         nodes = data?.productOfferV2?.nodes ?? [];
         hasNext = !!data?.productOfferV2?.pageInfo?.hasNextPage;
+        rateLimitStreak = 0;
       } catch (err) {
         const bad = unknownField(err);
         if (bad && drops < 5 && fields.includes(bad)) {
@@ -433,23 +415,40 @@ export async function runFinderScan(): Promise<ScanState> {
         // Credentials / signature problems fail every call — stop right away.
         if (err instanceof ShopeeApiError && (calls === 1 || /credential|signature|auth|não configurados/i.test(msg))) {
           errors.push(msg);
-          break outer;
+          stopped = true;
+          return { count, error: msg };
         }
-        // Too many requests: wait and try the same page once more.
-        if (!retried && /limit|too many|frequen|429|throttl/i.test(msg)) {
-          retried = true;
-          await sleep(30000);
-          page--;
-          continue;
+        // Too many requests: wait and try the same page again; stop the scan if it keeps happening.
+        if (/limit|too many|frequen|429|throttl/i.test(msg)) {
+          rateLimitStreak++;
+          if (rateLimitStreak >= 4) {
+            warnings.unshift('A Shopee limitou as consultas — a varredura continua na próxima rodada');
+            stopped = true;
+            return { count, error: msg };
+          }
+          if (!retried) {
+            retried = true;
+            await sleep(30000);
+            page--;
+            continue;
+          }
         }
         failedSteps++;
         if (warnings.length < 8) warnings.push(`${step.label}: ${msg}`);
-        break; // next step
+        return { count, error: msg };
       }
       found += nodes.length;
+      count += nodes.length;
       for (const n of nodes) {
         const p = parseProductNode(n);
         if (!p || !p.name) continue;
+        // Every product tells which categories it is in → the next ones to sweep.
+        p.categoryIds?.forEach((cid, i) => {
+          if (!cid || cid === '0' || knownIds.has(cid)) return;
+          knownIds.add(cid);
+          discovered.push(cid);
+          newCats.push({ id: cid, level: i + 1 });
+        });
         const key = `${p.shopId}-${p.itemId}`;
         if (seen.has(key)) continue; // already saved in this scan
         try {
@@ -459,7 +458,55 @@ export async function runFinderScan(): Promise<ScanState> {
           if (warnings.length < 8) warnings.push(`salvar produto: ${err instanceof Error ? err.message : err}`);
         }
       }
+      if (newCats.length) {
+        await prisma.shopeeCategory.createMany({ data: newCats, skipDuplicates: true });
+        newCats = [];
+      }
       if (!hasNext || nodes.length === 0) break;
+    }
+    return { count };
+  };
+
+  // 1) The general lists — they also reveal the categories.
+  // Most sold AND highest commission: cheap products paying R$2–5 are mostly in the second.
+  const general: Step[] = [
+    { label: 'mais vendidos', vars: { sortType: 2 }, pages: GENERAL_PAGES },
+    { label: 'maior comissão', vars: { sortType: 5 }, pages: GENERAL_PAGES },
+    { label: 'lista maior comissão', vars: { listType: 1 }, pages: 5 },
+    { label: 'lista em alta', vars: { listType: 2 }, pages: 5 },
+  ];
+  for (const step of general) {
+    if (outOfBudget()) break;
+    await runStep(step);
+  }
+
+  // 2) Category after category, until the call / time budget runs out.
+  let mode: 'categories' | 'terms' = 'categories';
+  let categoryFilterBroken = false;
+  while (!outOfBudget()) {
+    const id = neverScanned.shift() ?? discovered.shift() ?? scannedBefore.shift();
+    if (!id) break;
+    let count = 0;
+    let unsupported = false;
+    for (const sortType of [2, 5]) {
+      const r = await runStep({ label: `categoria ${id}`, vars: { productCatId: Number(id), sortType }, pages: CATEGORY_PAGES });
+      count += r.count;
+      if (r.error && /productCatId|unknown argument|argument/i.test(r.error)) unsupported = true;
+      if (outOfBudget() || unsupported) break;
+    }
+    if (unsupported) { categoryFilterBroken = true; break; }
+    categoriesScanned++;
+    await prisma.shopeeCategory.update({ where: { id }, data: { lastScannedAt: new Date(), products: count } }).catch(() => {});
+  }
+
+  // 3) Fallback: this account sends no categories (or rejects the filter) — broad words instead.
+  if (knownIds.size === 0 || categoryFilterBroken) {
+    mode = 'terms';
+    for (const t of FALLBACK_TERMS) {
+      if (outOfBudget()) break;
+      await runStep({ label: t, vars: { keyword: t, sortType: 2 }, pages: 3 });
+      if (outOfBudget()) break;
+      await runStep({ label: `${t} (comissão)`, vars: { keyword: t, sortType: 5 }, pages: 3 });
     }
   }
 
@@ -467,17 +514,22 @@ export async function runFinderScan(): Promise<ScanState> {
   // Readings older than 35 days are no longer used.
   await prisma.shopeeSalesSnapshot.deleteMany({ where: { at: { lt: new Date(Date.now() - 35 * DAY_MS) } } });
 
-  const dropped = FIELDS.split(/\s+/).filter((f) => f && !fields.split(/\s+/).includes(f));
+  const droppedFields = FIELDS.split(/\s+/).filter((f) => f && !fields.split(/\s+/).includes(f));
+  const left = await prisma.shopeeCategory.count({ where: { lastScannedAt: null } });
   const state: ScanState = {
     at: new Date().toISOString(),
-    startedAt: started.toISOString(),
+    startedAt: new Date(started).toISOString(),
     running: false,
     calls,
     found,
     saved: seen.size,
-    fields: dropped.length ? `sem ${dropped.join(', ')}` : undefined,
+    fields: droppedFields.length ? `sem ${droppedFields.join(', ')}` : undefined,
     errors,
-    warnings: failedSteps ? [`${failedSteps} de ${plan.length} buscas falharam`, ...warnings] : [],
+    warnings: failedSteps ? [`${failedSteps} de ${steps} buscas falharam`, ...warnings] : warnings,
+    categories: knownIds.size,
+    categoriesScanned,
+    categoriesLeft: left,
+    mode,
   };
   await saveState(state);
   return state;

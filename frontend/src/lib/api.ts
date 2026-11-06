@@ -1068,7 +1068,7 @@ class ApiClient {
     return this.request('GET', '/ads/finder/settings')
   }
 
-  async saveFinderSettings(data: { terms?: string; cpc?: number; cvrPct?: number; filters?: Partial<FinderFilters> }): Promise<FinderSettings> {
+  async saveFinderSettings(data: { cpc?: number; cvrPct?: number; filters?: Partial<FinderFilters> }): Promise<FinderSettings> {
     return this.request('PUT', '/ads/finder/settings', data)
   }
 
@@ -1433,7 +1433,6 @@ export interface FinderFilters {
 }
 
 export interface FinderSettings {
-  terms: string[]
   cpc: number
   cvrPct: number
   filters: FinderFilters
@@ -1449,6 +1448,10 @@ export interface FinderScan {
   fields?: string
   errors?: string[]
   warnings?: string[]
+  categories?: number
+  categoriesScanned?: number
+  categoriesLeft?: number
+  mode?: 'categories' | 'terms'
 }
 
 export interface FinderReal {

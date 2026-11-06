@@ -346,6 +346,18 @@ model ShopeeSalesSnapshot {
   @@index([at])
 }
 
+// Shopee categories found in products' productCatIds. The finder sweeps
+// them in turn (least recently scanned first) — no search terms needed.
+model ShopeeCategory {
+  id            String    @id // Shopee's category id
+  level         Int? // 1 = top level
+  products      Int       @default(0) // products returned on its last scan
+  lastScannedAt DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([lastScannedAt])
+}
+
 // Products the user picked in the finder to test as ads, one by one.
 model ShopeeFavorite {
   id        String   @id @default(cuid())

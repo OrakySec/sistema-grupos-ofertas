@@ -447,7 +447,7 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
     return { settings, defaults: DEFAULT_SETTINGS, taxes, scan, real: tested.real, breakEvenCommission: breakEvenCommission(a) };
   });
 
-  fastify.put<{ Body: { terms?: string | string[]; cpc?: number; cvrPct?: number; filters?: Record<string, unknown> } }>('/finder/settings', async (request, reply) => {
+  fastify.put<{ Body: { cpc?: number; cvrPct?: number; filters?: Record<string, unknown> } }>('/finder/settings', async (request, reply) => {
     try {
       return await saveFinderSettings(tenantIdOf(request), request.body ?? {});
     } catch (err) {
