@@ -30,16 +30,40 @@ const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCa
 export const SCAN_EVERY_MS = 6 * 3600000;
 const STATE_KEY = 'finder_scan_state';
 const settingsKey = (tenantId: string) => `finder_settings:${tenantId}`;
-const MAX_CALLS = 90;
+const MAX_CALLS = 700;
 const PAGE_SIZE = 50;
-const CALL_GAP_MS = 350;
+const CALL_GAP_MS = 300;
+const GENERAL_PAGES = 10; // pages of the term-less lists (best sellers, highest commission…)
+const TERM_PAGES = 3; // pages per term, per order (most sold / highest commission)
 
-/** Varied on purpose — the finder is not tied to a niche. */
-export const DEFAULT_TERMS = [
+/** The first default list — saved settings equal to it get the current defaults. */
+const OLD_DEFAULT_TERMS = [
   'casa', 'cozinha', 'organizador', 'limpeza', 'banheiro', 'decoração', 'luminária led', 'ferramentas',
   'carro', 'acessórios celular', 'fone bluetooth', 'beleza', 'maquiagem', 'skincare', 'cabelo',
   'moda feminina', 'moda masculina', 'bolsa', 'relógio', 'infantil', 'brinquedo', 'bebê', 'pet',
   'fitness', 'papelaria', 'jardim', 'viagem', 'presente', 'utilidades', 'gadgets',
+];
+
+/** Varied on purpose — the finder is not tied to a niche. */
+export const DEFAULT_TERMS = [
+  // casa
+  'casa', 'cozinha', 'utensílios de cozinha', 'organizador', 'organizador de geladeira', 'pote hermético', 'limpeza', 'banheiro',
+  'lavanderia', 'decoração', 'quarto', 'cama mesa e banho', 'tapete', 'cortina', 'luminária led', 'fita led', 'lâmpada',
+  'ferramentas', 'jardim', 'garrafa térmica', 'copo térmico', 'marmita', 'air fryer acessórios', 'churrasco',
+  // eletrônicos
+  'acessórios celular', 'capinha', 'película', 'carregador', 'cabo usb', 'fone bluetooth', 'caixa de som', 'smartwatch',
+  'suporte celular', 'mouse', 'teclado', 'gamer', 'câmera', 'ring light', 'gadgets',
+  // carro e moto
+  'carro', 'acessórios para carro', 'moto', 'bicicleta',
+  // beleza e saúde
+  'beleza', 'maquiagem', 'skincare', 'cabelo', 'unha', 'perfume', 'barbeador', 'massageador', 'saúde', 'suplemento',
+  // moda
+  'moda feminina', 'moda masculina', 'vestido', 'camiseta', 'calça', 'pijama', 'lingerie', 'meia', 'tênis', 'chinelo',
+  'bolsa', 'mochila', 'carteira', 'relógio', 'óculos', 'bijuteria', 'boné',
+  // família e pet
+  'infantil', 'brinquedo', 'bebê', 'escolar', 'papelaria', 'pet', 'cachorro', 'gato',
+  // esporte e lazer
+  'fitness', 'academia', 'yoga', 'camping', 'pesca', 'viagem', 'festa', 'presente', 'utilidades', 'achadinhos',
 ];
 
 export interface FinderSettings {
@@ -209,30 +233,35 @@ export interface FinderRow {
   maxCpc: number;
   profitPer100: number | null;
   tested: boolean;
+  favoriteId: string | null;
   seenAt: Date;
 }
 
 /** Filters and ranks the catalog (pure — the DB query only narrows by price/rating/sales). */
+/** Why products were left out, in the order the filters run (the first one that cuts counts). */
+export type DropReason = 'excluded' | 'name' | 'price' | 'rating' | 'sales' | 'salesPerDay' | 'official' | 'noCommission' | 'commissionLow' | 'commissionHigh' | 'notProfitable';
+
 export function rankProducts(products: CatalogProduct[], f: FinderFilters, a: Assumptions, tested: Set<string>) {
   const excluded = parseTerms(f.exclude).map(fold);
   const q = fold(f.q.trim());
   const rows: FinderRow[] = [];
+  const dropped: Partial<Record<DropReason, number>> = {};
+  const drop = (r: DropReason) => { dropped[r] = (dropped[r] ?? 0) + 1; };
   for (const p of products) {
     const name = fold(p.name);
-    if (excluded.some((w) => name.includes(w))) continue;
-    if (q && !name.includes(q)) continue;
-    if (f.minPrice !== null && p.lastPrice < f.minPrice) continue;
-    if (f.maxPrice !== null && p.lastPrice > f.maxPrice) continue;
-    if (f.minRating > 0 && (p.ratingStar ?? 0) < f.minRating) continue;
-    if (f.minSales > 0 && (p.sales ?? 0) < f.minSales) continue;
-    if (f.minSalesPerDay > 0 && (p.salesPerDay ?? -1) < f.minSalesPerDay) continue;
-    if (f.officialOnly && !p.isOfficial) continue;
+    if (excluded.some((w) => name.includes(w))) { drop('excluded'); continue; }
+    if (q && !name.includes(q)) { drop('name'); continue; }
+    if ((f.minPrice !== null && p.lastPrice < f.minPrice) || (f.maxPrice !== null && p.lastPrice > f.maxPrice)) { drop('price'); continue; }
+    if (f.minRating > 0 && (p.ratingStar ?? 0) < f.minRating) { drop('rating'); continue; }
+    if (f.minSales > 0 && (p.sales ?? 0) < f.minSales) { drop('sales'); continue; }
+    if (f.minSalesPerDay > 0 && (p.salesPerDay ?? -1) < f.minSalesPerDay) { drop('salesPerDay'); continue; }
+    if (f.officialOnly && !p.isOfficial) { drop('official'); continue; }
     const commission = commissionOf(p);
-    if (commission === null) continue;
-    if (f.minCommission !== null && commission < f.minCommission) continue;
-    if (f.maxCommission !== null && commission > f.maxCommission) continue;
+    if (commission === null) { drop('noCommission'); continue; }
+    if (f.minCommission !== null && commission < f.minCommission) { drop('commissionLow'); continue; }
+    if (f.maxCommission !== null && commission > f.maxCommission) { drop('commissionHigh'); continue; }
     const d1 = dayOne(commission, a);
-    if (f.onlyProfitable && !((d1.profitPer100 ?? -1) > 0)) continue;
+    if (f.onlyProfitable && !((d1.profitPer100 ?? -1) > 0)) { drop('notProfitable'); continue; }
     rows.push({
       id: p.id,
       itemId: String(p.itemId),
@@ -252,6 +281,7 @@ export function rankProducts(products: CatalogProduct[], f: FinderFilters, a: As
       maxCpc: d1.maxCpc,
       profitPer100: d1.profitPer100,
       tested: tested.has(String(p.itemId)),
+      favoriteId: null,
       seenAt: p.lastSeenAt,
     });
   }
@@ -265,7 +295,7 @@ export function rankProducts(products: CatalogProduct[], f: FinderFilters, a: As
   };
   // Ties (e.g. no sales per day yet) fall back to the total sold.
   rows.sort((x, y) => key[f.sort](y) - key[f.sort](x) || nullLast(y.sales) - nullLast(x.sales));
-  return rows;
+  return { rows, dropped };
 }
 
 // ── Settings ────────────────────────────────────────────────────────────────
@@ -274,7 +304,9 @@ export async function finderSettings(tenantId: string): Promise<FinderSettings> 
   const row = await prisma.setting.findUnique({ where: { key: settingsKey(tenantId) } });
   let saved: any = {};
   try { saved = row ? JSON.parse(row.value) : {}; } catch { saved = {}; }
-  const terms = Array.isArray(saved.terms) ? saved.terms.map(String).filter(Boolean) : DEFAULT_TERMS;
+  const savedTerms: string[] | null = Array.isArray(saved.terms) ? saved.terms.map(String).filter(Boolean) : null;
+  const isOldDefault = savedTerms !== null && savedTerms.length === OLD_DEFAULT_TERMS.length && savedTerms.every((t, i) => t === OLD_DEFAULT_TERMS[i]);
+  const terms = savedTerms && !isOldDefault ? savedTerms : DEFAULT_TERMS;
   return {
     terms,
     cpc: num(saved.cpc, DEFAULT_SETTINGS.cpc)!,
@@ -306,7 +338,8 @@ export interface ScanState {
   found?: number;
   saved?: number;
   fields?: string;
-  errors?: string[];
+  errors?: string[]; // the scan stopped (credentials, network…)
+  warnings?: string[]; // single searches that failed — the rest went on
 }
 
 export async function scanState(): Promise<ScanState> {
@@ -344,37 +377,48 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function allTerms(): Promise<string[]> {
   const rows = await prisma.setting.findMany({ where: { key: { startsWith: 'finder_settings:' } } });
   const terms = new Set<string>();
-  for (const r of rows) {
-    try { for (const t of JSON.parse(r.value).terms ?? []) terms.add(String(t)); } catch { /* ignore */ }
-  }
+  for (const r of rows) for (const t of (await finderSettings(r.key.slice('finder_settings:'.length))).terms) terms.add(t);
   if (rows.length === 0) DEFAULT_TERMS.forEach((t) => terms.add(t));
   return [...terms];
 }
 
 export async function runFinderScan(): Promise<ScanState> {
   const started = new Date();
+  // Most sold AND highest commission: cheap products paying R$2–5 are mostly in the second list.
   const plan: Array<{ label: string; vars: Record<string, unknown>; pages: number }> = [
-    { label: 'mais vendidos', vars: { sortType: 2 }, pages: 4 },
-    { label: 'em alta', vars: { listType: 2, sortType: 2 }, pages: 2 },
-    ...(await allTerms()).map((t) => ({ label: t, vars: { keyword: t, sortType: 2 }, pages: 2 })),
+    { label: 'mais vendidos', vars: { sortType: 2 }, pages: GENERAL_PAGES },
+    { label: 'maior comissão', vars: { sortType: 5 }, pages: GENERAL_PAGES },
+    { label: 'lista maior comissão', vars: { listType: 1 }, pages: 5 },
+    { label: 'lista em alta', vars: { listType: 2 }, pages: 5 },
   ];
+  for (const t of await allTerms()) {
+    plan.push({ label: t, vars: { keyword: t, sortType: 2 }, pages: TERM_PAGES });
+    plan.push({ label: `${t} (comissão)`, vars: { keyword: t, sortType: 5 }, pages: TERM_PAGES });
+  }
   let fields = FIELDS;
   let drops = 0;
   let calls = 0;
   let found = 0;
-  const savedIds = new Set<string>();
+  const seen = new Set<string>();
   const errors: string[] = [];
-  await saveState({ ...(await scanState()), running: true, startedAt: started.toISOString() });
+  const warnings: string[] = [];
+  let failedSteps = 0;
+  const prevAt = (await scanState()).at; // kept, so a crashed scan isn't retried every tick
+  const progress = () => saveState({ running: true, startedAt: started.toISOString(), at: prevAt, calls, found, saved: seen.size });
+  await progress();
 
   outer: for (const step of plan) {
+    let retried = false;
     for (let page = 1; page <= step.pages; page++) {
       if (calls >= MAX_CALLS) break outer;
       if (calls > 0) await sleep(CALL_GAP_MS);
       calls++;
+      if (calls % 20 === 0) await progress();
       let nodes: any[] = [];
       let hasNext = false;
       try {
-        const data = await shopeeGraphql<any>(buildQuery(fields, { ...step.vars, page, limit: PAGE_SIZE }), { ...step.vars, page, limit: PAGE_SIZE });
+        const vars = { ...step.vars, page, limit: PAGE_SIZE };
+        const data = await shopeeGraphql<any>(buildQuery(fields, vars), vars);
         nodes = data?.productOfferV2?.nodes ?? [];
         hasNext = !!data?.productOfferV2?.pageInfo?.hasNextPage;
       } catch (err) {
@@ -391,21 +435,31 @@ export async function runFinderScan(): Promise<ScanState> {
           errors.push(msg);
           break outer;
         }
-        if (errors.length < 8) errors.push(`${step.label}: ${msg}`);
+        // Too many requests: wait and try the same page once more.
+        if (!retried && /limit|too many|frequen|429|throttl/i.test(msg)) {
+          retried = true;
+          await sleep(30000);
+          page--;
+          continue;
+        }
+        failedSteps++;
+        if (warnings.length < 8) warnings.push(`${step.label}: ${msg}`);
         break; // next step
       }
       found += nodes.length;
       for (const n of nodes) {
         const p = parseProductNode(n);
         if (!p || !p.name) continue;
+        const key = `${p.shopId}-${p.itemId}`;
+        if (seen.has(key)) continue; // already saved in this scan
         try {
-          const row = await upsertProduct(p, { finderSeenAt: new Date() });
-          savedIds.add(row.id);
+          await upsertProduct(p, { finderSeenAt: new Date() });
+          seen.add(key);
         } catch (err) {
-          if (errors.length < 8) errors.push(`salvar produto: ${err instanceof Error ? err.message : err}`);
+          if (warnings.length < 8) warnings.push(`salvar produto: ${err instanceof Error ? err.message : err}`);
         }
       }
-      if (!hasNext) break;
+      if (!hasNext || nodes.length === 0) break;
     }
   }
 
@@ -420,9 +474,10 @@ export async function runFinderScan(): Promise<ScanState> {
     running: false,
     calls,
     found,
-    saved: savedIds.size,
+    saved: seen.size,
     fields: dropped.length ? `sem ${dropped.join(', ')}` : undefined,
     errors,
+    warnings: failedSteps ? [`${failedSteps} de ${plan.length} buscas falharam`, ...warnings] : [],
   };
   await saveState(state);
   return state;
@@ -583,7 +638,8 @@ export async function testedProducts(days = 30) {
 
 // ── Listing ─────────────────────────────────────────────────────────────────
 
-export async function finderProducts(tenantId: string, query: Record<string, unknown>, limit = 100) {
+export async function finderProducts(tenantId: string, query: Record<string, unknown>) {
+  const limit = Math.min(500, Math.max(10, Math.floor(num(query.limit, 200) ?? 200)));
   const settings = await finderSettings(tenantId);
   const f = cleanFilters(query, settings.filters);
   const taxes = await taxConfig();
@@ -594,33 +650,127 @@ export async function finderProducts(tenantId: string, query: Record<string, unk
     revenueTaxPct: taxes.revenueTaxPct,
   };
   const fresh = new Date(Date.now() - 4 * DAY_MS);
+  // The whole fresh catalog, so the panel can say how many each filter cut.
   const products = await prisma.shopeeProduct.findMany({
-    where: {
-      lastSeenAt: { gte: fresh },
-      ...(f.minPrice !== null || f.maxPrice !== null ? { lastPrice: { ...(f.minPrice !== null && { gte: f.minPrice }), ...(f.maxPrice !== null && { lte: f.maxPrice }) } } : {}),
-      ...(f.minRating > 0 && { ratingStar: { gte: f.minRating } }),
-      ...(f.minSales > 0 && { sales: { gte: f.minSales } }),
-      ...(f.officialOnly && { isOfficial: true }),
+    where: { lastSeenAt: { gte: fresh } },
+    select: {
+      id: true, itemId: true, shopId: true, name: true, imageUrl: true, productLink: true, shopName: true, isOfficial: true,
+      ratingStar: true, sales: true, commissionPct: true, commissionValue: true, lastPrice: true, salesPerDay: true, salesTrend: true, lastSeenAt: true,
     },
     orderBy: { sales: 'desc' },
-    take: 5000,
+    take: 60000,
   });
   const links = await prisma.adLink.findMany({ select: { productUrl: true } });
   const tested = new Set(links.map((l) => itemIdOfUrl(l.productUrl)).filter(Boolean) as string[]);
-  const ranked = rankProducts(products, f, a, tested);
-  const [catalog, withRate, state] = await Promise.all([
-    prisma.shopeeProduct.count({ where: { lastSeenAt: { gte: fresh } } }),
-    prisma.shopeeProduct.count({ where: { lastSeenAt: { gte: fresh }, salesPerDay: { not: null } } }),
-    scanState(),
-  ]);
+  const { rows: ranked, dropped } = rankProducts(products, f, a, tested);
+  const favs = await prisma.shopeeFavorite.findMany({ where: { tenantId }, select: { id: true, productId: true } });
+  const favBy = new Map(favs.map((x) => [x.productId, x.id]));
+  for (const r of ranked) r.favoriteId = favBy.get(r.id) ?? null;
+  const catalog = products.length;
+  const withRate = products.filter((p) => p.salesPerDay !== null).length;
+  const state = await scanState();
+  const offset = Math.max(0, Math.floor(num(query.offset, 0) ?? 0));
   return {
     filters: f,
     assumptions: a,
     breakEvenCommission: breakEvenCommission(a),
     total: ranked.length,
-    items: ranked.slice(0, limit),
+    offset,
+    items: ranked.slice(offset, offset + limit),
+    dropped,
     catalog,
     withRate,
     scan: state,
   };
+}
+
+// ── Favorites (test queue) ──────────────────────────────────────────────────
+
+export const FAVORITE_STATUSES = ['QUEUE', 'TESTING', 'WINNER', 'LOSER'] as const;
+export type FavoriteStatus = (typeof FAVORITE_STATUSES)[number];
+const STATUS_ORDER: Record<string, number> = { TESTING: 0, QUEUE: 1, WINNER: 2, LOSER: 3 };
+
+export async function addFavorite(tenantId: string, productId: string) {
+  const product = await prisma.shopeeProduct.findUnique({ where: { id: productId }, select: { id: true, itemId: true } });
+  if (!product) throw new Error('Produto não encontrado');
+  // Already has an ad link → it is being tested.
+  const links = await prisma.adLink.findMany({ select: { productUrl: true } });
+  const hasLink = links.some((l) => itemIdOfUrl(l.productUrl) === String(product.itemId));
+  return prisma.shopeeFavorite.upsert({
+    where: { tenantId_productId: { tenantId, productId } },
+    update: {},
+    create: { tenantId, productId, status: hasLink ? 'TESTING' : 'QUEUE' },
+  });
+}
+
+export async function updateFavorite(tenantId: string, id: string, patch: { status?: string; note?: string | null }) {
+  const fav = await prisma.shopeeFavorite.findFirst({ where: { id, tenantId } });
+  if (!fav) throw new Error('Favorito não encontrado');
+  if (patch.status !== undefined && !FAVORITE_STATUSES.includes(patch.status as FavoriteStatus)) throw new Error('Status inválido');
+  return prisma.shopeeFavorite.update({
+    where: { id },
+    data: {
+      ...(patch.status !== undefined && { status: patch.status }),
+      ...(patch.note !== undefined && { note: patch.note ? String(patch.note).slice(0, 500) : null }),
+    },
+  });
+}
+
+export async function removeFavorite(tenantId: string, id: string) {
+  await prisma.shopeeFavorite.deleteMany({ where: { id, tenantId } });
+}
+
+/** A new ad link for a favorite still waiting in the queue moves it to "testing". */
+export async function markFavoriteTesting(productUrl: string) {
+  const itemId = itemIdOfUrl(productUrl);
+  if (!itemId) return 0;
+  const r = await prisma.shopeeFavorite.updateMany({ where: { status: 'QUEUE', product: { itemId: BigInt(itemId) } }, data: { status: 'TESTING' } });
+  return r.count;
+}
+
+/** The favorites with today's numbers, the day-1 math and — once tested — the real ad results (90 days). */
+export async function listFavorites(tenantId: string) {
+  const [favs, settings, taxes, tested] = await Promise.all([
+    prisma.shopeeFavorite.findMany({ where: { tenantId }, include: { product: true }, orderBy: { createdAt: 'asc' } }),
+    finderSettings(tenantId),
+    taxConfig(),
+    testedProducts(90),
+  ]);
+  const a: Assumptions = { cpc: settings.cpc, cvrPct: settings.cvrPct, metaTaxPct: taxes.metaTaxPct, revenueTaxPct: taxes.revenueTaxPct };
+  const testedBy = new Map(tested.rows.filter((r) => r.itemId).map((r) => [r.itemId as string, r]));
+  const rows = favs.map((fav, i) => {
+    const p = fav.product;
+    const commission = commissionOf(p);
+    const d1 = commission === null ? null : dayOne(commission, a);
+    return {
+      id: fav.id,
+      position: i + 1,
+      status: fav.status as FavoriteStatus,
+      note: fav.note,
+      addedAt: fav.createdAt,
+      product: {
+        id: p.id,
+        itemId: String(p.itemId),
+        shopId: String(p.shopId),
+        name: p.name,
+        imageUrl: p.imageUrl,
+        link: p.productLink || `https://shopee.com.br/product/${p.shopId}/${p.itemId}`,
+        shopName: p.shopName,
+        isOfficial: p.isOfficial,
+        rating: p.ratingStar,
+        price: p.lastPrice,
+        commission,
+        commissionPct: p.commissionPct,
+        sales: p.sales,
+        salesPerDay: p.salesPerDay,
+        trend: p.salesTrend,
+        maxCpc: d1?.maxCpc ?? null,
+        profitPer100: d1?.profitPer100 ?? null,
+      },
+      result: testedBy.get(String(p.itemId)) ?? null,
+    };
+  });
+  rows.sort((x, y) => (STATUS_ORDER[x.status] ?? 9) - (STATUS_ORDER[y.status] ?? 9) || x.position - y.position);
+  const counts = Object.fromEntries(FAVORITE_STATUSES.map((st) => [st, favs.filter((f) => f.status === st).length]));
+  return { rows, counts, assumptions: a };
 }

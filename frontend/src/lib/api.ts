@@ -1076,7 +1076,7 @@ class ApiClient {
     return this.request('POST', '/ads/finder/scan', {})
   }
 
-  async getFinderProducts(params: Partial<FinderFilters> & { cpc?: number; cvrPct?: number }): Promise<FinderResult> {
+  async getFinderProducts(params: Partial<FinderFilters> & { cpc?: number; cvrPct?: number; limit?: number; offset?: number }): Promise<FinderResult> {
     const qs = new URLSearchParams()
     for (const [k, v] of Object.entries(params)) qs.set(k, v === null || v === undefined ? '' : String(v))
     return this.request('GET', `/ads/finder/products?${qs.toString()}`)
@@ -1084,6 +1084,22 @@ class ApiClient {
 
   async getTestedProducts(): Promise<{ rows: TestedProduct[]; real: FinderReal }> {
     return this.request('GET', '/ads/finder/tested')
+  }
+
+  async getFavorites(): Promise<FavoritesResult> {
+    return this.request('GET', '/ads/finder/favorites')
+  }
+
+  async addFavorite(productId: string): Promise<{ id: string; status: FavoriteStatus }> {
+    return this.request('POST', '/ads/finder/favorites', { productId })
+  }
+
+  async updateFavorite(id: string, data: { status?: FavoriteStatus; note?: string | null }): Promise<unknown> {
+    return this.request('PATCH', `/ads/finder/favorites/${id}`, data)
+  }
+
+  async removeFavorite(id: string): Promise<{ ok: boolean }> {
+    return this.request('DELETE', `/ads/finder/favorites/${id}`)
   }
 
   async addManualSpend(data: { subCode: string; startDate: string; endDate: string; amount: number; note?: string }): Promise<unknown> {
@@ -1432,6 +1448,7 @@ export interface FinderScan {
   saved?: number
   fields?: string
   errors?: string[]
+  warnings?: string[]
 }
 
 export interface FinderReal {
@@ -1472,6 +1489,7 @@ export interface FinderProduct {
   maxCpc: number
   profitPer100: number | null
   tested: boolean
+  favoriteId: string | null
   seenAt: string
 }
 
@@ -1480,7 +1498,9 @@ export interface FinderResult {
   assumptions: { cpc: number; cvrPct: number; metaTaxPct: number; revenueTaxPct: number }
   breakEvenCommission: number | null
   total: number
+  offset: number
   items: FinderProduct[]
+  dropped: Partial<Record<FinderDropReason, number>>
   catalog: number
   withRate: number
   scan: FinderScan
@@ -1506,4 +1526,24 @@ export interface TestedProduct {
   day1CvrPct: number | null
   day1Profit: number
   profit: number
+}
+
+export type FinderDropReason = 'excluded' | 'name' | 'price' | 'rating' | 'sales' | 'salesPerDay' | 'official' | 'noCommission' | 'commissionLow' | 'commissionHigh' | 'notProfitable'
+
+export type FavoriteStatus = 'QUEUE' | 'TESTING' | 'WINNER' | 'LOSER'
+
+export interface FavoriteRow {
+  id: string
+  position: number
+  status: FavoriteStatus
+  note: string | null
+  addedAt: string
+  product: Omit<FinderProduct, 'commission' | 'maxCpc' | 'tested' | 'favoriteId' | 'seenAt'> & { commission: number | null; maxCpc: number | null }
+  result: TestedProduct | null
+}
+
+export interface FavoritesResult {
+  rows: FavoriteRow[]
+  counts: Record<FavoriteStatus, number>
+  assumptions: { cpc: number; cvrPct: number; metaTaxPct: number; revenueTaxPct: number }
 }

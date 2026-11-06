@@ -1,5 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import api, { type FinderFilters, type FinderInfo, type FinderProduct, type FinderResult, type TestedProduct, type FinderReal } from '../lib/api'
+import api, {
+  type FinderFilters, type FinderInfo, type FinderProduct, type FinderResult, type TestedProduct, type FinderReal,
+  type FavoritesResult, type FavoriteRow, type FavoriteStatus, type FinderDropReason,
+} from '../lib/api'
 import { useToast } from '../lib/toast'
 import Icon from './Icon'
 import Modal from './Modal'
@@ -29,6 +32,29 @@ const SORTS: Array<[FinderFilters['sort'], string]> = [
   ['commission', 'Maior comissão (R$)'],
   ['sales', 'Mais vendidos (total)'],
 ]
+
+const DROP_LABEL: Record<FinderDropReason, string> = {
+  price: 'fora da faixa de preço',
+  commissionLow: 'comissão abaixo do mínimo',
+  commissionHigh: 'comissão acima do máximo',
+  rating: 'nota baixa',
+  sales: 'poucas vendas no total',
+  salesPerDay: 'poucas vendas por dia (ou ainda coletando)',
+  official: 'não são loja oficial',
+  noCommission: 'sem comissão informada',
+  notProfitable: 'não dão lucro no dia 1',
+  excluded: 'com palavra escondida',
+  name: 'não batem com o nome buscado',
+}
+
+const FAV_STATUS: Record<FavoriteStatus, { label: string; badge: string }> = {
+  QUEUE: { label: 'Para testar', badge: 'badge-pending' },
+  TESTING: { label: 'Testando', badge: 'badge-telegram' },
+  WINNER: { label: 'Deu certo', badge: 'badge-sent' },
+  LOSER: { label: 'Não deu certo', badge: 'badge-failed' },
+}
+
+const PAGE_SIZES = [100, 200, 500]
 
 function Panel({ title, hint, right, children }: { title: string; hint?: React.ReactNode; right?: React.ReactNode; children: React.ReactNode }) {
   return (
@@ -92,7 +118,9 @@ function TermsModal({ terms, defaults, onClose, onSaved }: { terms: string[]; de
 }
 
 /* ─── Ad link ─── */
-function LinkModal({ product, onClose }: { product: FinderProduct; onClose: () => void }) {
+type LinkProduct = { name: string; imageUrl: string | null; link: string; price: number; commission: number | null }
+
+function LinkModal({ product, onClose }: { product: LinkProduct; onClose: () => void }) {
   const { addToast } = useToast()
   const [ads, setAds] = useState<Array<{ id: string; name: string; campaign: string }>>([])
   const [metaAdId, setMetaAdId] = useState('')
@@ -146,6 +174,110 @@ function LinkModal({ product, onClose }: { product: FinderProduct; onClose: () =
         </div>
       )}
     </Modal>
+  )
+}
+
+function Star({ on, busy, onClick }: { on: boolean; busy?: boolean; onClick: () => void }) {
+  return (
+    <button className="btn btn-ghost btn-sm" onClick={onClick} disabled={busy} title={on ? 'Tirar dos favoritos' : 'Adicionar aos favoritos para testar'}
+      aria-label={on ? 'Tirar dos favoritos' : 'Adicionar aos favoritos'} style={{ padding: '4px 6px', fontSize: '1.1rem', lineHeight: 1, color: on ? '#f5c451' : 'var(--text-muted)' }}>
+      {on ? '★' : '☆'}
+    </button>
+  )
+}
+
+/* ─── Favorites ─── */
+function FavoritesPanel({ data, onChanged, onLink }: { data: FavoritesResult | null; onChanged: () => void; onLink: (p: LinkProduct) => void }) {
+  const { addToast } = useToast()
+  const [filter, setFilter] = useState<FavoriteStatus | 'ALL'>('ALL')
+  const setStatus = async (row: FavoriteRow, status: FavoriteStatus) => {
+    try { await api.updateFavorite(row.id, { status }); onChanged() } catch (err) { addToast(err instanceof Error ? err.message : 'Erro', 'error') }
+  }
+  const editNote = async (row: FavoriteRow) => {
+    const note = window.prompt('Anotação deste produto (ex.: criativo usado, público, o que aprendeu):', row.note ?? '')
+    if (note === null) return
+    try { await api.updateFavorite(row.id, { note }); onChanged() } catch (err) { addToast(err instanceof Error ? err.message : 'Erro', 'error') }
+  }
+  const remove = async (row: FavoriteRow) => {
+    if (!window.confirm(`Tirar "${row.product.name}" dos favoritos?`)) return
+    try { await api.removeFavorite(row.id); onChanged() } catch (err) { addToast(err instanceof Error ? err.message : 'Erro', 'error') }
+  }
+  if (!data) return <Skeleton height={240} borderRadius={14} />
+  const rows = data.rows.filter((r) => filter === 'ALL' || r.status === filter)
+  const next = data.rows.find((r) => r.status === 'QUEUE')
+  return (
+    <Panel title="Favoritos para testar"
+      hint="Marque com ☆ na lista de produtos. Teste um por vez: crie o link, coloque no anúncio e acompanhe aqui o resultado real. Ao criar o link, o produto passa para Testando."
+      right={
+        <div style={{ overflowX: 'auto', maxWidth: '100%' }}><div className="tabs">
+          <button className={`tab${filter === 'ALL' ? ' active' : ''}`} onClick={() => setFilter('ALL')}>Todos ({data.rows.length})</button>
+          {(Object.keys(FAV_STATUS) as FavoriteStatus[]).map((st) => (
+            <button key={st} className={`tab${filter === st ? ' active' : ''}`} onClick={() => setFilter(st)}>{FAV_STATUS[st].label} ({data.counts[st] ?? 0})</button>
+          ))}
+        </div></div>
+      }>
+      {next && (data.counts.TESTING ?? 0) === 0 && (
+        <div style={{ padding: '10px 12px', borderRadius: 10, background: 'rgba(59,143,230,0.08)', border: '1px solid rgba(59,143,230,0.25)', fontSize: '0.85rem', display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+          <span>Nenhum produto em teste agora. O próximo da fila é <b>{next.product.name}</b>.</span>
+          <button className="btn btn-primary btn-sm" onClick={() => onLink(next.product)}><Icon name="link" size={14} /> Criar link do próximo</button>
+        </div>
+      )}
+      <div className="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th><th>Produto</th><th className="num">Preço</th><th className="num">Comissão</th><th className="num">Vendas/dia</th>
+              <th className="num">CPC máx. dia 1</th><th>Status</th><th className="num">Gasto</th><th className="num">Lucro dia 1</th><th className="num">Lucro total</th><th />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr><td colSpan={11} style={{ textAlign: 'center', padding: 28, color: 'var(--text-muted)' }}>
+                {data.rows.length === 0 ? <>Nenhum favorito ainda. Clique na estrela <b>☆</b> dos produtos que quer testar.</> : 'Nenhum produto com esse status.'}
+              </td></tr>
+            ) : rows.map((r) => {
+              const p = r.product
+              const res = r.result
+              return (
+                <tr key={r.id}>
+                  <td className="tabular" style={{ color: 'var(--text-muted)' }}>{r.position}</td>
+                  <td style={{ maxWidth: 320 }}>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                      {p.imageUrl ? <img src={p.imageUrl} alt="" width={40} height={40} loading="lazy" style={{ borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} /> : <div style={{ width: 40, height: 40, borderRadius: 8, background: 'rgba(255,255,255,0.05)', flexShrink: 0 }} />}
+                      <div style={{ minWidth: 0 }}>
+                        <a className="primary truncate" href={p.link} target="_blank" rel="noreferrer" style={{ display: 'block', color: 'inherit' }} title={p.name}>{p.name}</a>
+                        <button className="btn btn-ghost btn-sm" style={{ padding: 0, fontSize: '0.72rem', color: 'var(--text-muted)' }} onClick={() => editNote(r)}>
+                          {r.note ? <span className="truncate" style={{ maxWidth: 240 }}>📝 {r.note}</span> : '+ anotação'}
+                        </button>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="num tabular">{brl(p.price)}</td>
+                  <td className="num tabular">{brl(p.commission)}</td>
+                  <td className="num tabular">{p.salesPerDay == null ? <span style={{ color: 'var(--text-muted)' }}>coletando</span> : int(p.salesPerDay)}</td>
+                  <td className="num tabular">{brl(p.maxCpc, 3)}</td>
+                  <td>
+                    <select className="select" value={r.status} onChange={(e) => setStatus(r, e.target.value as FavoriteStatus)} style={{ minWidth: 140, padding: '4px 8px' }}>
+                      {(Object.keys(FAV_STATUS) as FavoriteStatus[]).map((st) => <option key={st} value={st}>{FAV_STATUS[st].label}</option>)}
+                    </select>
+                  </td>
+                  <td className="num tabular">{res ? brl(res.spend) : '—'}</td>
+                  <td className="num tabular" style={{ color: signColor(res && res.spend > 0 ? res.day1Profit : null), fontWeight: 600 }}>{res && res.spend > 0 ? signed(res.day1Profit) : '—'}</td>
+                  <td className="num tabular" style={{ color: signColor(res && res.spend > 0 ? res.profit : null), fontWeight: 600 }}>{res && res.spend > 0 ? signed(res.profit) : '—'}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    <button className="btn btn-secondary btn-sm" onClick={() => onLink(p)}><Icon name="link" size={14} /> Criar link</button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => remove(r)} title="Tirar dos favoritos" style={{ color: '#ff8a8e' }}><Icon name="trash" size={14} /></button>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+        Gasto e lucro vêm dos anúncios com link deste produto nos últimos 90 dias (lucro já sem o imposto da Meta). Para aparecer, vincule o link ao anúncio em <b>Links de anúncio</b>.
+      </div>
+    </Panel>
   )
 }
 
@@ -219,8 +351,14 @@ export default function ProductFinder() {
   const [loading, setLoading] = useState(false)
   const [savingDefaults, setSavingDefaults] = useState(false)
   const [editingTerms, setEditingTerms] = useState(false)
-  const [linkFor, setLinkFor] = useState<FinderProduct | null>(null)
+  const [linkFor, setLinkFor] = useState<LinkProduct | null>(null)
+  const [view, setView] = useState<'all' | 'fav'>('all')
+  const [favorites, setFavorites] = useState<FavoritesResult | null>(null)
+  const [favBusy, setFavBusy] = useState<string | null>(null)
+  const [pageSize, setPageSize] = useState(200)
+  const [offset, setOffset] = useState(0)
   const wasRunning = useRef(false)
+  const loadFavorites = useCallback(() => api.getFavorites().then(setFavorites).catch(() => {}), [])
 
   const loadInfo = useCallback(async () => {
     const i = await api.getFinderSettings()
@@ -228,10 +366,11 @@ export default function ProductFinder() {
     return i
   }, [])
 
-  const search = useCallback(async (filters: FinderFilters, cpcV: number | null, cvrV: number | null) => {
+  const search = useCallback(async (filters: FinderFilters, cpcV: number | null, cvrV: number | null, page = { limit: 200, offset: 0 }) => {
     setLoading(true)
     try {
-      setResult(await api.getFinderProducts({ ...filters, ...(cpcV != null && { cpc: cpcV }), ...(cvrV != null && { cvrPct: cvrV }) }))
+      setResult(await api.getFinderProducts({ ...filters, ...(cpcV != null && { cpc: cpcV }), ...(cvrV != null && { cvrPct: cvrV }), ...page }))
+      setOffset(page.offset)
     } catch (err) {
       addToast(err instanceof Error ? err.message : 'Erro ao buscar produtos', 'error')
     } finally { setLoading(false) }
@@ -243,13 +382,14 @@ export default function ProductFinder() {
       search(i.settings.filters, i.settings.cpc, i.settings.cvrPct)
     }).catch((err) => addToast(err instanceof Error ? err.message : 'Erro ao carregar', 'error'))
     api.getTestedProducts().then(setTested).catch(() => setTested({ rows: [], real: null as unknown as FinderReal }))
-  }, [loadInfo, search, addToast])
+    loadFavorites()
+  }, [loadInfo, search, addToast, loadFavorites])
 
   // While a scan runs, check every 10 s; refresh the list when it ends.
   const running = !!info?.scan.running
   useEffect(() => {
     if (!running) {
-      if (wasRunning.current && f) search(f, toNum(cpc), toNum(cvr))
+      if (wasRunning.current && f) search(f, toNum(cpc), toNum(cvr), { limit: pageSize, offset: 0 })
       wasRunning.current = false
       return
     }
@@ -271,7 +411,24 @@ export default function ProductFinder() {
     <input className="input" inputMode="decimal" value={fmtNum(f[k])} placeholder={placeholder}
       onChange={(e) => set(k, toNum(e.target.value))} />
   )
-  const apply = (next = f) => search(next, cpcN, cvrN)
+  const apply = (next = f, page = { limit: pageSize, offset: 0 }) => search(next, cpcN, cvrN, page)
+  const toggleFavorite = async (p: FinderProduct) => {
+    setFavBusy(p.id)
+    try {
+      if (p.favoriteId) {
+        await api.removeFavorite(p.favoriteId)
+        setResult((r) => r && { ...r, items: r.items.map((x) => (x.id === p.id ? { ...x, favoriteId: null } : x)) })
+      } else {
+        const fav = await api.addFavorite(p.id)
+        setResult((r) => r && { ...r, items: r.items.map((x) => (x.id === p.id ? { ...x, favoriteId: fav.id } : x)) })
+        addToast('Adicionado aos favoritos', 'success')
+      }
+      loadFavorites()
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : 'Erro', 'error')
+    } finally { setFavBusy(null) }
+  }
+  const dropped = result ? (Object.entries(result.dropped) as Array<[FinderDropReason, number]>).filter(([, n]) => n > 0).sort((x, y) => y[1] - x[1]) : []
   const saveDefaults = async () => {
     if (!cpcN || !cvrN) { addToast('Preencha o CPC e a conversão', 'error'); return }
     setSavingDefaults(true)
@@ -285,7 +442,7 @@ export default function ProductFinder() {
   const scanNow = async () => {
     try {
       const r = await api.runFinderScan()
-      addToast(r.queued ? 'Busca iniciada — leva de 1 a 3 minutos' : 'Já tem uma busca rodando', 'success')
+      addToast(r.queued ? 'Busca iniciada — leva de 10 a 15 minutos' : 'Já tem uma busca rodando', 'success')
       await loadInfo()
     } catch (err) {
       addToast(err instanceof Error ? err.message : 'Erro ao iniciar a busca', 'error')
@@ -359,12 +516,15 @@ export default function ProductFinder() {
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
         <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
           <span>
-            {running ? <><span className="spinner spinner-sm" /> Buscando produtos na Shopee…</> : <>Última busca na Shopee: {ago(scan.at)}{scan.saved != null && ` · ${int(scan.saved)} produtos lidos`}</>}
+            {running
+              ? <><span className="spinner spinner-sm" /> Buscando produtos na Shopee… {scan.calls ? `${int(scan.calls)} consultas, ${int(scan.saved ?? 0)} produtos até agora` : ''} (leva de 10 a 15 minutos)</>
+              : <>Última busca na Shopee: {ago(scan.at)}{scan.saved != null && ` · ${int(scan.saved)} produtos lidos`}</>}
           </span>
           {result && <span>Catálogo: {int(result.catalog)} produtos · {int(result.withRate)} já com vendas por dia</span>}
           <span>Busca sozinha a cada 6 horas.</span>
           {scan.fields && <span>A Shopee não enviou: {scan.fields.replace(/^sem /, '')}</span>}
           {scan.errors && scan.errors.length > 0 && !running && <span style={{ color: '#ff8a8e' }}>Erro: {scan.errors[0]}</span>}
+          {scan.warnings && scan.warnings.length > 0 && !running && <span title={scan.warnings.slice(1).join('\n')}>{scan.warnings[0]}</span>}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-ghost btn-sm" onClick={() => setEditingTerms(true)}><Icon name="settings" size={14} /> Termos da busca</button>
@@ -372,25 +532,48 @@ export default function ProductFinder() {
         </div>
       </div>
 
+      <div className="tabs" style={{ alignSelf: 'flex-start' }}>
+        <button className={`tab${view === 'all' ? ' active' : ''}`} onClick={() => setView('all')}><Icon name="bag" size={15} /> Todos os produtos{result ? ` (${int(result.total)})` : ''}</button>
+        <button className={`tab${view === 'fav' ? ' active' : ''}`} onClick={() => { setView('fav'); loadFavorites() }}>★ Favoritos{favorites ? ` (${favorites.rows.length})` : ''}</button>
+      </div>
+
+      {view === 'fav' ? (
+        <FavoritesPanel data={favorites} onChanged={loadFavorites} onLink={setLinkFor} />
+      ) : (<>
       {/* Results */}
-      <Panel title={result ? `${int(result.total)} produtos encontrados${result.total > result.items.length ? ` · mostrando os ${result.items.length} primeiros` : ''}` : 'Produtos'}
+      <Panel title={result ? `${int(result.total)} produtos passam nos filtros${result.total > result.items.length ? ` · mostrando ${int(result.offset + 1)}–${int(result.offset + result.items.length)}` : ''}` : 'Produtos'}
+        right={
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>Por página</span>
+            <select className="select" value={pageSize} onChange={(e) => { const n = Number(e.target.value); setPageSize(n); apply(f, { limit: n, offset: 0 }) }} style={{ width: 'auto', padding: '4px 8px' }}>
+              {PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </div>
+        }
         hint={<>
           <b>Vendas/dia</b> vem de duas leituras com 1 dia de diferença, porque a Shopee só informa o total vendido. Na primeira busca essa coluna fica vazia.{' '}
           <b>CPC máx.</b> é o maior custo por clique que ainda empata no dia 1. <b>Lucro dia 1</b> é a cada R$ 100 de orçamento, já com o imposto.
         </>}>
+        {result && result.catalog > 0 && (
+          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            De <b>{int(result.catalog)}</b> produtos no catálogo, <b>{int(result.total)}</b> passam.
+            {dropped.length > 0 && <> Ficaram de fora: {dropped.map(([k, n], i) => <span key={k}>{i > 0 && ' · '}<b>{int(n)}</b> {DROP_LABEL[k]}</span>)}.</>}
+            {dropped[0] && result.total < 50 && <span style={{ color: 'var(--text-muted)' }}> Para ver mais, afrouxe o filtro que mais corta ({DROP_LABEL[dropped[0][0]]}).</span>}
+          </div>
+        )}
         <div className="table-wrapper">
           <table>
             <thead>
               <tr>
-                <th>Produto</th><th className="num">Preço</th><th className="num">Comissão</th><th className="num">Vendidos</th>
+                <th /><th>Produto</th><th className="num">Preço</th><th className="num">Comissão</th><th className="num">Vendidos</th>
                 <th className="num">Vendas/dia</th><th className="num">Nota</th><th className="num">CPC máx. dia 1</th><th className="num">Lucro dia 1 / R$100</th><th />
               </tr>
             </thead>
             <tbody>
               {!result || (loading && result.items.length === 0) ? (
-                <tr><td colSpan={9}><Skeleton height={16} /></td></tr>
+                <tr><td colSpan={10}><Skeleton height={16} /></td></tr>
               ) : result.items.length === 0 ? (
-                <tr><td colSpan={9} style={{ textAlign: 'center', padding: 28, color: 'var(--text-muted)' }}>
+                <tr><td colSpan={10} style={{ textAlign: 'center', padding: 28, color: 'var(--text-muted)' }}>
                   {result.catalog === 0
                     ? <>Ainda não há produtos. Clique em <b>Buscar na Shopee agora</b>. A primeira busca leva de 1 a 3 minutos.</>
                     : 'Nenhum produto passa nesses filtros. Afrouxe a faixa de preço ou de comissão.'}
@@ -401,6 +584,7 @@ export default function ProductFinder() {
                 const trendDown = p.trend != null && p.trend <= 0.7
                 return (
                   <tr key={p.id} style={{ opacity: loading ? 0.6 : 1 }}>
+                    <td style={{ width: 36, paddingRight: 0 }}><Star on={!!p.favoriteId} busy={favBusy === p.id} onClick={() => toggleFavorite(p)} /></td>
                     <td style={{ maxWidth: 340 }}>
                       <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                         {p.imageUrl ? <img src={p.imageUrl} alt="" width={44} height={44} loading="lazy" style={{ borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} /> : <div style={{ width: 44, height: 44, borderRadius: 8, background: 'rgba(255,255,255,0.05)', flexShrink: 0 }} />}
@@ -441,12 +625,20 @@ export default function ProductFinder() {
             </tbody>
           </table>
         </div>
+        {result && result.total > pageSize && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
+            <button className="btn btn-secondary btn-sm" disabled={loading || offset === 0} onClick={() => apply(f, { limit: pageSize, offset: Math.max(0, offset - pageSize) })}>← Anterior</button>
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Página {int(Math.floor(offset / pageSize) + 1)} de {int(Math.ceil(result.total / pageSize))}</span>
+            <button className="btn btn-secondary btn-sm" disabled={loading || offset + pageSize >= result.total} onClick={() => apply(f, { limit: pageSize, offset: offset + pageSize })}>Próxima →</button>
+          </div>
+        )}
       </Panel>
 
       <TestedPanel rows={tested?.rows ?? null} real={tested?.real ?? null} />
+      </>)}
 
       {editingTerms && <TermsModal terms={info.settings.terms} defaults={info.defaults.terms} onClose={() => setEditingTerms(false)} onSaved={() => loadInfo().catch(() => {})} />}
-      {linkFor && <LinkModal product={linkFor} onClose={() => { setLinkFor(null); api.getTestedProducts().then(setTested).catch(() => {}) }} />}
+      {linkFor && <LinkModal product={linkFor} onClose={() => { setLinkFor(null); api.getTestedProducts().then(setTested).catch(() => {}); loadFavorites() }} />}
     </div>
   )
 }

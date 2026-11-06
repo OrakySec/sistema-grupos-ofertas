@@ -146,11 +146,24 @@ export async function scheduleLeadsTick(): Promise<void> {
   await leadsQueue.add('leads-tick', {}, { jobId: 'leads-tick-repeat', repeat: { every: LEADS_TICK_MS } });
 }
 
+// The catalog scan takes several minutes, so it has its own queue and never
+// holds up the link checks or the ads sync.
+export const finderQueue = new Queue('finder', {
+  connection,
+  defaultJobOptions: {
+    attempts: 1,
+    removeOnComplete: { count: 50, age: 60 * 60 * 24 * 3 },
+    removeOnFail: { count: 50, age: 60 * 60 * 24 * 3 },
+  },
+});
+
 const PRODUCT_FINDER_TICK_MS = 30 * 60 * 1000;
 
 /** Product finder: every 30 min checks whether the catalog scan (every 6 h) is due. */
 export async function scheduleProductFinder(): Promise<void> {
-  await linkMonitorQueue.add('product-finder-tick', {}, { jobId: 'product-finder-tick-repeat', repeat: { every: PRODUCT_FINDER_TICK_MS } });
+  // First version ran on the link-monitor queue — drop that schedule.
+  await linkMonitorQueue.removeRepeatable('product-finder-tick', { every: PRODUCT_FINDER_TICK_MS }, 'product-finder-tick-repeat').catch(() => false);
+  await finderQueue.add('product-finder-tick', {}, { jobId: 'product-finder-tick-repeat', repeat: { every: PRODUCT_FINDER_TICK_MS } });
 }
 
 const ADS_SYNC_MS = 60 * 60 * 1000; // hourly

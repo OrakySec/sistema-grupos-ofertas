@@ -4,7 +4,7 @@ import prisma from './lib/prisma';
 import { addSendOfferJob, scheduleLinkMonitor, scheduleSilentGroupCheck, scheduleMemberSnapshot, scheduleShopeeHunter } from './lib/queue';
 import { hunterTick } from './lib/shopeeHunter';
 import { expireCoupons } from './lib/coupons';
-import { scheduleAdsSync, scheduleLeadsTick, scheduleProductFinder } from './lib/queue';
+import { scheduleAdsSync, scheduleLeadsTick, scheduleProductFinder, finderQueue } from './lib/queue';
 import { finderTick } from './lib/productFinder';
 import { leadsTick } from './lib/leadQueue';
 import { autoReconnect } from './lib/autoReconnect';
@@ -573,9 +573,8 @@ const linkMonitorWorker = new Worker(
       const results = await hunterTick();
       if (results.length) console.log('[Worker] Shopee search:', JSON.stringify(results));
     } else if (job.name === 'product-finder-tick' || job.name === 'product-finder-scan') {
-      // The tick scans when the last scan is 6 h old; the panel's button forces one.
-      const r = await finderTick(job.name === 'product-finder-scan');
-      if (r) console.log('[Worker] Product finder scan:', JSON.stringify({ calls: r.calls, found: r.found, saved: r.saved, errors: r.errors }));
+      // Left over from the first version (now on the 'finder' queue) — pass it on.
+      await finderQueue.add(job.name, {}, { removeOnComplete: true });
     } else if (job.name === 'snapshot-wa-members') {
       const results = await snapshotWhatsAppGroups();
       console.log('[Worker] WhatsApp member snapshot:', JSON.stringify(results));
@@ -616,6 +615,21 @@ let lastHelpersAt = 0;
 // Lists that follow a source group: new members join the queue once a day.
 const SOURCE_SYNC_EVERY_MS = 30 * 60 * 1000;
 let lastSourceSyncAt = 0;
+// Product finder: the tick scans when the last scan is 6 h old; the panel's button forces one.
+const finderWorker = new Worker(
+  'finder',
+  async (job) => {
+    const r = await finderTick(job.name === 'product-finder-scan');
+    if (r) console.log('[Worker] Product finder scan:', JSON.stringify({ calls: r.calls, found: r.found, saved: r.saved, errors: r.errors, warnings: r.warnings }));
+  },
+  // A scan can take ~15 min; the long lock keeps BullMQ from handing it to another worker meanwhile.
+  { connection: redis, concurrency: 1, lockDuration: 5 * 60 * 1000 },
+);
+
+finderWorker.on('failed', (job, err) => {
+  console.error(`[Worker] Product finder ${job?.id} failed:`, err.message);
+});
+
 const leadsWorker = new Worker(
   'leads',
   async () => {
@@ -685,6 +699,7 @@ const shutdown = async (signal: string) => {
     await worker.close();
     await linkMonitorWorker.close();
     await leadsWorker.close();
+    await finderWorker.close();
     await redis.quit();
     await prisma.$disconnect();
     console.log('[Worker] Shutdown complete');

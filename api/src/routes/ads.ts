@@ -12,8 +12,11 @@ import { createShortUrl } from '../lib/shortener';
 import { sendViewContent } from '../lib/metaCapi';
 import { salesAnalysis, taxConfig } from '../lib/salesAnalysis';
 import { tenantIdOf } from '../lib/tenant';
-import { finderSettings, saveFinderSettings, finderProducts, testedProducts, scanState, markScanQueued, DEFAULT_SETTINGS, breakEvenCommission } from '../lib/productFinder';
-import { linkMonitorQueue } from '../lib/queue';
+import {
+  finderSettings, saveFinderSettings, finderProducts, testedProducts, scanState, markScanQueued, DEFAULT_SETTINGS, breakEvenCommission,
+  listFavorites, addFavorite, updateFavorite, removeFavorite, markFavoriteTesting,
+} from '../lib/productFinder';
+import { finderQueue } from '../lib/queue';
 
 const LEVELS = ['CAMPAIGN', 'ADSET', 'AD'] as const;
 const DAY_MS = 86400000;
@@ -454,17 +457,41 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
 
   fastify.post('/finder/scan', async (request, reply) => {
     const s = await scanState();
-    if (s.running && s.startedAt && Date.now() - Date.parse(s.startedAt) < 15 * 60000) return { queued: false, running: true };
+    if (s.running && s.startedAt && Date.now() - Date.parse(s.startedAt) < 40 * 60000) return { queued: false, running: true };
     const creds = await prisma.setting.count({ where: { key: { in: ['shopee_app_id', 'shopee_app_secret'] }, value: { not: '' } } });
     if (creds < 2) return reply.code(400).send({ message: 'Configure o App ID e o Secret da Shopee (Configurações → Links de Afiliado)' });
     await markScanQueued();
-    await linkMonitorQueue.add('product-finder-scan', {}, { removeOnComplete: true });
+    await finderQueue.add('product-finder-scan', {}, { removeOnComplete: true });
     return { queued: true };
   });
 
   fastify.get<{ Querystring: Record<string, string> }>('/finder/products', async (request) => finderProducts(tenantIdOf(request), request.query ?? {}));
 
   fastify.get('/finder/tested', async () => testedProducts(30));
+
+  // Favorites: the products picked to test one by one.
+  fastify.get('/finder/favorites', async (request) => listFavorites(tenantIdOf(request)));
+
+  fastify.post<{ Body: { productId?: string } }>('/finder/favorites', async (request, reply) => {
+    try {
+      return await addFavorite(tenantIdOf(request), String(request.body?.productId ?? ''));
+    } catch (err) {
+      return reply.code(400).send({ message: err instanceof Error ? err.message : 'Erro' });
+    }
+  });
+
+  fastify.patch<{ Params: { id: string }; Body: { status?: string; note?: string | null } }>('/finder/favorites/:id', async (request, reply) => {
+    try {
+      return await updateFavorite(tenantIdOf(request), request.params.id, request.body ?? {});
+    } catch (err) {
+      return reply.code(400).send({ message: err instanceof Error ? err.message : 'Erro' });
+    }
+  });
+
+  fastify.delete<{ Params: { id: string } }>('/finder/favorites/:id', async (request) => {
+    await removeFavorite(tenantIdOf(request), request.params.id);
+    return { ok: true };
+  });
 
   // ── Ad links ──────────────────────────────────────────────────────────────
 
@@ -486,9 +513,11 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
       return reply.code(502).send({ message: `Shopee não gerou o link: ${err instanceof Error ? err.message : err}` });
     }
     const finalLink = request.body?.viaOurLink === false ? shopeeLink : (await createShortUrl(shopeeLink)).shortUrl;
-    return prisma.adLink.create({
+    const link = await prisma.adLink.create({
       data: { code, label: request.body?.label?.trim() || null, metaAdId: request.body?.metaAdId || null, productUrl, shopeeLink, finalLink },
     });
+    await markFavoriteTesting(productUrl).catch(() => 0);
+    return link;
   });
 
   // GET /ads/links/:id/clicks — latest requests to that link (who opened it)
