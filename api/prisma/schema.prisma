@@ -461,10 +461,63 @@ model ShopeeConversion {
   purchaseEventAt       DateTime?
   purchaseEventAttempts Int       @default(0)
   purchaseClickId       String?
+  channel               String? // Shopee "referrer": where the click came from (WhatsApp, Instagram, Telegram, Others…)
   updatedAt             DateTime  @updatedAt
+
+  orderItems ShopeeOrderItem[]
 
   @@index([purchaseTime])
   @@index([subCode, purchaseTime])
+}
+
+// One item of one order of a conversion — what the sales analysis groups by
+// (category, product, direct/indirect, Shopee × seller commission, price
+// band, hour, days between click and purchase). Rebuilt on every sync.
+model ShopeeOrderItem {
+  id                String    @id // <conversion key>|<orderId>|<item index>
+  conversionId      String
+  tenantId          String    @default("tenant_default")
+  orderId           String
+  orderStatus       String // COMPLETED | CANCELLED | PENDING (anything not final)
+  purchaseTime      DateTime
+  clickTime         DateTime?
+  subCode           String?
+  channel           String?
+  itemId            String?
+  itemName          String?
+  imageUrl          String?   @db.Text
+  shopId            String?
+  shopName          String?
+  categoryL1        String?
+  qty               Int       @default(1)
+  price             Float     @default(0) // unit price
+  amount            Float     @default(0) // paid for this item line
+  commission        Float     @default(0)
+  shopeeCommission  Float?
+  sellerCommission  Float?
+  attribution       String? // DIRECT (same product/shop as the link) | INDIRECT | null = unknown
+  fraud             Boolean   @default(false)
+
+  conversion ShopeeConversion @relation(fields: [conversionId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, purchaseTime])
+  @@index([subCode, purchaseTime])
+  @@index([conversionId])
+}
+
+// Ad spend typed in by hand for a sub-ID that isn't a Meta ad of ours
+// (another ad account, TikTok, a boosted post…), spread over its dates.
+model ManualAdSpend {
+  id        String   @id @default(cuid())
+  tenantId  String   @default("tenant_default")
+  subCode   String
+  startDate String // YYYY-MM-DD (Brasília)
+  endDate   String
+  amount    Float
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, subCode])
 }
 
 // Browser data of a real ad click, kept so a later Shopee sale can be sent

@@ -10,6 +10,8 @@ import { runAdRules } from '../lib/adRules';
 import { generateShortLink } from '../lib/shopeeApi';
 import { createShortUrl } from '../lib/shortener';
 import { sendViewContent } from '../lib/metaCapi';
+import { salesAnalysis, taxConfig } from '../lib/salesAnalysis';
+import { tenantIdOf } from '../lib/tenant';
 
 const LEVELS = ['CAMPAIGN', 'ADSET', 'AD'] as const;
 const DAY_MS = 86400000;
@@ -282,6 +284,50 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
   });
 
   fastify.get('/actions', async () => prisma.metaRuleAction.findMany({ orderBy: { createdAt: 'desc' }, take: 200 }));
+
+  // ── Sales analysis (lib/salesAnalysis.ts) ─────────────────────────────────
+
+  // GET /ads/sales-analysis?from&to&subCode — every section of the dashboard ("" = sales without sub-ID)
+  fastify.get<{ Querystring: { from?: string; to?: string; subCode?: string } }>('/sales-analysis', async (request, reply) => {
+    const today = accountToday(-3);
+    const to = request.query.to || today;
+    const from = request.query.from || shiftDate(to, -6);
+    if (!brtDateStart(from) || !brtDateStart(to) || to < from) return reply.code(400).send({ message: 'Período inválido' });
+    const subCode = typeof request.query.subCode === 'string' ? request.query.subCode.trim().toLowerCase() : undefined;
+    return salesAnalysis({ from, to, subCode, tenantId: tenantIdOf(request) });
+  });
+
+  // PUT /ads/taxes { metaTaxPct?, revenueTaxPct? }
+  fastify.put<{ Body: { metaTaxPct?: number; revenueTaxPct?: number } }>('/taxes', async (request, reply) => {
+    const pct = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v < 100 ? String(v) : null);
+    for (const [key, v] of [['ads_meta_tax_pct', request.body?.metaTaxPct], ['ads_revenue_tax_pct', request.body?.revenueTaxPct]] as const) {
+      if (v === undefined) continue;
+      const s = pct(v);
+      if (s === null) return reply.code(400).send({ message: 'Use uma porcentagem entre 0 e 99.' });
+      await prisma.setting.upsert({ where: { key }, update: { value: s }, create: { key, value: s } });
+    }
+    return taxConfig();
+  });
+
+  // POST /ads/manual-spend { subCode, startDate, endDate, amount, note? } — spend that isn't a Meta ad of ours
+  fastify.post<{ Body: { subCode?: string; startDate?: string; endDate?: string; amount?: number; note?: string } }>('/manual-spend', async (request, reply) => {
+    const b = request.body ?? {};
+    const subCode = String(b.subCode ?? '').trim().toLowerCase();
+    const amount = Number(b.amount);
+    if (!subCode) return reply.code(400).send({ message: 'Informe o sub-ID.' });
+    if (!Number.isFinite(amount) || amount <= 0) return reply.code(400).send({ message: 'Informe o valor investido.' });
+    const startDate = String(b.startDate ?? '');
+    const endDate = String(b.endDate ?? startDate);
+    if (!brtDateStart(startDate) || !brtDateStart(endDate) || endDate < startDate) return reply.code(400).send({ message: 'Período inválido' });
+    return reply.code(201).send(await prisma.manualAdSpend.create({
+      data: { tenantId: tenantIdOf(request), subCode, startDate, endDate, amount: r2(amount), note: b.note ? String(b.note).slice(0, 200) : null },
+    }));
+  });
+
+  fastify.delete<{ Params: { id: string } }>('/manual-spend/:id', async (request, reply) => {
+    const r = await prisma.manualAdSpend.deleteMany({ where: { id: request.params.id, tenantId: tenantIdOf(request) } });
+    return r.count ? { ok: true } : reply.code(404).send({ message: 'Não encontrado' });
+  });
 
   // ── Sales (every sub-ID, including groups / automatic search) ────────────
 

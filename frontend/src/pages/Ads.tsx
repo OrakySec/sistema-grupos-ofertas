@@ -5,8 +5,9 @@ import Icon from '../components/Icon'
 import Modal from '../components/Modal'
 import Toggle from '../components/Toggle'
 import { Skeleton } from '../components/LoadingSkeleton'
+import SalesAnalysis from '../components/SalesAnalysis'
 
-type Tab = 'campaigns' | 'sales' | 'links' | 'history' | 'config'
+type Tab = 'analysis' | 'campaigns' | 'sales' | 'links' | 'history' | 'config'
 
 const brl = (v: number | null | undefined) =>
   v === null || v === undefined ? '—' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -886,7 +887,7 @@ function ConfigTab({ config, onSaved }: { config: AdsConfig; onSaved: () => void
 
 export default function Ads() {
   const { addToast } = useToast()
-  const [tab, setTab] = useState<Tab>('campaigns')
+  const [tab, setTab] = useState<Tab>('analysis')
   const [config, setConfig] = useState<AdsConfig | null>(null)
   const [to, setTo] = useState(brtToday())
   const [from, setFrom] = useState(shiftDay(brtToday(), -6))
@@ -927,6 +928,7 @@ export default function Ads() {
             <button className="tab" onClick={() => { setFrom(brtToday()); setTo(brtToday()) }}>Hoje</button>
             <button className="tab" onClick={() => preset(7)}>7 dias</button>
             <button className="tab" onClick={() => preset(30)}>30 dias</button>
+            <button className="tab" onClick={() => preset(90)}>90 dias</button>
           </div>
           <input className="input" type="date" value={from} max={to} onChange={(e) => e.target.value && setFrom(e.target.value)} style={{ width: 'auto', colorScheme: 'dark' }} />
           <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>até</span>
@@ -954,6 +956,7 @@ export default function Ads() {
       <div style={{ marginBottom: 16, overflowX: 'auto' }}>
         <div className="tabs">
           {([
+            ['analysis', 'trendUp', 'Análise de vendas'],
             ['campaigns', 'target', 'Campanhas'],
             ['sales', 'bag', 'Vendas Shopee'],
             ['links', 'link', 'Links de anúncio'],
@@ -967,6 +970,8 @@ export default function Ads() {
 
       {!config ? (
         <Skeleton height={300} borderRadius={14} />
+      ) : tab === 'analysis' ? (
+        <SalesAnalysis from={from} to={to} reloadKey={reloadKey} />
       ) : tab === 'campaigns' ? (
         <CampaignsTab from={from} to={to} config={config} reloadKey={reloadKey} />
       ) : tab === 'sales' ? (

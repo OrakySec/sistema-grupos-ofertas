@@ -1054,6 +1054,23 @@ class ApiClient {
     return this.request('GET', '/ads/actions')
   }
 
+  // ── Sales analysis (Tráfego pago → Análise de vendas) ──
+  async getSalesAnalysis(from: string, to: string, subCode?: string): Promise<SalesAnalysis> {
+    return this.request('GET', `/ads/sales-analysis?from=${from}&to=${to}${subCode !== undefined ? `&subCode=${encodeURIComponent(subCode)}` : ''}`)
+  }
+
+  async saveAdTaxes(data: { metaTaxPct?: number; revenueTaxPct?: number }): Promise<{ metaTaxPct: number; revenueTaxPct: number }> {
+    return this.request('PUT', '/ads/taxes', data)
+  }
+
+  async addManualSpend(data: { subCode: string; startDate: string; endDate: string; amount: number; note?: string }): Promise<unknown> {
+    return this.request('POST', '/ads/manual-spend', data)
+  }
+
+  async deleteManualSpend(id: string): Promise<{ ok: boolean }> {
+    return this.request('DELETE', `/ads/manual-spend/${id}`)
+  }
+
   async getAdSales(from: string, to: string): Promise<{ rows: Array<{ subCode: string; label: string; source: string; orders: number; gmv: number; pending: number; confirmed: number; cancelled: number }> }> {
     return this.request('GET', `/ads/sales?from=${from}&to=${to}`)
   }
@@ -1332,3 +1349,30 @@ class ApiClient {
 
 export const api = new ApiClient(BASE_URL)
 export default api
+
+// ── Sales analysis ──────────────────────────────────────────────────────────
+export interface SalesAgg { orders: number; commission: number }
+export interface SalesAnalysis {
+  from: string
+  to: string
+  subCode: string | null
+  days: number
+  summary: { commission: number; orders: number; gmv: number; commissionPerDay: number; ordersPerDay: number; gmvPerDay: number; commissionPerOrder: number | null }
+  status: Array<SalesAgg & { status: 'COMPLETED' | 'CANCELLED' | 'PENDING' }>
+  attribution: { direct: SalesAgg; indirect: SalesAgg; unknown: SalesAgg }
+  channels: Array<SalesAgg & { channel: string }>
+  categories: Array<SalesAgg & { category: string }>
+  split: { shopee: number; seller: number } | null
+  hourly: Array<{ hour: number; orders: number; avg: number }>
+  cookieDays: Array<SalesAgg & { day: number; share: number }>
+  topProducts: Array<SalesAgg & { name: string; image: string | null; itemId: string | null; shopId: string | null; link: string | null }>
+  priceBands: Array<{ label: string; orders: number; commission: number; perOrder: number | null; sameDayShare: number | null; shareOfCommission: number }>
+  subIds: Array<{
+    subCode: string; label: string; source: string; orders: number; gmv: number; commission: number; direct: number; indirect: number
+    metaSpend: number; manualSpend: number; manualEntries: Array<{ id: string; startDate: string; endDate: string; amount: number; inPeriod: number }>
+  }>
+  investment: { metaSpend: number; manualSpend: number; total: number }
+  taxes: { metaTaxPct: number; revenueTaxPct: number }
+  hasItemDetail: boolean
+  lastSync: { at?: string; error?: string; days?: number; fields?: string } | null
+}
