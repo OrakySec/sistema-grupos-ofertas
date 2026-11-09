@@ -405,6 +405,7 @@ export interface AdRow {
   children: number
   links?: number
   metrics: AdMetrics
+  estimated: boolean
   rule: MetaRule | null
 }
 
@@ -412,7 +413,7 @@ export interface AdsConfig {
   tokenSet: boolean
   accounts: string
   version: string
-  lastMetaSync: { at: string; results: Array<{ account: string; campaigns?: number; adsets?: number; ads?: number; insightRows?: number; error?: string }> } | null
+  lastMetaSync: { at: string; results: Array<{ account: string; campaigns?: number; adsets?: number; ads?: number; insightRows?: number; links?: { checked: number; withUrl: number; linked: number }; linksError?: string; error?: string }> } | null
   lastShopeeSync: { at: string; nodes: number; saved: number; error?: string } | null
   ruleDefaults: { maxCpc: number; days: number; mode: 'CONSECUTIVE' | 'AVERAGE'; minSpend: number; action: 'NOTIFY' | 'PAUSE' }
   pixel: {
@@ -427,8 +428,7 @@ export interface AdLinkItem {
   id: string
   code: string
   label: string | null
-  metaAdId: string | null
-  adName: string | null
+  ads: Array<{ id: string; source: 'AUTO' | 'MANUAL'; name: string; status: string | null }>
   productUrl: string
   shopeeLink: string
   finalLink: string
@@ -1040,7 +1040,7 @@ class ApiClient {
     return this.request('PUT', '/ads/campaigns-visibility', data)
   }
 
-  async getAdsOverview(q: { level: AdLevel; parentId?: string; from: string; to: string }): Promise<{ level: AdLevel; from: string; to: string; rows: AdRow[]; totals: AdMetrics }> {
+  async getAdsOverview(q: { level: AdLevel; parentId?: string; from: string; to: string }): Promise<{ level: AdLevel; from: string; to: string; rows: AdRow[]; totals: AdMetrics; estimated: boolean }> {
     const qs = new URLSearchParams({ level: q.level, from: q.from, to: q.to })
     if (q.parentId) qs.set('parentId', q.parentId)
     return this.request('GET', `/ads/overview?${qs.toString()}`)
@@ -1305,8 +1305,12 @@ class ApiClient {
     return this.request('GET', `/ads/links/${id}/clicks`)
   }
 
-  async updateAdLink(id: string, data: { metaAdId?: string | null; label?: string }): Promise<AdLinkItem> {
+  async updateAdLink(id: string, data: { label?: string }): Promise<AdLinkItem> {
     return this.request('PATCH', `/ads/links/${id}`, data)
+  }
+
+  async setAdLinkAds(id: string, adIds: string[]): Promise<{ ok: boolean }> {
+    return this.request('PUT', `/ads/links/${id}/ads`, { adIds })
   }
 
   async getAdsList(): Promise<Array<{ id: string; name: string; status: string; campaign: string }>> {

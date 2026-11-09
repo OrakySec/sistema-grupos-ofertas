@@ -10,6 +10,7 @@
  * analyze() is pure (tested); salesAnalysis() loads the period from the DB.
  */
 import prisma from './prisma';
+import { linkLabel } from './adLinks';
 import { brtDateStart, toBrt } from './time';
 
 const DAY_MS = 86_400_000;
@@ -243,7 +244,7 @@ export async function salesAnalysis(params: { from: string; to: string; subCode?
   const [rows, convs, links, daily, manual, taxes, lastSync] = await Promise.all([
     prisma.shopeeOrderItem.findMany({ where: { tenantId: params.tenantId, purchaseTime: { gte: start, lt: end }, ...subFilter } }),
     prisma.shopeeConversion.findMany({ where: { purchaseTime: { gte: start, lt: end }, ...subFilter, orderItems: { none: {} } } }),
-    prisma.adLink.findMany({ select: { code: true, label: true, metaAdId: true } }),
+    prisma.adLink.findMany({ select: { code: true, label: true, ads: { select: { adId: true } } } }),
     prisma.metaAdDaily.findMany({ where: { date: { gte: params.from, lte: params.to } }, select: { adId: true, spend: true } }),
     prisma.manualAdSpend.findMany({ where: { tenantId: params.tenantId } }),
     taxConfig(),
@@ -256,7 +257,9 @@ export async function salesAnalysis(params: { from: string; to: string; subCode?
   const spendByAd = new Map<string, number>();
   for (const d of daily) spendByAd.set(d.adId, (spendByAd.get(d.adId) ?? 0) + d.spend);
   const metaSpendBySub = new Map<string, number>();
-  for (const l of links) if (l.metaAdId) metaSpendBySub.set(l.code, (metaSpendBySub.get(l.code) ?? 0) + (spendByAd.get(l.metaAdId) ?? 0));
+  for (const l of links) {
+    for (const { adId } of l.ads) metaSpendBySub.set(l.code, (metaSpendBySub.get(l.code) ?? 0) + (spendByAd.get(adId) ?? 0));
+  }
   const manualBySub = new Map<string, { amount: number; entries: Array<{ id: string; startDate: string; endDate: string; amount: number; inPeriod: number }> }>();
   for (const e of manual) {
     const v = manualSpendIn(e, params.from, params.to);
@@ -266,11 +269,12 @@ export async function salesAnalysis(params: { from: string; to: string; subCode?
     m.entries.push({ id: e.id, startDate: e.startDate, endDate: e.endDate, amount: e.amount, inPeriod: r2(v) });
     manualBySub.set(e.subCode, m);
   }
-  const adNames = new Map((await prisma.metaEntity.findMany({ where: { id: { in: links.map((l) => l.metaAdId).filter(Boolean) as string[] } }, select: { id: true, name: true } })).map((e) => [e.id, e.name]));
+  const adNames = new Map((await prisma.metaEntity.findMany({ where: { id: { in: links.flatMap((l) => l.ads.map((a) => a.adId)) } }, select: { id: true, name: true } })).map((e) => [e.id, e.name]));
+  const labelOf = (l: (typeof links)[number]) => linkLabel(l, l.ads.map((a) => adNames.get(a.adId)));
   const linkBy = new Map(links.map((l) => [l.code, l]));
   const subIds = a.subIds.map((s) => {
     const link = linkBy.get(s.subCode);
-    const label = link ? (link.label || (link.metaAdId ? adNames.get(link.metaAdId) : null) || s.subCode) : s.subCode || 'Sem sub-ID';
+    const label = link ? labelOf(link) : s.subCode || 'Sem sub-ID';
     const source = link ? 'Anúncio' : s.subCode.startsWith('busca') ? 'Busca Shopee' : s.subCode ? 'Outro sub-ID' : 'Sem sub-ID';
     const metaSpend = r2(metaSpendBySub.get(s.subCode) ?? 0);
     const m = manualBySub.get(s.subCode);
@@ -284,7 +288,7 @@ export async function salesAnalysis(params: { from: string; to: string; subCode?
     const m = manualBySub.get(code);
     subIds.push({
       subCode: code, orders: 0, gmv: 0, commission: 0, direct: 0, indirect: 0,
-      label: link?.label || (link?.metaAdId ? adNames.get(link.metaAdId) : null) || code, source: 'Anúncio',
+      label: link ? labelOf(link) : code, source: 'Anúncio',
       metaSpend: r2(spend), manualSpend: r2(m?.amount ?? 0), manualEntries: m?.entries ?? [],
     });
   }

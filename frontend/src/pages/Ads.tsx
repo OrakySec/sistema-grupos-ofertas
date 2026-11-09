@@ -120,19 +120,20 @@ function RuleModal({ row, defaults, onClose, onSaved }: { row: AdRow; defaults: 
 
 // ── Campaigns / ad sets / ads ───────────────────────────────────────────────
 
-function MetricsCells({ m }: { m: AdMetrics }) {
+function MetricsCells({ m, estimated }: { m: AdMetrics; estimated?: boolean }) {
+  const approx = estimated ? <span title="Estimativa: o link deste anúncio é usado em outros anúncios, e a venda foi dividida pelos cliques">≈ </span> : null
   return (
     <>
       <td className="tabular" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{brl(m.spend)}</td>
       <td className="tabular" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{int(m.linkClicks)}{m.realClicks > 0 && <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }} title="Cliques que chegaram ao nosso link vindos do anúncio (com fbclid), sem robôs">{int(m.realClicks)} do anúncio</div>}</td>
       <td className="tabular" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{brl(m.cpcLink)}</td>
-      <td className="tabular" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{int(m.orders)}</td>
+      <td className="tabular" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{approx}{int(m.orders)}</td>
       <td className="tabular" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-        {brl(m.commissionPending + m.commissionConfirmed)}
+        {approx}{brl(m.commissionPending + m.commissionConfirmed)}
         <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{brl(m.commissionConfirmed)} confirm.</div>
       </td>
       <td className="tabular" style={{ textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600, color: profitColor(m.profitProjected) }}>
-        {brl(m.profitProjected)}
+        {approx}{brl(m.profitProjected)}
         <div style={{ fontSize: '0.7rem', fontWeight: 400, color: profitColor(m.profitConfirmed) }}>{brl(m.profitConfirmed)} confirm.</div>
       </td>
       <td className="tabular" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{m.roas === null ? '—' : `${m.roas.toLocaleString('pt-BR')}x`}</td>
@@ -341,7 +342,7 @@ function CampaignsTab({ from, to, config, reloadKey }: { from: string; to: strin
                         {row.level === 'AD' && !row.links && <span className="badge badge-pending" title="Sem link com código — as vendas deste anúncio não aparecem">sem link</span>}
                       </div>
                     </td>
-                    <MetricsCells m={row.metrics} />
+                    <MetricsCells m={row.metrics} estimated={row.estimated} />
                     <td>
                       <button className={`btn btn-sm ${breach ? 'btn-danger' : 'btn-ghost'}`} onClick={() => setEditing(row)}>
                         {rule?.enabled ? `${rule.action === 'PAUSE' ? 'Pausar' : 'Avisar'} > ${brl(rule.maxCpc)} · ${rule.days}d` : 'Configurar'}
@@ -363,6 +364,7 @@ function CampaignsTab({ from, to, config, reloadKey }: { from: string; to: strin
       <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
         Comissão e lucro "previstos" incluem vendas pendentes; "confirm." só as que a Shopee já concluiu (cancelamentos ficam de fora).
         Para as vendas aparecerem num anúncio, ele precisa usar um link criado na aba <strong>Links de anúncio</strong>.
+        {data?.estimated && <> <strong>≈</strong> é estimativa: o mesmo link está em vários anúncios e a Shopee só informa o link, então a venda é dividida pelos cliques de cada anúncio no dia. O total continua certo. Para ter o número exato de cada um, use um link por anúncio.</>}
       </div>
       {editing && <RuleModal row={editing} defaults={config.ruleDefaults} onClose={() => setEditing(null)} onSaved={load} />}
       {picking && <CampaignPicker onClose={() => setPicking(false)} onSaved={load} />}
@@ -592,6 +594,61 @@ function LinkClicksModal({ link, onClose }: { link: AdLinkItem; onClose: () => v
   )
 }
 
+function LinkAdsModal({ link, ads, onClose, onSaved }: {
+  link: AdLinkItem
+  ads: Array<{ id: string; name: string; status: string; campaign: string }>
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const { addToast } = useToast()
+  const auto = new Set(link.ads.filter((a) => a.source === 'AUTO').map((a) => a.id))
+  const [chosen, setChosen] = useState(() => new Set(link.ads.filter((a) => a.source === 'MANUAL').map((a) => a.id)))
+  const [filter, setFilter] = useState('')
+  const [busy, setBusy] = useState(false)
+  const term = filter.trim().toLowerCase()
+  const visible = ads.filter((a) => !term || `${a.campaign} ${a.name}`.toLowerCase().includes(term))
+  const free = visible.filter((a) => !auto.has(a.id))
+  const allOn = free.length > 0 && free.every((a) => chosen.has(a.id))
+  const toggle = (id: string) => setChosen((cur) => { const next = new Set(cur); if (next.has(id)) next.delete(id); else next.add(id); return next })
+  const toggleAll = () => setChosen((cur) => { const next = new Set(cur); for (const a of free) { if (allOn) next.delete(a.id); else next.add(a.id) } return next })
+  const save = async () => {
+    setBusy(true)
+    try {
+      await api.setAdLinkAds(link.id, [...chosen])
+      addToast('Anúncios do link salvos', 'success'); onSaved(); onClose()
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : 'Erro ao salvar', 'error')
+    } finally { setBusy(false) }
+  }
+  return (
+    <Modal isOpen onClose={onClose} title={`Anúncios · ${link.label || link.code}`} width={640}
+      footer={<><button className="btn btn-ghost" onClick={onClose}>Cancelar</button><button className="btn btn-primary" onClick={save} disabled={busy}>{busy ? <span className="spinner spinner-sm" /> : null} Salvar</button></>}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+          Marque todos os anúncios que usam este link, inclusive as cópias. Os marcados como <strong>automático</strong> a Meta já informou que usam o link.
+        </div>
+        <input className="input" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filtrar por campanha ou anúncio" />
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: '0.84rem', cursor: 'pointer' }}>
+          <input type="checkbox" checked={allOn} onChange={toggleAll} disabled={free.length === 0} /> Marcar todos da lista ({int(free.length)})
+        </label>
+        <div style={{ maxHeight: 340, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {visible.length === 0 && <div style={{ padding: 16, textAlign: 'center', fontSize: '0.85rem', color: 'var(--text-muted)' }}>Nenhum anúncio com esse nome.</div>}
+          {visible.map((a) => (
+            <label key={a.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '6px 4px', fontSize: '0.84rem', cursor: auto.has(a.id) ? 'default' : 'pointer' }}>
+              <input type="checkbox" checked={auto.has(a.id) || chosen.has(a.id)} disabled={auto.has(a.id)} onChange={() => toggle(a.id)} />
+              <span style={{ minWidth: 0, flex: 1 }}>
+                <span className="truncate" style={{ display: 'block' }} title={a.name}>{a.name}</span>
+                <span className="truncate" style={{ display: 'block', fontSize: '0.72rem', color: 'var(--text-muted)' }} title={a.campaign}>{a.campaign}</span>
+              </span>
+              {auto.has(a.id) && <span className="badge badge-sent">automático</span>}
+            </label>
+          ))}
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 function LinksTab() {
   const { addToast } = useToast()
   const [links, setLinks] = useState<AdLinkItem[] | null>(null)
@@ -599,6 +656,7 @@ function LinksTab() {
   const [form, setForm] = useState({ productUrl: '', metaAdId: '', label: '', viaOurLink: true })
   const [busy, setBusy] = useState(false)
   const [viewing, setViewing] = useState<AdLinkItem | null>(null)
+  const [tying, setTying] = useState<AdLinkItem | null>(null)
   const load = useCallback(() => {
     api.getAdLinks().then(setLinks).catch(() => setLinks([]))
     api.getAdsList().then(setAds).catch(() => {})
@@ -617,14 +675,6 @@ function LinksTab() {
       addToast(err instanceof Error ? err.message : 'Erro ao criar', 'error')
     } finally {
       setBusy(false)
-    }
-  }
-  const assign = async (id: string, metaAdId: string) => {
-    try {
-      await api.updateAdLink(id, { metaAdId: metaAdId || null })
-      load()
-    } catch (err) {
-      addToast(err instanceof Error ? err.message : 'Erro', 'error')
     }
   }
   const copy = (text: string) => navigator.clipboard?.writeText(text).then(() => addToast('Copiado', 'success')).catch(() => {})
@@ -671,10 +721,12 @@ function LinksTab() {
                   <button className="btn btn-ghost btn-sm" onClick={() => copy(l.finalLink)} style={{ paddingLeft: 0 }}><Icon name="copy" /> <span className="mono truncate">{l.finalLink}</span></button>
                 </td>
                 <td>
-                  <select className="select" value={l.metaAdId ?? ''} onChange={(e) => assign(l.id, e.target.value)} style={{ minWidth: 220 }}>
-                    <option value="">— sem anúncio —</option>
-                    {ads.map((a) => <option key={a.id} value={a.id}>{a.campaign ? `${a.campaign} › ` : ''}{a.name}</option>)}
-                  </select>
+                  <div style={{ minWidth: 200, maxWidth: 300 }}>
+                    {l.ads.length === 0
+                      ? <span className="badge badge-pending" title="As vendas deste link não aparecem em Campanhas">sem anúncio</span>
+                      : <div className="truncate" style={{ fontSize: '0.82rem' }} title={l.ads.map((a) => a.name).join('\n')}>{l.ads.length === 1 ? l.ads[0].name : `${int(l.ads.length)} anúncios`}</div>}
+                    <button className="btn btn-ghost btn-sm" style={{ paddingLeft: 0 }} onClick={() => setTying(l)}><Icon name="link" size={14} /> Escolher anúncios</button>
+                  </div>
                 </td>
                 <td className="mono">{l.code}</td>
                 <td>
@@ -687,6 +739,7 @@ function LinksTab() {
         </table>
       </div>
       {viewing && <LinkClicksModal link={viewing} onClose={() => setViewing(null)} />}
+      {tying && <LinkAdsModal link={tying} ads={ads} onClose={() => setTying(null)} onSaved={load} />}
     </div>
   )
 }
@@ -946,6 +999,8 @@ export default function Ads() {
             {config.lastMetaSync?.results?.map((r) => (
               <span key={r.account} style={{ color: r.error ? '#ff8a8e' : 'var(--text-secondary)' }}>
                 {' · '}{r.account}: {r.error ? `erro — ${r.error}` : `${r.campaigns ?? 0} campanhas, ${r.adsets ?? 0} conjuntos, ${r.ads ?? 0} anúncios`}
+                {r.links && `, ${r.links.linked} ligados a links automaticamente`}
+                {r.linksError && <span style={{ color: '#ff8a8e' }}> · não consegui ler os links dos anúncios: {r.linksError}</span>}
               </span>
             ))}
           </span>

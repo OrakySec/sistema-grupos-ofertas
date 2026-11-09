@@ -484,13 +484,30 @@ model AdLink {
   id         String   @id @default(cuid())
   code       String   @unique // lowercase alnum, e.g. "m7k2q9x"
   label      String?
-  metaAdId   String?
+  metaAdId   String? // legacy: copied to AdLinkAd, no longer read or written
   productUrl String   @db.Text
   shopeeLink String   @db.Text // Shopee short link carrying the code
   finalLink  String   @db.Text // what goes into the ad (ours or Shopee's)
   createdAt  DateTime @default(now())
 
+  ads AdLinkAd[]
+
   @@index([metaAdId])
+}
+
+// The ads a link runs in (lib/adLinks.ts): read from the ad's creative on the
+// Meta sync (AUTO) or chosen in the panel (MANUAL).
+model AdLinkAd {
+  id        String   @id @default(cuid())
+  linkId    String
+  adId      String // MetaEntity id, level AD
+  source    String   @default("MANUAL") // AUTO | MANUAL
+  createdAt DateTime @default(now())
+
+  link AdLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@unique([linkId, adId])
+  @@index([adId])
 }
 
 // Shopee affiliate conversions (conversionReport), re-synced while pending.

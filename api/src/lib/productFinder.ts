@@ -581,13 +581,13 @@ const shiftDay = (ymd: string, n: number) => new Date(Date.parse(ymd + 'T12:00:0
  * split into same-day (day 1) and the rest of the 7-day cookie.
  */
 export async function testedProducts(days = 30) {
-  const [links, taxes] = await Promise.all([prisma.adLink.findMany(), taxConfig()]);
+  const [links, taxes] = await Promise.all([prisma.adLink.findMany({ include: { ads: { select: { adId: true } } } }), taxConfig()]);
   const factor = taxFactorOf(taxes.metaTaxPct);
   const net = (v: number) => v * (1 - taxes.revenueTaxPct / 100);
   const since = shiftDay(brtToday(), -(days - 1));
   const sinceDate = new Date(Date.now() - days * DAY_MS);
   const codes = links.map((l) => l.code);
-  const adIds = [...new Set(links.map((l) => l.metaAdId).filter(Boolean) as string[])];
+  const adIds = [...new Set(links.flatMap((l) => l.ads.map((a) => a.adId)))];
   const [items, daily, allDaily] = await Promise.all([
     codes.length ? prisma.shopeeOrderItem.findMany({ where: { subCode: { in: codes }, purchaseTime: { gte: sinceDate } } }) : [],
     adIds.length ? prisma.metaAdDaily.findMany({ where: { adId: { in: adIds }, date: { gte: since } } }) : [],
@@ -615,7 +615,7 @@ export async function testedProducts(days = 30) {
     const key = itemOfLink.get(l.code)!;
     const g = groups.get(key) ?? { key, label: l.label, codes: new Set(), adIds: new Set(), firstAt: l.createdAt, spend: 0, clicks: 0, orders: new Set(), day1Orders: new Set(), commission: 0, day1Commission: 0, itemName: null, imageUrl: null };
     g.codes.add(l.code);
-    if (l.metaAdId) g.adIds.add(l.metaAdId);
+    for (const a of l.ads) g.adIds.add(a.adId);
     if (l.createdAt < g.firstAt) g.firstAt = l.createdAt;
     groups.set(key, g);
   }

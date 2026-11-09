@@ -12,6 +12,7 @@ import { createShortUrl } from '../lib/shortener';
 import { sendViewContent } from '../lib/metaCapi';
 import { salesAnalysis, taxConfig } from '../lib/salesAnalysis';
 import { tenantIdOf } from '../lib/tenant';
+import { dayClicksOf, linkLabel, saleShares } from '../lib/adLinks';
 import {
   finderSettings, saveFinderSettings, finderProducts, testedProducts, scanState, markScanQueued, DEFAULT_SETTINGS, breakEvenCommission,
   listFavorites, addFavorite, updateFavorite, removeFavorite, markFavoriteTesting,
@@ -174,7 +175,7 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
       prisma.metaEntity.findMany({ where: { level, ...parentFilter }, orderBy: { name: 'asc' } }),
       prisma.metaAdDaily.findMany({ where: { date: { gte: from, lte: to } } }),
       prisma.metaRule.findMany(),
-      prisma.adLink.findMany({ where: { metaAdId: { not: null } } }),
+      prisma.adLink.findMany({ where: { ads: { some: {} } }, include: { ads: { select: { adId: true } } } }),
     ]);
 
     const entities = allEntities.filter((e) => shownIds.has(level === 'CAMPAIGN' ? e.id : e.campaignId ?? ''));
@@ -182,17 +183,23 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
     // Sales: conversions whose sub-code belongs to an ad's link.
     const ads = await prisma.metaEntity.findMany({ where: { level: 'AD' }, select: { id: true, campaignId: true, adsetId: true } });
     const adParents = new Map(ads.map((a) => [a.id, a]));
-    const codeToAd = new Map(links.map((l) => [l.code, l.metaAdId as string]));
+    const codeToAds = new Map(links.map((l) => [l.code, l.ads.map((a) => a.adId)]));
+    const linkAdIds = [...new Set(links.flatMap((l) => l.ads.map((a) => a.adId)))];
     const start = brtDateStart(from)!;
     const end = new Date(brtDateStart(to)!.getTime() + DAY_MS);
-    const conversions = codeToAd.size
-      ? await prisma.shopeeConversion.findMany({ where: { subCode: { in: [...codeToAd.keys()] }, purchaseTime: { gte: start, lt: end } } })
+    const conversions = codeToAds.size
+      ? await prisma.shopeeConversion.findMany({ where: { subCode: { in: [...codeToAds.keys()] }, purchaseTime: { gte: start, lt: end } } })
       : [];
+    // A link in several ads: its sales are split by clicks, up to the 7-day cookie before the period.
+    const clickRows = linkAdIds.length
+      ? await prisma.metaAdDaily.findMany({ where: { adId: { in: linkAdIds }, date: { gte: shiftDate(from, -8), lte: to } }, select: { adId: true, date: true, linkClicks: true } })
+      : [];
+    const dayClicks = dayClicksOf(clickRows);
     // Real clicks: our short link inside each ad's final link.
-    const shortCodes = new Map<string, string>(); // short code -> adId
+    const shortCodes = new Map<string, string[]>(); // short code -> its ads
     for (const l of links) {
       const m = /\/s\/([A-Za-z0-9]+)/.exec(l.finalLink);
-      if (m) shortCodes.set(m[1], l.metaAdId as string);
+      if (m) shortCodes.set(m[1], l.ads.map((a) => a.adId));
     }
     const clicks = shortCodes.size
       ? await prisma.shortUrlClick.groupBy({ by: ['code'], where: { code: { in: [...shortCodes.keys()] }, kind: 'HUMAN', fromAd: true, createdAt: { gte: start, lt: end } }, _count: { _all: true } })
@@ -205,6 +212,17 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
     const zero = (): M => ({ spend: 0, impressions: 0, clicks: 0, linkClicks: 0, realClicks: 0, orders: 0, gmv: 0, pending: 0, confirmed: 0, cancelled: 0 });
     const by = new Map<string, M>();
     const get = (k: string | null) => { if (!k) return null; if (!by.has(k)) by.set(k, zero()); return by.get(k)!; };
+    const estimated = new Set<string>(); // rows holding only part of a shared link's sale
+    /** A sale's shares per row of this level: copies inside one campaign add back up to the whole sale there. */
+    const sharesPerRow = (shares: Array<[string, number]>) => {
+      const out = new Map<string, number>();
+      for (const [adId, share] of shares) {
+        const p = adParents.get(adId);
+        const k = keyOf(adId, p?.campaignId ?? null, p?.adsetId ?? null);
+        if (k) out.set(k, (out.get(k) ?? 0) + share);
+      }
+      return out;
+    };
 
     for (const d of daily) {
       const m = get(keyOf(d.adId, d.campaignId, d.adsetId));
@@ -212,17 +230,17 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
       m.spend += d.spend; m.impressions += d.impressions; m.clicks += d.clicks; m.linkClicks += d.linkClicks;
     }
     for (const c of conversions) {
-      const adId = codeToAd.get(c.subCode ?? '');
-      const p = adId ? adParents.get(adId) : undefined;
-      const m = adId ? get(keyOf(adId, p?.campaignId ?? null, p?.adsetId ?? null)) : null;
-      if (!m) continue;
-      m.orders += c.orders; m.gmv += c.gmv; m.pending += c.commissionPending; m.confirmed += c.commissionConfirmed; m.cancelled += c.commissionCancelled;
+      const shares = saleShares(codeToAds.get(c.subCode ?? '') ?? [], dayClicks, c.clickTime, c.purchaseTime);
+      for (const [k, share] of sharesPerRow(shares)) {
+        const m = get(k)!;
+        if (share < 0.999) estimated.add(k);
+        m.orders += c.orders * share; m.gmv += c.gmv * share;
+        m.pending += c.commissionPending * share; m.confirmed += c.commissionConfirmed * share; m.cancelled += c.commissionCancelled * share;
+      }
     }
     for (const c of clicks) {
-      const adId = shortCodes.get(c.code);
-      const p = adId ? adParents.get(adId) : undefined;
-      const m = adId ? get(keyOf(adId, p?.campaignId ?? null, p?.adsetId ?? null)) : null;
-      if (m) m.realClicks += c._count._all;
+      const shares = saleShares(shortCodes.get(c.code) ?? [], dayClicks, null, end);
+      for (const [k, share] of sharesPerRow(shares)) get(k)!.realClicks += c._count._all * share;
     }
 
     const childCounts = new Map<string, number>();
@@ -236,15 +254,15 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
     }
     const ruleBy = new Map(rules.map((r) => [r.entityId, r]));
     const linkCountBy = new Map<string, number>();
-    for (const l of links) linkCountBy.set(l.metaAdId as string, (linkCountBy.get(l.metaAdId as string) ?? 0) + 1);
+    for (const adId of links.flatMap((l) => l.ads.map((a) => a.adId))) linkCountBy.set(adId, (linkCountBy.get(adId) ?? 0) + 1);
 
     const shape = (m: M) => {
       const projected = m.pending + m.confirmed;
       return {
-        spend: r2(m.spend), impressions: m.impressions, clicks: m.clicks, linkClicks: m.linkClicks, realClicks: m.realClicks,
+        spend: r2(m.spend), impressions: m.impressions, clicks: m.clicks, linkClicks: m.linkClicks, realClicks: Math.round(m.realClicks),
         cpcLink: m.linkClicks ? r2(m.spend / m.linkClicks) : null,
         ctr: m.impressions ? r2((m.clicks / m.impressions) * 100) : null,
-        orders: m.orders, gmv: r2(m.gmv),
+        orders: r2(m.orders), gmv: r2(m.gmv),
         commissionPending: r2(m.pending), commissionConfirmed: r2(m.confirmed), commissionCancelled: r2(m.cancelled),
         profitProjected: r2(projected - m.spend), profitConfirmed: r2(m.confirmed - m.spend),
         roas: m.spend ? r2(projected / m.spend) : null,
@@ -257,6 +275,7 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
       children: childCounts.get(e.id) ?? 0,
       links: level === 'AD' ? linkCountBy.get(e.id) ?? 0 : undefined,
       metrics: shape(by.get(e.id) ?? zero()),
+      estimated: estimated.has(e.id),
       rule: ruleBy.get(e.id) ?? null,
     }));
     const totals = shape(rows.reduce((acc, r) => {
@@ -264,7 +283,7 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
       if (m) for (const k of Object.keys(acc) as (keyof M)[]) acc[k] += m[k];
       return acc;
     }, zero()));
-    return { level, parentId: parentId ?? null, from, to, rows, totals };
+    return { level, parentId: parentId ?? null, from, to, rows, totals, estimated: rows.some((r) => r.estimated) };
   });
 
   // ── Rules ─────────────────────────────────────────────────────────────────
@@ -345,16 +364,16 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
     if (!start || !endStart) return reply.code(400).send({ message: 'Período inválido' });
     const [conversions, links] = await Promise.all([
       prisma.shopeeConversion.findMany({ where: { purchaseTime: { gte: start, lt: new Date(endStart.getTime() + DAY_MS) } } }),
-      prisma.adLink.findMany(),
+      prisma.adLink.findMany({ include: { ads: { select: { adId: true } } } }),
     ]);
-    const ads = await prisma.metaEntity.findMany({ where: { id: { in: links.map((l) => l.metaAdId).filter(Boolean) as string[] } } });
+    const ads = await prisma.metaEntity.findMany({ where: { id: { in: links.flatMap((l) => l.ads.map((a) => a.adId)) } } });
     const adName = new Map(ads.map((a) => [a.id, a.name]));
     const linkBy = new Map(links.map((l) => [l.code, l]));
     const groups = new Map<string, { subCode: string; label: string; source: string; orders: number; gmv: number; pending: number; confirmed: number; cancelled: number }>();
     for (const c of conversions) {
       const code = c.subCode ?? '';
       const link = linkBy.get(code);
-      const label = link ? (link.label || (link.metaAdId ? adName.get(link.metaAdId) : null) || code) : code || '(sem sub-ID)';
+      const label = link ? linkLabel(link, link.ads.map((a) => adName.get(a.adId))) : code || '(sem sub-ID)';
       const source = link ? 'Anúncio' : code.startsWith('busca') ? 'Busca Shopee' : code ? 'Outro sub-ID' : 'Sem sub-ID';
       const g = groups.get(code) ?? { subCode: code, label, source, orders: 0, gmv: 0, pending: 0, confirmed: 0, cancelled: 0 };
       g.orders += c.orders; g.gmv += c.gmv; g.pending += c.commissionPending; g.confirmed += c.commissionConfirmed; g.cancelled += c.commissionCancelled;
@@ -380,9 +399,9 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
         orderBy: { purchaseTime: 'desc' },
         take: LIMIT + 1,
       }),
-      prisma.adLink.findMany(),
+      prisma.adLink.findMany({ include: { ads: { select: { adId: true } } } }),
     ]);
-    const ads = await prisma.metaEntity.findMany({ where: { id: { in: links.map((l) => l.metaAdId).filter(Boolean) as string[] } } });
+    const ads = await prisma.metaEntity.findMany({ where: { id: { in: links.flatMap((l) => l.ads.map((a) => a.adId)) } } });
     const adName = new Map(ads.map((a) => [a.id, a.name]));
     const linkBy = new Map(links.map((l) => [l.code, l]));
     const rows = conversions.slice(0, LIMIT).map((c) => {
@@ -400,7 +419,7 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
         utmContent: c.utmContent,
         subCode: code,
         source: link ? 'Anúncio' : code.startsWith('busca') ? 'Busca Shopee' : code ? 'Outro sub-ID' : 'Sem sub-ID',
-        label: link ? link.label || (link.metaAdId ? adName.get(link.metaAdId) : null) || code : null,
+        label: link ? linkLabel(link, link.ads.map((a) => adName.get(a.adId))) : null,
         orderIds: orders.map((o) => String(o.orderId ?? '')).filter(Boolean),
         products,
         items: c.items,
@@ -496,10 +515,13 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
   // ── Ad links ──────────────────────────────────────────────────────────────
 
   fastify.get('/links', async () => {
-    const links = await prisma.adLink.findMany({ orderBy: { createdAt: 'desc' }, take: 300 });
-    const ads = await prisma.metaEntity.findMany({ where: { id: { in: links.map((l) => l.metaAdId).filter(Boolean) as string[] } } });
-    const names = new Map(ads.map((a) => [a.id, a.name]));
-    return links.map((l) => ({ ...l, adName: l.metaAdId ? names.get(l.metaAdId) ?? null : null }));
+    const links = await prisma.adLink.findMany({ orderBy: { createdAt: 'desc' }, take: 300, include: { ads: true } });
+    const ads = await prisma.metaEntity.findMany({ where: { id: { in: links.flatMap((l) => l.ads.map((a) => a.adId)) } } });
+    const adBy = new Map(ads.map((a) => [a.id, a]));
+    return links.map(({ ads: tied, metaAdId: _legacy, ...l }) => ({
+      ...l,
+      ads: tied.map((t) => ({ id: t.adId, source: t.source, name: adBy.get(t.adId)?.name ?? t.adId, status: adBy.get(t.adId)?.status ?? null })),
+    }));
   });
 
   fastify.post<{ Body: { productUrl?: string; metaAdId?: string | null; label?: string; viaOurLink?: boolean } }>('/links', async (request, reply) => {
@@ -514,7 +536,10 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
     }
     const finalLink = request.body?.viaOurLink === false ? shopeeLink : (await createShortUrl(shopeeLink)).shortUrl;
     const link = await prisma.adLink.create({
-      data: { code, label: request.body?.label?.trim() || null, metaAdId: request.body?.metaAdId || null, productUrl, shopeeLink, finalLink },
+      data: {
+        code, label: request.body?.label?.trim() || null, productUrl, shopeeLink, finalLink,
+        ...(request.body?.metaAdId && { ads: { create: { adId: request.body.metaAdId, source: 'MANUAL' } } }),
+      },
     });
     await markFavoriteTesting(productUrl).catch(() => 0);
     return link;
@@ -529,15 +554,26 @@ export const adsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =>
     return rows.map((r) => ({ at: r.createdAt, kind: r.kind, agent: r.agent, fromAd: r.fromAd, userAgent: r.userAgent }));
   });
 
-  fastify.patch<{ Params: { id: string }; Body: { metaAdId?: string | null; label?: string } }>('/links/:id', async (request) =>
+  fastify.patch<{ Params: { id: string }; Body: { label?: string } }>('/links/:id', async (request) =>
     prisma.adLink.update({
       where: { id: request.params.id },
-      data: {
-        ...(request.body?.metaAdId !== undefined && { metaAdId: request.body.metaAdId || null }),
-        ...(request.body?.label !== undefined && { label: request.body.label || null }),
-      },
+      data: { ...(request.body?.label !== undefined && { label: request.body.label || null }) },
     }),
   );
+
+  // PUT /ads/links/:id/ads — the ads the user chose for this link. Ties read
+  // from the ad's own creative (AUTO) stay: that ad really does use the link.
+  fastify.put<{ Params: { id: string }; Body: { adIds?: string[] } }>('/links/:id/ads', async (request, reply) => {
+    const adIds = Array.isArray(request.body?.adIds) ? [...new Set(request.body.adIds.map(String))] : null;
+    if (!adIds) return reply.code(400).send({ message: 'Escolha os anúncios' });
+    const linkId = request.params.id;
+    if (!(await prisma.adLink.findUnique({ where: { id: linkId }, select: { id: true } }))) return reply.code(404).send({ message: 'Link não encontrado' });
+    await prisma.$transaction([
+      prisma.adLinkAd.deleteMany({ where: { linkId, source: 'MANUAL', adId: { notIn: adIds } } }),
+      prisma.adLinkAd.createMany({ data: adIds.map((adId) => ({ linkId, adId, source: 'MANUAL' })), skipDuplicates: true }),
+    ]);
+    return { ok: true };
+  });
 
   // Ads to pick from when tying a link to an ad.
   fastify.get('/ads-list', async () => {

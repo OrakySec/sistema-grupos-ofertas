@@ -8,6 +8,7 @@
  */
 import axios from 'axios';
 import prisma from './prisma';
+import { applyDetectedLinks } from './adLinks';
 
 export class MetaApiError extends Error {}
 
@@ -96,6 +97,8 @@ export interface MetaSyncResult {
   adsets?: number;
   ads?: number;
   insightRows?: number;
+  links?: { checked: number; withUrl: number; linked: number }; // ad links read from the creatives
+  linksError?: string;
   error?: string;
 }
 
@@ -154,7 +157,16 @@ export async function syncMeta(days = 7): Promise<MetaSyncResult[]> {
           create: { adId: r.ad_id, date: r.date_start, ...data },
         });
       }
-      results.push({ account: acc, campaigns: campaigns.length, adsets: adsets.length, ads: ads.length, insightRows: rows.length });
+      // Which ad link each ad uses. A failure here must not lose the delivery numbers above.
+      let links: { checked: number; withUrl: number; linked: number } | undefined;
+      let linksError: string | undefined;
+      try {
+        const creatives = await graphGetAll(cfg, `${acc}/ads`, { fields: 'id,creative{link_url,object_story_spec,asset_feed_spec}', limit: '100' });
+        links = await applyDetectedLinks(creatives);
+      } catch (err) {
+        linksError = err instanceof Error ? err.message : String(err);
+      }
+      results.push({ account: acc, campaigns: campaigns.length, adsets: adsets.length, ads: ads.length, insightRows: rows.length, links, linksError });
     } catch (err) {
       results.push({ account: acc, error: err instanceof Error ? err.message : String(err) });
     }
